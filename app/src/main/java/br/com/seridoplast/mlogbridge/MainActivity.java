@@ -11,8 +11,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
-import android.view.Gravity;
-import android.view.View;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.LinearLayout;
@@ -24,131 +23,161 @@ import java.util.Map;
 
 public class MainActivity extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
+    private final LinkedHashMap<String, CheckBox> formats = new LinkedHashMap<>();
     private SharedPreferences prefs;
-    private LinearLayout root;
-    private TextView status,live;
-    private final LinkedHashMap<String,CheckBox> checkboxes = new LinkedHashMap<>();
-    private boolean listening;
-    private long lastDisplayAt;
-    private String lastDisplay="";
-    private final BroadcastReceiver demo = new BroadcastReceiver() {
-        @Override public void onReceive(Context ctx,Intent intent) {
-            String code=ScannerProtocol.barcode(intent);
-            if(code == null) {live.setText("Sinal do scanner, mas sem código reconhecido. Action="+intent.getAction());return;}
-            long now=android.os.SystemClock.elapsedRealtime();
-            if(code.equals(lastDisplay) && now-lastDisplayAt<180)return;
-            lastDisplay=code;lastDisplayAt=now;
-            live.setText("Lido: "+code+"\nFormato: "+ScannerProtocol.type(intent)+"\nOrigem: "+intent.getAction());
+    private LinearLayout content;
+    private TextView status;
+    private TextView scanPreview;
+    private boolean receiverRegistered;
+    private final BroadcastReceiver testReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) {
+            String code = ScannerProtocol.barcode(intent);
+            if (scanPreview == null) return;
+            if (code == null) {
+                scanPreview.setText("Sinal recebido, mas nao foi possivel extrair o codigo.\nAcao: " + intent.getAction());
+            } else {
+                scanPreview.setText("Leitura recebida nesta tela:\n" + code +
+                    "\nTipo: " + ScannerProtocol.type(intent) +
+                    "\nOrigem: " + intent.getAction());
+            }
         }
     };
-    private final Runnable ticker = new Runnable() {
+    private final Runnable refresh = new Runnable() {
         @Override public void run() {
-            if(status != null) {
-                String txt=prefs.getString("last_status","Nenhuma leitura recebida pelo serviço ainda.");
-                status.setText("Serviço: " + txt);
+            if (status != null) {
+                status.setText("Estado: " + prefs.getString("last_status", "Aguardando teclado de leitura."));
             }
-            handler.postDelayed(this,1000);
+            handler.postDelayed(this, 750);
         }
     };
 
-    @Override public void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        prefs=getSharedPreferences(MlogAccessibilityService.PREFS,MODE_PRIVATE);
-        ScrollView sc=new ScrollView(this);
-        root=new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(20),dp(20),dp(20),dp(26));
-        sc.addView(root);setContentView(sc);
+    @Override public void onCreate(Bundle state) {
+        super.onCreate(state);
+        prefs = getSharedPreferences(ScannerInputMethodService.PREFS, MODE_PRIVATE);
+        ScrollView scroll = new ScrollView(this);
+        content = new LinearLayout(this);
+        content.setPadding(dp(20), dp(14), dp(20), dp(28));
+        content.setOrientation(LinearLayout.VERTICAL);
+        scroll.addView(content);
+        setContentView(scroll);
 
-        title("MLOG Scanner Bridge");
-        description("Protótipo CMX Supply • MLOG 9.3.5\nUse primeiro no ambiente de teste, não em separação real.");
-        title("1. Integração MLOG");
-        CheckBox active=new CheckBox(this);
-        active.setText("Manter o campo do MLOG pronto para leitura");
-        active.setChecked(prefs.getBoolean("active",true));
-        active.setOnCheckedChangeListener((v,checked)->prefs.edit().putBoolean("active",checked).apply());
-        root.addView(active);
-        CheckBox submit=new CheckBox(this);
-        submit.setText("Tentar confirmar automaticamente após ler (experimental)");
-        submit.setChecked(prefs.getBoolean("submit",false));
-        submit.setOnCheckedChangeListener((v,checked)->prefs.edit().putBoolean("submit",checked).apply());
-        root.addView(submit);
-        description("O Enter depende de o campo Flutter oferecer a ação de confirmação IME. Por segurança começa desligado.");
+        title("MLOG Scanner Bridge v0.2");
+        note("Versao SEM acessibilidade • sem internet • sem teclado visivel.\nUse inicialmente fora da operacao de separacao.");
 
-        button("Ativar serviço de acessibilidade",()->{
-            startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
+        title("1. Ativar teclado de leitura");
+        note("Este teclado especial recebe o codigo do scanner e o insere SOMENTE no campo que estiver selecionado no MLOG. Nao consegue selecionar um campo sozinho.");
+        button("Habilitar o teclado MLOG Scanner", () ->
+            startActivity(new Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)));
+        button("Selecionar teclado MLOG Scanner", () -> {
+            InputMethodManager manager = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+            if (manager != null) manager.showInputMethodPicker();
         });
-        button("Aprender o campo de código do MLOG",()->{
-            prefs.edit().putBoolean("learn",true).apply();
-            Toast.makeText(this,"No MLOG, toque UMA VEZ no campo que recebe o código.",Toast.LENGTH_LONG).show();
-            openMlog();
-        });
-        button("Abrir MLOG",this::openMlog);
-        status=new TextView(this);
-        status.setTextSize(14);status.setPadding(0,dp(10),0,dp(14));root.addView(status);
+        CheckBox enabled = new CheckBox(this);
+        enabled.setText("Aceitar leituras no MLOG");
+        enabled.setChecked(prefs.getBoolean("enabled", true));
+        enabled.setOnCheckedChangeListener((v, checked) ->
+            prefs.edit().putBoolean("enabled", checked).apply());
+        content.addView(enabled);
 
-        title("2. Configurar leitor físico");
-        description("Configuração obtida do CMX Scanner instalado: broadcast de leitura, sem sufixo e sem foco forçado pelo firmware. Isso altera as preferências globais do scanner.");
-        button("Aplicar modo broadcast do CMX",()->{
+        CheckBox enter = new CheckBox(this);
+        enter.setText("Enviar Enter depois de cada leitura (teste opcional)");
+        enter.setChecked(prefs.getBoolean("send_enter", false));
+        enter.setOnCheckedChangeListener((v, checked) ->
+            prefs.edit().putBoolean("send_enter", checked).apply());
+        content.addView(enter);
+        note("Comece SEM Enter. O comportamento do MLOG pode variar conforme a tela.");
+        button("Abrir MLOG", this::openMlog);
+        status = new TextView(this);
+        status.setTextSize(15);
+        status.setPadding(0, dp(12), 0, dp(14));
+        content.addView(status);
+
+        title("2. Configurar coletor CMX");
+        note("Comandos obtidos do CMX Scanner fornecido; sao experimentais neste firmware. " +
+             "A opcao abaixo pode mudar a configuracao global do leitor fisico.");
+        button("Configurar entrega por broadcast", () -> {
             ScannerProtocol.configureBroadcast(this);
-            Toast.makeText(this,"Comandos enviados ao serviço CMX; confirmar no teste de leitura.",Toast.LENGTH_LONG).show();
+            toast("Comandos enviados ao motor do CMX. Confirme pelo teste abaixo.");
         });
-        title("Códigos a habilitar");
-        int defaultMask=8|2|1|16|32|4|8192|16384|524288;
-        int savedMask=prefs.getInt("formats",defaultMask);
-        for(Map.Entry<String,Integer> e:ScannerProtocol.FORMATS.entrySet()){
-            CheckBox c=new CheckBox(this); c.setText(e.getKey()); c.setChecked((savedMask&e.getValue())!=0);
-            checkboxes.put(e.getKey(),c);root.addView(c);
+        title("Formatos a habilitar");
+        int defaults = 1 | 2 | 4 | 8 | 16 | 32 | 8192 | 16384 | 524288;
+        int mask = prefs.getInt("formats", defaults);
+        for (Map.Entry<String,Integer> entry: ScannerProtocol.FORMATS.entrySet()) {
+            CheckBox box = new CheckBox(this);
+            box.setText(entry.getKey());
+            box.setChecked((mask & entry.getValue()) != 0);
+            content.addView(box);
+            formats.put(entry.getKey(), box);
         }
-        button("Salvar formatos no leitor",()->{
-            int mask=0;
-            for(Map.Entry<String,CheckBox> e:checkboxes.entrySet()) {
-                if(Boolean.TRUE.equals(e.getValue().isChecked())) mask|=ScannerProtocol.FORMATS.get(e.getKey());
+        button("Aplicar formatos", () -> {
+            int total = 0;
+            for (Map.Entry<String,CheckBox> entry : formats.entrySet()) {
+                if (entry.getValue().isChecked()) total |= ScannerProtocol.FORMATS.get(entry.getKey());
             }
-            if(mask==0) {Toast.makeText(this,"Escolha pelo menos um formato.",Toast.LENGTH_SHORT).show();return;}
-            prefs.edit().putInt("formats",mask).apply();
-            ScannerProtocol.configureFormats(this,mask);
-            Toast.makeText(this,"Máscara enviada: "+mask+". Valide cada formato no coletor.",Toast.LENGTH_LONG).show();
+            if (total == 0) {toast("Escolha pelo menos um formato."); return;}
+            ScannerProtocol.configureFormats(this,total);
+            prefs.edit().putInt("formats", total).apply();
+            toast("Formatos enviados. Teste com codigos fisicos.");
         });
-        description("Não existe leitura de 'qualquer formato' se o motor óptico não oferecer suporte. EAN-13 depende de dígito verificador válido.");
+        note("Nao e possivel ler todos os formatos se o leitor optico nao oferecer suporte.");
 
-        title("3. Teste sem MLOG");
-        description("Neste teste, o código precisa aparecer abaixo mesmo sem nenhum campo de texto selecionado. Se o laser acender e não aparecer nada, o problema está no scanner/configuração do broadcast.");
-        button("Iniciar leitura por software",()->ScannerProtocol.trigger(this));
-        button("Parar leitura",()->ScannerProtocol.stop(this));
-        live=new TextView(this);
-        live.setText("Aguardando leitura de teste...");
-        live.setTextSize(18);
-        live.setTextIsSelectable(true);
-        live.setPadding(dp(12),dp(16),dp(12),dp(16));
-        live.setBackgroundColor(0xffe8ecef);
-        root.addView(live);
-        description("Se a leitura for recebida aqui mas não no MLOG, o problema é foco ou edição do campo. Se nem aqui aparecer, verifique formato, mecanismo de scanner ou se o firmware publica broadcasts.");
+        title("3. Teste do CMX (sem MLOG)");
+        button("Iniciar leitura", () -> ScannerProtocol.trigger(this));
+        button("Parar leitura", () -> ScannerProtocol.stop(this));
+        scanPreview = new TextView(this);
+        scanPreview.setTextSize(17);
+        scanPreview.setText("Aguardando codigo do scanner...");
+        scanPreview.setTextIsSelectable(true);
+        scanPreview.setBackgroundColor(0xffe8ecef);
+        scanPreview.setPadding(dp(12), dp(14), dp(12), dp(14));
+        content.addView(scanPreview);
+        note("O codigo aparece aqui apenas enquanto a tela esta aberta. Nao fica salvo.");
+        title("Como testar no MLOG");
+        note("1) Ative e selecione o teclado MLOG Scanner.\n"+
+             "2) Configure o broadcast do CMX e confirme que o teste acima recebe codigos.\n"+
+             "3) Abra MLOG e TOQUE UMA VEZ no campo do codigo de barras.\n"+
+             "4) Aperte o gatilho. O codigo deve entrar sem teclado visivel.\n"+
+             "5) Se funcionar, teste Enter opcional. Se o MLOG perder foco, sera necessario tocar novamente.");
     }
 
-    private int dp(int v){return (int)(v*getResources().getDisplayMetrics().density+0.5f);}
-    private void title(String text){TextView x=new TextView(this);x.setText(text);x.setTextSize(22);x.setTextColor(0xff203040);x.setPadding(0,dp(20),0,dp(10));root.addView(x);}
-    private void description(String text){TextView x=new TextView(this);x.setText(text);x.setTextSize(14);x.setTextColor(0xff52616b);x.setPadding(0,dp(4),0,dp(12));root.addView(x);}
-    private void button(String text,Runnable action){Button b=new Button(this);b.setText(text);b.setAllCaps(false);b.setOnClickListener(v->action.run());root.addView(b);}
-    private void openMlog(){
-        Intent i=getPackageManager().getLaunchIntentForPackage(MlogAccessibilityService.TARGET);
-        if(i!=null){i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);startActivity(i);}
-        else Toast.makeText(this,"MLOG não está instalado neste coletor.",Toast.LENGTH_LONG).show();
+    private int dp(int value) { return (int)(value*getResources().getDisplayMetrics().density+.5f); }
+    private void title(String label) {
+        TextView view = new TextView(this); view.setText(label); view.setTextColor(0xff253747);
+        view.setTextSize(21); view.setPadding(0, dp(16), 0, dp(7)); content.addView(view);
     }
-
-    @Override protected void onResume(){
+    private void note(String message) {
+        TextView view = new TextView(this); view.setText(message); view.setTextColor(0xff52616b);
+        view.setTextSize(14); view.setPadding(0, dp(4), 0, dp(12)); content.addView(view);
+    }
+    private void button(String label, Runnable fn) {
+        Button view = new Button(this); view.setText(label); view.setAllCaps(false);
+        view.setOnClickListener(v -> fn.run()); content.addView(view);
+    }
+    private void toast(String message) { Toast.makeText(this, message, Toast.LENGTH_LONG).show(); }
+    private void openMlog() {
+        Intent launch = getPackageManager().getLaunchIntentForPackage(ScannerInputMethodService.TARGET);
+        if (launch == null) {toast("MLOG nao encontrado no aparelho."); return;}
+        startActivity(launch);
+    }
+    @Override protected void onResume() {
         super.onResume();
-        IntentFilter f=new IntentFilter();for(String a:ScannerProtocol.ACTIONS)f.addAction(a);
-        try{
-            if(Build.VERSION.SDK_INT>=33)registerReceiver(demo,f,Context.RECEIVER_EXPORTED);
-            else registerReceiver(demo,f);
-            listening=true;
-        }catch(Exception e){if(live!=null)live.setText("Erro no receptor: "+e.getMessage());}
-        handler.removeCallbacks(ticker);handler.post(ticker);
+        IntentFilter filter = new IntentFilter();
+        for (String action : ScannerProtocol.ACTIONS) filter.addAction(action);
+        try {
+            if (Build.VERSION.SDK_INT >= 33) registerReceiver(testReceiver, filter, Context.RECEIVER_EXPORTED);
+            else registerReceiver(testReceiver, filter);
+            receiverRegistered = true;
+        } catch (RuntimeException e) {
+            if (scanPreview != null) scanPreview.setText("Falha ao escutar leitor CMX.");
+        }
+        handler.post(refresh);
     }
-    @Override protected void onPause(){
-        handler.removeCallbacks(ticker);
-        if(listening){try{unregisterReceiver(demo);}catch(Exception ignore){} listening=false;}
+    @Override protected void onPause() {
+        handler.removeCallbacks(refresh);
+        if (receiverRegistered) {
+            try {unregisterReceiver(testReceiver);} catch (Exception ignored) {}
+            receiverRegistered = false;
+        }
         super.onPause();
     }
 }

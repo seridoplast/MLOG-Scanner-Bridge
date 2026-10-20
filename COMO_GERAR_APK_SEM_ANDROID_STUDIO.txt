@@ -1,39 +1,15 @@
-MLOG Scanner Bridge - gerar APK sem Android Studio
-===================================================
+COMO INSTALAR v0.2 - SEM ACESSIBILIDADE
 
-IMPORTANTE: Este ZIP NÃO contém um APK compilado. Ele contém o código-fonte
-Android + uma automação para compilar o APK de teste via GitHub Actions,
-utilizando servidores do GitHub. Não é necessário Android Studio.
+Extraia este ZIP e substitua o conteudo do repositorio git local.
+Remova dois arquivos antigos de acessibilidade.
+Abra o CMD na pasta do repositorio:
 
-PASSOS
-1. Entre em https://github.com e acesse sua conta.
-2. Clique em New repository, use um nome como mlog-scanner-bridge e
-   selecione Private (o projeto ficará privado).
-3. Crie o repositório. Extraia este ZIP em uma pasta no computador.
-4. Na página do repositório, clique Add file > Upload files.
-   Envie os arquivos e pastas do ZIP extraído, incluindo a pasta
-   .github/workflows (importante para habilitar a automação).
-5. Clique Commit changes.
-6. Abra Actions no repositório e selecione Gerar APK do MLOG Scanner Bridge.
-   Se a compilação não tiver iniciado automaticamente com o commit,
-   clique Run workflow e depois Run workflow.
-7. Abra a execução concluída. Em Artifacts, clique MLOG-Scanner-Bridge-APK.
-8. Descompacte o ZIP baixado do GitHub. Dentro haverá app-debug.apk.
-9. Copie o app-debug.apk para o coletor CMX e instale. Dependendo da versão
-   do Android, autorize instalar apps desta origem e habilitar acessibilidade.
+del app\src\main\java\br\com\seridoplast\mlogbridge\MlogAccessibilityService.java
+del app\src\main\res\xml\accessibility_config.xml
+git add -A
+git commit -m "v2 sem acessibilidade"
+git push origin main
 
-INÍCIO DO TESTE
-- Mantenha o CMX Scanner e o MLOG originais instalados.
-- Desative temporariamente SOMENTE a acessibilidade do CMX Scanner original,
-  caso essa função esteja ativa, evitando dois serviços disputando o Enter.
-- Abra MLOG Scanner Bridge e ative o serviço de acessibilidade dele.
-- Aplique modo broadcast e habilite formatos de código.
-- Faça a leitura no teste do Bridge antes de testar no MLOG.
-- No MLOG, use a função Aprender campo e toque o campo do código.
-- Confirmação automática fica DESATIVADA por padrão para não lançar itens
-  indevidamente. TESTE EM PEDIDOS DE TREINAMENTO.
-
-SE O GITHUB MOSTRAR ERRO NA TELA ACTIONS
-Abra o log da etapa que falhou e compartilhe o texto do erro; o projeto
-nunca foi compilado neste ambiente por ausência de Android SDK/Gradle.
-O MLOG 9.3.5 usa Flutter, e o foco/inserção dependem de testes no coletor.
+Acesse GitHub Actions e baixe o artifact MLOG-Scanner-Bridge-v2-APK.
+Desinstale v0.1 antes de instalar v0.2.
+Abra Bridge, habilite e selecione o teclado de leitura, configure o scanner e teste.

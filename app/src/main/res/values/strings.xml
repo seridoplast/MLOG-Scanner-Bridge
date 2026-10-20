@@ -1,3 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="accessibility_description">Localiza e seleciona o campo de código do MLOG e permite enviar leituras do scanner físico. Funciona apenas no MLOG.</string>
+    <string name="app_name">MLOG Scanner Bridge</string>
 </resources>
