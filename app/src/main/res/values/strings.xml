@@ -1,0 +1,3 @@
+<resources>
+    <string name="accessibility_description">Localiza e seleciona o campo de código do MLOG e permite enviar leituras do scanner físico. Funciona apenas no MLOG.</string>
+</resources>
