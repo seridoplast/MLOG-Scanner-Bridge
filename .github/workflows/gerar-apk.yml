@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
-      - name: Buscar o projeto
+      - name: Baixar codigo do projeto
         uses: actions/checkout@v4
 
       - name: Preparar Java 17
@@ -24,29 +24,40 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Preparar ferramentas Android
-        uses: android-actions/setup-android@v3
-
-      - name: Instalar Android SDK 35
+      # O runner ubuntu-24.04 ja possui SDK Android 35 e Build Tools 35.
+      # Nao usamos setup-android nem sdkmanager --licenses, pois foi esta
+      # configuracao que bloqueou a primeira tentativa.
+      - name: Verificar Android SDK preinstalado
+        shell: bash
         run: |
-          yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          test -f "$ANDROID_HOME/platforms/android-35/android.jar" || {
+            echo 'ERRO: Android SDK Platform 35 indisponivel no runner.'
+            ls -la "$ANDROID_HOME/platforms" || true
+            exit 1
+          }
+          test -d "$ANDROID_HOME/build-tools/35.0.0" || {
+            echo 'ERRO: Android Build Tools 35.0.0 indisponivel no runner.'
+            ls -la "$ANDROID_HOME/build-tools" || true
+            exit 1
+          }
 
-      - name: Instalar Gradle 8.11.1
+      - name: Preparar Gradle 8.11.1
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
 
-      - name: Compilar e assinar APK de testes
+      - name: Compilar APK de testes
         run: gradle :app:assembleDebug --no-daemon --stacktrace
 
-      - name: Conferir resultado
+      - name: Validar APK gerado
+        shell: bash
         run: |
           test -s app/build/outputs/apk/debug/app-debug.apk
           unzip -t app/build/outputs/apk/debug/app-debug.apk
           sha256sum app/build/outputs/apk/debug/app-debug.apk
 
-      - name: Disponibilizar APK
+      - name: Publicar APK para download
         uses: actions/upload-artifact@v4
         with:
           name: MLOG-Scanner-Bridge-APK
