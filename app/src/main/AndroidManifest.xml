@@ -9,7 +9,7 @@
         android:allowBackup="false"
         android:usesCleartextTraffic="false"
         android:label="MLOG Scanner Bridge"
-        android:theme="@android:style/Theme.Material.Light.NoActionBar"
+        android:theme="@style/BridgeThemeLight"
         android:supportsRtl="true">
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>

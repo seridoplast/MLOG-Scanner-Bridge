@@ -1,0 +1,18 @@
+MLOG SCANNER BRIDGE V0.4 - INSTALACAO DA NOVA VERSAO NO REPOSITORIO
+
+1. Salve MLOG_Scanner_Bridge_v4_Tema_Adaptativo.zip em Downloads.
+2. Abra o CMD e rode estes comandos:
+
+cd /d "%USERPROFILE%\Downloads\MLOG-Scanner-Bridge"
+powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v4_Tema_Adaptativo.zip') -DestinationPath . -Force"
+if exist "app\src\main\java\br\com\seridoplast\mlogbridge\MlogAccessibilityService.java" del "app\src\main\java\br\com\seridoplast\mlogbridge\MlogAccessibilityService.java"
+if exist "app\src\main\res\xml\accessibility_config.xml" del "app\src\main\res\xml\accessibility_config.xml"
+git add -A
+git commit -m "MLOG Bridge v4 tema automatico"
+git push origin main
+
+3. No GitHub Actions, baixe MLOG-Scanner-Bridge-v4-APK apos sucesso.
+4. Isso NAO remove as restricoes de acessibilidade impostas pelo Android.
+
+Nao desinstale o MLOG. Caso precise remover o Bridge anterior para instalar
+esta versao, as preferencias locais do Bridge podem ser perdidas.

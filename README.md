@@ -65,3 +65,29 @@ git push origin main
 ## Compilacao
 
 Gradle 8.11.1 / Android Gradle Plugin 8.9.1 / Java 17 / Android SDK 35. O workflow nao usa `sdkmanager --licenses` interativo. Este pacote passou por revisao estatica e verificacao de XML/arquivos, **nao por compilacao em Android SDK real** neste ambiente.
+
+## v0.4 — tema automatico e restricao de acessibilidade (21/10/2026)
+
+- Aparencia segue o modo escuro/claro do Android por padrao.
+- Botao `☾/☀` na parte superior alterna Sistema → Escuro → Claro → Sistema.
+- Em **Configuracoes / Aparencia** ha opcoes visiveis Sistema, Escuro e Claro.
+- A escolha e salva nas preferencias privadas do proprio aplicativo.
+- Tela inicial e componentes de diagnostico seguem as cores escolhidas.
+- Botao **Abrir informacoes deste aplicativo** facilita localizar as configuracoes de autorizacao do Android.
+- Mecanismo de scanner, teclado invisivel e acessibilidade limitada ao MLOG sao preservados da v0.3.
+
+### Importante sobre Android 13+ e a protecao do sistema
+
+A mensagem 'Configuracao restrita — Para sua seguranca, essa configuracao esta indisponivel' e uma politica do Android para aplicativos instalados fora de uma origem reconhecida. O projeto NAO pode remover essa protecao por codigo, nem podemos garantir que ela desapareca mudando a aparencia ou assinando o APK.
+
+Procedimento oficial, quando disponibilizado pela ROM: abra **Configuracoes → Acessibilidade → MLOG Bridge**, tente habilitar e confirme o aviso; depois abra **Configuracoes → Aplicativos → Ver todos → MLOG Scanner Bridge**, procure **Permitir configuracoes restritas** no menu de mais opcoes e autorize conscientemente, retornando a Acessibilidade. Em certos coletores CMX a opcao nao aparece; nesse caso deve ser consultado o fabricante/administrador do dispositivo ou usada uma distribuicao empresarial aprovada. Nao desligue o Play Protect como solucao permanente e nao tente ocultar ou retirar a declaracao de acessibilidade apenas para passar pela verificacao.
+
+### Teste seguro
+
+1. Compile e valide o APK; se houver `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, pode ser necessario desinstalar **somente o Bridge antigo**, nunca o MLOG (a assinatura debug de runners temporarios varia).
+2. Reative o Play Protect caso tenha sido desligado durante tentativas anteriores.
+3. Confira os modos Sistema, Escuro e Claro antes de habilitar a leitura assistida.
+4. Teste em ambiente sem pedido real, com **Enter automatico DESLIGADO**.
+5. Se o Android bloquear a acessibilidade, o teclado v2 ainda pode ser utilizado com foco manual, enquanto a politica de instalacao e resolvida.
+
+Este pacote e o **projeto-fonte** para GitHub Actions, nao e um APK ja compilado e testado no coletor.
