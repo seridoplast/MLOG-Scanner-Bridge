@@ -6,8 +6,8 @@ android {
         applicationId 'br.com.seridoplast.mlogbridge'
         minSdk 26
         targetSdk 35
-        versionCode 14
-        versionName '1.4-fila-e-confirmacao'
+        versionCode 15
+        versionName '1.5-foco-e-confirmacao'
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17

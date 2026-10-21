@@ -93,7 +93,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             receiverRegistered=true;
             // Versoes anteriores podiam deixar o teclado oculto pelo controlador.
             restoreKeyboard();
-            status("v1.4: fila de leituras, foco confirmado e Enter com verificacao.");
+            status("v1.5: editor com re-tentativa e confirmacao Gboard verificada.");
         }catch(RuntimeException e){status("Falha ao registrar o broadcast do scanner.");}
     }
 
@@ -583,9 +583,32 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             return; // proxima tentativa agendada aguarda foco Flutter
         }
         String code=pendingCode;
-        trace("EDITOR_READY_"+intendedScreen);
-        cancelPending();
+        // Nao descartar o codigo antes de ACTION_SET_TEXT ter sido aceito.
+        // Na v1.4 o Flutter podia expor EditText e so depois registrar
+        // ACTION_SET_TEXT; a leitura era perdida nesse intervalo.
         focusAndSet(editor,code);
+    }
+
+    private long lastEditorRetryLog;
+    /** Preserva UMA leitura que aguarda o Flutter disponibilizar ACTION_SET_TEXT.
+     * Sem clipboard, sem digitacao sintetica privilegiada e sem configurar CMX. */
+    private void deferEditorAction(String code,String stage){
+        if(scanQueue.isIdle())return;
+        long now=SystemClock.elapsedRealtime();
+        if(pendingCode==null){
+            AccessibilityNodeInfo root=mlogRoot();
+            ScreenInfo info=root==null?null:inspect(root);
+            if(info==null || info.login || info.dialog || "desconhecida".equals(info.screen)){
+                trace("EDITOR_LOST_BEFORE_RETRY");
+                finishQueuedScan("editor_indisponivel");return;
+            }
+            startPending(code,info.screen);
+            retryFill(serial,info.screen);
+        }
+        if(now-lastEditorRetryLog>400){
+            lastEditorRetryLog=now;
+            trace(stage);
+        }
     }
 
     private void focusAndSet(AccessibilityNodeInfo editor,String code){
@@ -598,6 +621,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         CharSequence existing=editor.getText();
         if(existing!=null && existing.length()>0){
             if(code.equals(existing.toString().trim())){
+                cancelPending();
                 status("Codigo no campo: verificando Enter desta leitura.");
                 queueEnter(code,450);
                 return;
@@ -618,22 +642,29 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             // A proxima ACTION_SET_TEXT substitui o codigo anterior.
         }
         try{
-            // O Flutter por vezes abre o teclado so com clique (foco isolado nao basta).
+            // Foco e disponibilidade da acao podem mudar em frames distintos
+            // no Flutter. Aguardar em vez de perder a primeira leitura.
             if(!editor.isFocused()){
-                if(editor.isClickable()) editor.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-                editor.performAction(AccessibilityNodeInfo.ACTION_FOCUS);
-            }
-            if(!supports(editor,AccessibilityNodeInfo.ACTION_SET_TEXT)){
-                status("Flutter nao expos ACTION_SET_TEXT; codigo nao enviado.");finishQueuedScan("sem_set_text");return;
+                focusOrClick(editor);
+                deferEditorAction(code,"WAIT_EDITOR_FOCUS");
+                return;
             }
             Bundle data=new Bundle();
             data.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,code);
+            // Alguns widgets anunciam EditText antes da ACTION_SET_TEXT.
+            // A tentativa direta e segura para este editor ja verificado;
+            // caso o Android recuse, conservar a leitura e aguardar um evento.
+            boolean advertised=supports(editor,AccessibilityNodeInfo.ACTION_SET_TEXT);
             boolean done=editor.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,data);
-            if(!done){status("MLOG recusou preencher o campo de leitura.");finishQueuedScan("set_text_recusado");return;}
+            if(!done){
+                deferEditorAction(code,advertised?"SET_TEXT_RETRY":"ACTION_SET_TEXT_PENDING");
+                return;
+            }
             AccessibilityNodeInfo currentRoot=mlogRoot();
             ScreenInfo currentInfo=currentRoot==null?null:inspect(currentRoot);
             lastEnteredByBridge=code;
             lastEnteredScreen=currentInfo==null?"":currentInfo.screen;
+            cancelPending();
             trace("SET_TEXT_OK");
             status("Leitura inserida: aguardando confirmacao.");
             // O estado preparado sera limpo ao terminar ESTA leitura;
@@ -719,11 +750,22 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 scheduleConfirm(expected,attempt,330);
                 return;
             }
+            // No CMX Android 14 o Gboard desenha a tecla ✓, mas nao a
+            // expoe como no clicavel. So neste layout homologado e SOMENTE
+            // com codigo presente em editor MLOG focado, tentar o ponto da
+            // tecla de acao DENTRO da janela do teclado (nao no MLOG).
+            if(tapKnownGboardConfirm(info,editor)){
+                trace("GBOARD_ACTION_GESTURE");
+                verifyingImeClick=true;
+                scheduleConfirm(expected,attempt,380);
+                return;
+            }
             trace("GBOARD_ENTER_NOT_FOUND");
         }
         if(verifyingImeClick){
-            status("Enter enviado ao teclado; verifique resultado no MLOG.");
-            finishQueuedScan("tecla_gboard_enviada");
+            trace("ENTER_GESTURE_UNCONFIRMED");
+            status("Tecla de confirmacao acionada, mas codigo ainda visivel no campo; verificar MLOG.");
+            finishQueuedScan("confirmacao_nao_verificada");
             return;
         }
         if(age<1750 && !isImeVisible()){
@@ -735,6 +777,56 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     }
     private void scheduleConfirm(String expected,long id,long delay){
         main.postDelayed(()->confirmEnteredCode(expected,id),Math.max(50,delay));
+    }
+
+    /** Fallback exclusivo do equipamento CMX 720x1440 / Gboard observado.
+     * No diagnostico o Gboard nao expoe a tecla ✓ por acessibilidade. O
+     * usuario confirmou o teclado numerico com ✓ na ultima coluna e linha.
+     * Acessibilidade limita gestos ao MLOG e aqui validamos a janela IME,
+     * app de destino, campo focado, tamanho, e geometria da tela. */
+    private boolean tapKnownGboardConfirm(ScreenInfo info,AccessibilityNodeInfo editor){
+        if(info==null || editor==null || !editor.isEditable() ||
+           !editor.isFocused() || editor.isPassword() ||
+           blockedLabel(tag(editor)) || info.login || info.dialog)return false;
+        if(!("separacao".equals(info.screen) || "atividades".equals(info.screen) ||
+             "conferencia_venda".equals(info.screen) || "consulta".equals(info.screen) ||
+             "pedidos".equals(info.screen) || "notas".equals(info.screen)))return false;
+        Point p=realScreenSize();
+        // A calibracao abaixo e valida SOMENTE para o coletor diagnosticado.
+        if(p.x<710 || p.x>730 || p.y<1420 || p.y>1460)return false;
+        final float x=p.x*.872f, y=p.y*.921f;
+        try{
+            for(AccessibilityWindowInfo w:getWindows()){
+                if(w.getType()!=AccessibilityWindowInfo.TYPE_INPUT_METHOD)continue;
+                AccessibilityNodeInfo ime=w.getRoot();
+                if(ime==null || ime.getPackageName()==null ||
+                   !"com.google.android.inputmethod.latin".contentEquals(ime.getPackageName()))continue;
+                Rect wr=new Rect();w.getBoundsInScreen(wr);
+                if(wr.width()<p.x*.88f || wr.height()<p.y*.18f ||
+                   wr.top>p.y*.82f || wr.bottom<p.y*.92f ||
+                   !wr.contains((int)x,(int)y))continue;
+                // Nao clicar se uma tecla ou botao nomeado ocupou essa regiao
+                // com texto que NAO corresponde a uma confirmacao.
+                List<AccessibilityNodeInfo> keys=new ArrayList<>();visit(ime,keys,0);
+                for(AccessibilityNodeInfo key:keys){
+                    if(!key.isVisibleToUser())continue;
+                    Rect r=new Rect();key.getBoundsInScreen(r);
+                    if(r.isEmpty() || !r.contains((int)x,(int)y))continue;
+                    String name=norm(key.getContentDescription()).trim();
+                    if(name.isEmpty())name=norm(key.getText()).trim();
+                    if(name.length()==1 && Character.isDigit(name.charAt(0)))return false;
+                    if(has(name,"apagar","backspace","delete","excluir","voltar","camera"))return false;
+                }
+                Path path=new Path();path.moveTo(x,y);
+                GestureDescription.Builder g=new GestureDescription.Builder();
+                g.addStroke(new GestureDescription.StrokeDescription(path,0,65));
+                return dispatchGesture(g.build(),new GestureResultCallback(){
+                    @Override public void onCompleted(GestureDescription description){trace("GBOARD_GESTURE_COMPLETED");}
+                    @Override public void onCancelled(GestureDescription description){trace("GBOARD_GESTURE_CANCELLED");}
+                },main);
+            }
+        }catch(RuntimeException ignored){}
+        return false;
     }
 
     /** Nunca usar toque por posicao no teclado numerico: o local onde era o

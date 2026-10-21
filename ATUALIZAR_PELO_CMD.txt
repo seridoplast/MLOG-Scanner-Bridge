@@ -1,1 +1,19 @@
-Veja README.md para os comandos GitHub e ADB da v1.4.
+MLOG SCANNER BRIDGE v1.5
+
+1) Salve MLOG_Scanner_Bridge_v15_Diagnostico_Corrigido.zip em Downloads.
+2) No CMD:
+cd /d "%USERPROFILE%\Downloads\MLOG-Scanner-Bridge"
+powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v15_Diagnostico_Corrigido.zip') -DestinationPath . -Force"
+git add -A
+git commit -m "MLOG Bridge v15 correcao diagnostico"
+git push origin main
+
+3) No GitHub Actions, somente apos Success, baixar MLOG-Scanner-Bridge-v15-APK e extrair app-debug.apk em Downloads.
+4) Conectar coletor, desbloquear e executar:
+"%USERPROFILE%\Downloads\platform-tools\adb.exe" devices
+"%USERPROFILE%\Downloads\platform-tools\adb.exe" install -r "%USERPROFILE%\Downloads\app-debug.apk"
+
+5) Se falhar, capturar diagnostico:
+"%USERPROFILE%\Downloads\platform-tools\adb.exe" logcat -d -v time -s MLOGBridge:I > "%USERPROFILE%\Downloads\MLOG_Bridge_Diagnostico_v15.txt"
+
+Teste primeiro com codigo correto em pedido nao operacional. Consulte README.md.
