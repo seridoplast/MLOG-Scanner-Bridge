@@ -6,227 +6,300 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
+import android.content.res.Configuration;
+import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.content.res.Configuration;
-import android.net.Uri;
+import android.provider.Settings;
 import android.view.Gravity;
 import android.view.View;
-import android.widget.RadioGroup;
-import android.widget.RadioButton;
-import android.provider.Settings;
 import android.widget.Button;
 import android.widget.CheckBox;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
+
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-public class MainActivity extends Activity {
-    private final Handler handler=new Handler(Looper.getMainLooper());
-    private final LinkedHashMap<String,CheckBox> formats=new LinkedHashMap<>();
+/**
+ * v0.7. Interface monocromatica por paginas, com Gboard intacto.
+ * O teste exibe leituras somente na tela; o codigo nao vai para preferências.
+ */
+public final class MainActivity extends Activity {
+    private final Handler handler = new Handler(Looper.getMainLooper());
     private SharedPreferences prefs;
-    private LinearLayout layout;
-    private int ink, subInk, panel;
     private String themeChoice;
-    private TextView status,preview;
-    private boolean subscribed;
-    private final BroadcastReceiver scanTest=new BroadcastReceiver(){
-        @Override public void onReceive(Context c,Intent intent){
-            if(preview==null)return;
-            String b=ScannerProtocol.barcode(intent);
-            if(b==null)preview.setText("Evento do scanner recebido, sem codigo reconhecido.");
-            else preview.setText("TESTE LOCAL: "+b+"\nFormato: "+ScannerProtocol.type(intent));
-            // Apenas a tela de teste mostra o codigo. Nenhum dado e persistido.
+    private int page = 0;
+    private int bg, card, line, ink, muted, inverse, inkSurface;
+    private LinearLayout root, content, footer;
+    private TextView preview, lastStatus, serviceState;
+    private boolean receiving;
+    private int scanCount;
+    private String lastSample;
+    private String lastSymbology;
+    private final LinkedHashMap<String,CheckBox> formatChecks=new LinkedHashMap<>();
+
+    private final BroadcastReceiver scannerTest = new BroadcastReceiver(){
+        @Override public void onReceive(Context context,Intent intent){
+            if(!isActiveAppScreen() || page!=0)return;
+            String code=ScannerProtocol.barcode(intent);
+            if(code==null){
+                lastSample=null;
+                if(preview!=null)preview.setText("Sinal recebido sem codigo");
+                return;
+            }
+            scanCount++;
+            lastSample=code;
+            lastSymbology=ScannerProtocol.type(intent);
+            if(preview!=null)preview.setText(code);
+            if(lastStatus!=null)lastStatus.setText("Leitura "+scanCount +
+                    (lastSymbology==null || lastSymbology.isEmpty()?"":" · "+lastSymbology));
         }
     };
-    private final Runnable tick=new Runnable(){
+    private boolean isActiveAppScreen(){return !isFinishing() && !isDestroyed();}
+    private final Runnable ticker=new Runnable(){
         @Override public void run(){
-            if(status!=null){
-                String a=MlogFocusAccessibilityService.current()!=null?"ATIVA":"INATIVA";
-                status.setText("Acessibilidade: "+a+"\n"+
-                    prefs.getString("last_status","Sem diagnostico ainda."));
+            if(serviceState!=null){
+                boolean active=MlogFocusAccessibilityService.current()!=null;
+                serviceState.setText(active?"Acessibilidade ativa":"Acessibilidade desativada");
+            }
+            if(page==2 && lastStatus!=null){
+                lastStatus.setText(prefs.getString("last_status","Nenhum diagnostico ainda."));
             }
             handler.postDelayed(this,1000);
         }
     };
+
     @Override public void onCreate(Bundle saved){
-        // Escolhe o estilo ANTES da criacao das views; AUTO segue o tema Android.
-        SharedPreferences uiPrefs=getSharedPreferences(ScanCoordinator.PREFS, MODE_PRIVATE);
-        themeChoice=uiPrefs.getString("theme_choice", "auto");
-        boolean dark=effectiveDark(themeChoice);
-        setTheme(dark ? R.style.BridgeThemeDark : R.style.BridgeThemeLight);
+        prefs=getSharedPreferences(ScanCoordinator.PREFS,MODE_PRIVATE);
+        themeChoice=prefs.getString("theme_choice","auto");
+        boolean dark=darkNow();
+        setTheme(dark?R.style.BridgeThemeDark:R.style.BridgeThemeLight);
         super.onCreate(saved);
-        prefs=uiPrefs;
-        ink=dark?0xfff4f6fa:0xff183145;
-        subInk=dark?0xffbec9d2:0xff52616b;
-        panel=dark?0xff243547:0xffe8f0f4;
-        ScrollView v=new ScrollView(this);
-        layout=new LinearLayout(this);
-        layout.setOrientation(LinearLayout.VERTICAL);
-        layout.setPadding(dp(18),dp(16),dp(18),dp(32));
-        v.addView(layout);setContentView(v);
-        layout.setBackgroundColor(dark?0xff121d29:0xfff7f9fc);
-
-        LinearLayout top=new LinearLayout(this);
-        top.setGravity(Gravity.CENTER_VERTICAL);
-        top.setOrientation(LinearLayout.HORIZONTAL);
-        TextView title=new TextView(this);
-        title.setText("MLOG Scanner Bridge v0.6");
-        title.setTextSize(21);
-        title.setTextColor(ink);
-        title.setTypeface(null,1);
-        top.addView(title,new LinearLayout.LayoutParams(0,-2,1f));
-        Button moon=new Button(this);
-        moon.setText(dark?"☀":"☾");
-        moon.setAllCaps(false);
-        moon.setContentDescription("Alternar tema: automatico, escuro e claro");
-        moon.setOnClickListener(w->cycleTheme());
-        top.addView(moon,new LinearLayout.LayoutParams(dp(64),-2));
-        layout.addView(top);
-        text("Tema atual: "+themeName(themeChoice)+". Use o botao ☾/☀ ou Configuracoes abaixo.");
-        heading("⚙ Configuracoes / Aparencia");
-        text("Automatico acompanha o modo claro ou escuro configurado no Android.");
-        RadioGroup themeOptions=new RadioGroup(this);
-        themeOptions.setOrientation(RadioGroup.HORIZONTAL);
-        String[] modes={"auto","dark","light"};
-        String[] captions={"Sistema","Escuro","Claro"};
-        for(int j=0;j<modes.length;j++){
-            final String mode=modes[j];
-            RadioButton b=new RadioButton(this);
-            b.setId(View.generateViewId());
-            b.setText(captions[j]);
-            b.setTextColor(ink);
-            b.setTextSize(14);
-            b.setChecked(mode.equals(themeChoice));
-            themeOptions.addView(b,new RadioGroup.LayoutParams(0,-2,1));
-            b.setOnClickListener(w->chooseTheme(mode));
+        if(saved!=null)page=saved.getInt("page",0);
+        palette(dark);
+        displayPage();
+    }
+    @Override protected void onSaveInstanceState(Bundle out){super.onSaveInstanceState(out);out.putInt("page",page);}
+    private void palette(boolean dark){
+        bg=dark?0xff0b0b0b:0xfffafafa;
+        card=dark?0xff181818:0xffffffff;
+        line=dark?0xff303030:0xffe5e5e5;
+        ink=dark?0xfff6f6f6:0xff151515;
+        muted=dark?0xffa6a6a6:0xff696969;
+        inverse=dark?0xff111111:0xffffffff;
+        inkSurface=ink;
+        getWindow().setStatusBarColor(bg);
+        getWindow().setNavigationBarColor(bg);
+        getWindow().getDecorView().setSystemUiVisibility(dark?0:View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR|View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+    }
+    private int dp(float v){return (int)(v*getResources().getDisplayMetrics().density+0.5f);}
+    private GradientDrawable shape(int color,int stroke,int radius){
+        GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(dp(radius));
+        if(stroke!=0)d.setStroke(dp(1),stroke);
+        return d;
+    }
+    private LinearLayout column(){LinearLayout l=new LinearLayout(this);l.setOrientation(LinearLayout.VERTICAL);return l;}
+    private LinearLayout row(){LinearLayout l=new LinearLayout(this);l.setOrientation(LinearLayout.HORIZONTAL);l.setGravity(Gravity.CENTER_VERTICAL);return l;}
+    private TextView label(String value,int sp,int color,boolean bold){
+        TextView t=new TextView(this);t.setText(value);t.setTextSize(sp);t.setTextColor(color);
+        if(bold)t.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+        t.setIncludeFontPadding(true);return t;
+    }
+    private void space(LinearLayout dest,int px){View v=new View(this);dest.addView(v,new LinearLayout.LayoutParams(1,dp(px)));}
+    private LinearLayout card(){
+        LinearLayout c=column();c.setPadding(dp(18),dp(18),dp(18),dp(18));
+        c.setBackground(shape(card,line,20));
+        LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(-1,-2);cp.bottomMargin=dp(14);
+        content.addView(c,cp);return c;
+    }
+    private void subtitle(LinearLayout c,String value){
+        TextView t=label(value,13,muted,false);LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
+        lp.topMargin=dp(6);c.addView(t,lp);
+    }
+    private TextView action(String name,boolean filled,Runnable callback){
+        TextView b=label(name,14,filled?inverse:ink,true);
+        b.setGravity(Gravity.CENTER);b.setPadding(dp(14),dp(13),dp(14),dp(13));
+        b.setBackground(shape(filled?ink:card,filled?0:line,13));
+        b.setOnClickListener(w->callback.run());b.setClickable(true);
+        return b;
+    }
+    private void button(LinearLayout dest,String text,boolean filled,Runnable callback){
+        TextView b=action(text,filled,callback);
+        LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.topMargin=dp(12);
+        dest.addView(b,p);
+    }
+    private void displayPage(){
+        root=column();root.setBackgroundColor(bg);
+        setContentView(root);
+        LinearLayout head=row();head.setPadding(dp(20),dp(19),dp(20),dp(13));
+        LinearLayout left=row();
+        ImageView logo=new ImageView(this);logo.setImageResource(R.drawable.bridge_logo);
+        logo.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        left.addView(logo,new LinearLayout.LayoutParams(dp(42),dp(42)));
+        TextView name=label("mlog bridge",19,ink,true);
+        LinearLayout.LayoutParams nl=new LinearLayout.LayoutParams(-2,-2);nl.leftMargin=dp(12);
+        left.addView(name,nl);
+        head.addView(left,new LinearLayout.LayoutParams(0,-2,1));
+        TextView moon=action(darkNow()?"☀":"☾",false,this::nextTheme);
+        moon.setContentDescription("Alternar tema");head.addView(moon,new LinearLayout.LayoutParams(dp(49),dp(48)));
+        root.addView(head);
+        View divider=new View(this);divider.setBackgroundColor(line);root.addView(divider,new LinearLayout.LayoutParams(-1,dp(1)));
+        ScrollView sc=new ScrollView(this);sc.setFillViewport(true);sc.setClipToPadding(false);
+        content=column();content.setPadding(dp(20),dp(20),dp(20),dp(14));sc.addView(content);
+        root.addView(sc,new LinearLayout.LayoutParams(-1,0,1));
+        footer=row();footer.setPadding(dp(10),dp(8),dp(10),dp(9));
+        String[] names={"Início","Ajustes","Diagnóstico","Sobre"};
+        for(int i=0;i<names.length;i++){
+            final int target=i;
+            TextView tab=label(names[i],12,i==page?inverse:muted,i==page);
+            tab.setGravity(Gravity.CENTER);tab.setPadding(dp(7),dp(13),dp(7),dp(13));
+            tab.setBackground(shape(i==page?ink:bg,i==page?0:line,13));
+            LinearLayout.LayoutParams tp=new LinearLayout.LayoutParams(0,-2,1);tp.leftMargin=dp(4);
+            footer.addView(tab,tp);tab.setOnClickListener(v->show(target));
         }
-        layout.addView(themeOptions);
-
-        heading("MLOG + CMX");
-        text("v0.6: busca da conferencia de venda e bipagem de atividades usam rotinas separadas de foco. Preserva o Gboard; o teclado normal nao precisa ser trocado.");
-        text("AVISO: a acessibilidade pode consultar elementos do MLOG. Nao ha permissao de internet, nem gravacao de codigos em disco; uma transmissao externa de broadcast nao e autenticada pelo CMX. Teste em ambiente controlado.");
-
-        heading("1. Permissoes e seguranca");
-        button("Abrir acessibilidade no Android",()->startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
-        button("Abrir informacoes deste aplicativo",()->{
-            Intent i=new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                Uri.parse("package:"+getPackageName()));
-            startActivity(i);
+        root.addView(footer);
+        preview=null;lastStatus=null;serviceState=null;
+        if(page==0)home();else if(page==1)settings();else if(page==2)diagnostic();else about();
+    }
+    private void show(int p){page=p;displayPage();}
+    private void title(String s,String explanation){
+        TextView t=label(s,27,ink,true);content.addView(t);
+        if(explanation!=null && !explanation.isEmpty()){
+            TextView e=label(explanation,14,muted,false);
+            LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.topMargin=dp(5);lp.bottomMargin=dp(22);
+            content.addView(e,lp);
+        }else space(content,22);
+    }
+    private void home(){
+        title("Leitura de códigos","Teste o gatilho antes de abrir o MLOG.");
+        LinearLayout sample=card();
+        TextView statusLabel=label("TESTE DO SCANNER",11,muted,true);sample.addView(statusLabel);
+        space(sample,20);
+        TextView scanner=label("▥",43,ink,true);scanner.setGravity(Gravity.CENTER);sample.addView(scanner);
+        preview=label(lastSample==null?"Aguardando leitura...":lastSample,19,ink,true);
+        preview.setGravity(Gravity.CENTER);preview.setTextIsSelectable(true);sample.addView(preview);
+        lastStatus=label(scanCount==0?"Aperte o gatilho do coletor":"Leitura "+scanCount,12,muted,false);
+        lastStatus.setGravity(Gravity.CENTER);space(sample,9);sample.addView(lastStatus);
+        space(sample,18);
+        button(sample,"Testar gatilho",true,()->ScannerProtocol.trigger(this));
+        button(sample,"Configurar CMX",false,()->{
+            ScannerProtocol.configureBroadcast(this);toast("Comandos enviados ao scanner.");
         });
-        text("Acessibilidade depende da autorizacao do Android. Se aparecer 'Configuracao restrita': tente ativar o servico, volte a Configuracoes > Aplicativos > Ver todos > MLOG Scanner Bridge e procure 'Permitir configuracoes restritas' no menu ou na pagina. Se nao existir, instale pelo ADB em dispositivo corporativo de teste, como ja funcionou no Android 14; para muitos aparelhos, prefira implantacao gerenciada. Nao desligue Play Protect.");
-        option("Ativar as leituras assistidas", "enabled",false);
-        option("Ocultar teclado virtual durante a leitura", "hide_keyboard_on_scan",true);
-        option("Reconhecer toques nas telas de atividade e conferencia (720x1440)", "guided_taps",true);
-        option("Tentar foco por layout relativo na separacao de produtos (experimental)", "layout_fallback",false);
-        text("Toques guiados usam proporcoes das imagens fornecidas e SOMENTE acontecem nas telas reconhecidas. Desative em coletores com tela diferente. Se o Flutter nao oferecer um campo editavel valido, o Bridge NAO injeta codigo. A opcao experimental de produtos permanece desligada.");
-        option("Enviar Enter apos inserir codigo (TESTAR antes)", "send_enter",false);
-        status=new TextView(this);
-        status.setTextSize(15);status.setPadding(dp(10),dp(10),dp(10),dp(10));
-        status.setBackgroundColor(panel);status.setTextColor(ink);layout.addView(status);
-        button("Abrir MLOG",this::openMlog);
-
-        heading("2. Scanner CMX");
-        text("Configura o coletor para transmitir leituras por broadcast. Isso altera a configuracao do leitor fisico, nao do MLOG.");
-        button("Configurar scanner para broadcast",()->{
-            ScannerProtocol.configureBroadcast(this);toast("Comandos enviados. Teste a leitura abaixo.");
-        });
-        button("Acionar scanner (teste)",()->ScannerProtocol.trigger(this));
-        preview=new TextView(this);preview.setText("Teste local: aguardando codigo...");
-        preview.setBackgroundColor(panel);preview.setTextColor(ink);preview.setPadding(dp(12),dp(12),dp(12),dp(12));
-        preview.setTextIsSelectable(true);layout.addView(preview);
-        text("O codigo so aparece nesta tela de teste, sem ser salvo. No MLOG, os valores nunca aparecem no historico deste app.");
-
-        heading("3. Formatos (opcional)");
-        int defaults=1|2|4|8|16|32|8192|16384|524288;
-        int mask=prefs.getInt("formats",defaults);
-        for(Map.Entry<String,Integer> e:ScannerProtocol.FORMATS.entrySet()){
-            CheckBox cb=new CheckBox(this);cb.setText(e.getKey());
-            cb.setChecked((mask&e.getValue())!=0);formats.put(e.getKey(),cb);layout.addView(cb);
+        LinearLayout service=card();
+        service.addView(label("Serviço",17,ink,true));
+        serviceState=label("Verificando acessibilidade...",14,muted,false);
+        space(service,8);service.addView(serviceState);
+        button(service,"Abrir MLOG",true,this::openMlog);
+        button(service,"Acessibilidade do Android",false,()->startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
+    }
+    private void settings(){
+        title("Ajustes","Preferências de leitura e aparência.");
+        LinearLayout read=card();read.addView(label("Leitura",17,ink,true));
+        check(read,"Leitura assistida","enabled",false);
+        check(read,"Ocultar teclado durante o bipe","hide_keyboard_on_scan",true);
+        check(read,"Toque guiado (atividades e busca)","guided_taps",true);
+        check(read,"Foco experimental em produtos","layout_fallback",false);
+        check(read,"Enviar Enter automático","send_enter",false);
+        LinearLayout appearance=card();appearance.addView(label("Aparência",17,ink,true));
+        subtitle(appearance,"Seguir o sistema ou escolher manualmente.");
+        LinearLayout bar=row();LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(-1,-2);bp.topMargin=dp(14);
+        for(String[] option:new String[][]{{"auto","Sistema"},{"dark","Escuro"},{"light","Claro"}}){
+            boolean selected=option[0].equals(themeChoice);
+            TextView v=action(option[1],selected,()->chooseTheme(option[0]));
+            LinearLayout.LayoutParams op=new LinearLayout.LayoutParams(0,-2,1);op.leftMargin=dp(4);
+            bar.addView(v,op);
         }
-        button("Aplicar formatos",()->{
-            int m=0;
-            for(Map.Entry<String,CheckBox> e:formats.entrySet())
-                if(e.getValue().isChecked())m|=ScannerProtocol.FORMATS.get(e.getKey());
-            if(m==0){toast("Selecione pelo menos um formato.");return;}
-            prefs.edit().putInt("formats",m).apply();ScannerProtocol.configureFormats(this,m);
-            toast("Enviado ao hardware. Suporte depende do scanner.");
+        appearance.addView(bar,bp);
+        LinearLayout scanner=card();scanner.addView(label("Formatos",17,ink,true));
+        subtitle(scanner,"Altere só se o CMX não reconhecer algum padrão.");
+        formatChecks.clear();
+        int mask=prefs.getInt("formats",1|2|4|8|16|32|8192|16384|524288);
+        for(Map.Entry<String,Integer> entry:ScannerProtocol.FORMATS.entrySet()){
+            CheckBox b=new CheckBox(this);b.setButtonTintList(android.content.res.ColorStateList.valueOf(ink));
+            b.setText(entry.getKey());b.setTextColor(ink);b.setTextSize(14);
+            b.setChecked((mask&entry.getValue())!=0);formatChecks.put(entry.getKey(),b);
+            scanner.addView(b);
+        }
+        button(scanner,"Aplicar formatos",false,()->{
+            int flags=0;
+            for(Map.Entry<String,CheckBox> entry:formatChecks.entrySet())
+                if(entry.getValue().isChecked())flags|=ScannerProtocol.FORMATS.get(entry.getKey());
+            if(flags==0){toast("Selecione ao menos um formato.");return;}
+            prefs.edit().putInt("formats",flags).apply();ScannerProtocol.configureFormats(this,flags);
+            toast("Configuração enviada ao coletor.");
         });
-
-        heading("4. Procedimento recomendado");
-        text("1. Configure scanner para broadcast e teste um codigo neste aplicativo.\n"+
-             "2. Deixe o Gboard como teclado padrao e mantenha Enter desligado.\n"+
-             "3. Teste primeiro Busca da conferencia de venda: a caixa de codigo fica no topo.\n"+
-             "4. Teste Bipar Atividades de Separacao: o Bridge procura o icone de teclado na base.\n"+
-             "5. Confira se o codigo entrou NO CAMPO CORRETO antes de confirmar.\n"+
-             "6. Teste separacao de produtos somente depois; seu comportamento foi preservado.\n"+
-             "7. Se o diagnostico indicar editor nao exposto, envie o status e uma captura.");
-        text("Observacao: ACTION_SET_TEXT exige um campo editavel acessivel; em Flutter nao ha garantia. Confira o diagnostico, principalmente em telas de notas.");
+    }
+    private void diagnostic(){
+        title("Diagnóstico","Status da comunicação com o MLOG.");
+        LinearLayout card=card();card.addView(label("Último evento",17,ink,true));
+        lastStatus=label(prefs.getString("last_status","Nenhum diagnóstico ainda."),14,muted,false);
+        lastStatus.setTextIsSelectable(true);space(card,11);card.addView(lastStatus);
+        button(card,"Copiar diagnóstico",false,()->{
+            android.content.ClipboardManager m=(android.content.ClipboardManager)getSystemService(Context.CLIPBOARD_SERVICE);
+            if(m!=null)m.setPrimaryClip(android.content.ClipData.newPlainText("MLOG Bridge diagnóstico",lastStatus.getText()));
+            toast("Diagnóstico copiado. Não inclui códigos.");
+        });
+        LinearLayout help=card();help.addView(label("O que testar",17,ink,true));
+        subtitle(help,"1. Abra 'Bipar Atividades de Separação'.\n2. Aperte o gatilho uma vez.\n3. Se não preencher, consulte o evento acima.\n4. Não confirme atividades reais nos testes.");
+        button(help,"Abrir MLOG",true,this::openMlog);
+    }
+    private void about(){
+        title("Sobre","MLOG Scanner Bridge · v0.7");
+        LinearLayout about=card();about.addView(label("Integração local",17,ink,true));
+        subtitle(about,"Criado para o scanner físico CMX e o MLOG. Sem acesso à internet. Os códigos de leitura não são salvos em histórico.");
+        space(about,10);
+        subtitle(about,"Acessibilidade limitada ao pacote do MLOG. Toques automatizados e campos Flutter exigem testes no coletor.");
+        LinearLayout control=card();control.addView(label("Permissões",17,ink,true));
+        button(control,"Informações do app",false,()->startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName()))));
+        button(control,"Acessibilidade",false,()->startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
+        subtitle(control,"O Android precisa autorizar o serviço. Não desative o Play Protect para usar o Bridge.");
+    }
+    private void check(LinearLayout dest,String text,String key,boolean fallback){
+        CheckBox b=new CheckBox(this);b.setButtonTintList(android.content.res.ColorStateList.valueOf(ink));
+        b.setText(text);b.setTextColor(ink);b.setTextSize(14);
+        b.setPadding(0,dp(5),0,dp(5));b.setChecked(prefs.getBoolean(key,fallback));
+        b.setOnCheckedChangeListener((control,on)->prefs.edit().putBoolean(key,on).apply());
+        dest.addView(b);
     }
     private void openMlog(){
         Intent i=getPackageManager().getLaunchIntentForPackage(ScanCoordinator.TARGET);
-        if(i==null){toast("MLOG nao foi encontrado.");return;}startActivity(i);
+        if(i==null){toast("MLOG não encontrado.");return;}
+        startActivity(i);
     }
-    private int dp(int n){return (int)(n*getResources().getDisplayMetrics().density+0.5f);}
-    private void heading(String t){
-        TextView v=new TextView(this);v.setText(t);v.setTextSize(21);
-        v.setTextColor(ink);v.setPadding(0,dp(16),0,dp(6));layout.addView(v);
+    private boolean darkNow(){
+        if("dark".equals(themeChoice))return true;
+        if("light".equals(themeChoice))return false;
+        return (getResources().getConfiguration().uiMode&Configuration.UI_MODE_NIGHT_MASK)==Configuration.UI_MODE_NIGHT_YES;
     }
-    private void text(String t){
-        TextView v=new TextView(this);v.setText(t);v.setTextSize(14);
-        v.setTextColor(subInk);v.setPadding(0,dp(5),0,dp(10));layout.addView(v);
+    private void chooseTheme(String value){
+        prefs.edit().putString("theme_choice",value).apply();themeChoice=value;
+        recreate();
     }
-    private void button(String t,Runnable r){
-        Button v=new Button(this);v.setText(t);v.setAllCaps(false);
-        v.setOnClickListener(w->r.run());layout.addView(v);
-    }
-    private void option(String t,String k,boolean defaultValue){
-        CheckBox v=new CheckBox(this);v.setText(t);
-        v.setChecked(prefs.getBoolean(k,defaultValue));
-        v.setOnCheckedChangeListener((b,value)->prefs.edit().putBoolean(k,value).apply());
-        layout.addView(v);
-    }
-    private boolean effectiveDark(String mode){
-        if("dark".equals(mode))return true;
-        if("light".equals(mode))return false;
-        return (getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK)
-                == Configuration.UI_MODE_NIGHT_YES;
-    }
-    private String themeName(String mode){
-        if("dark".equals(mode))return "escuro";
-        if("light".equals(mode))return "claro";
-        return "automatico (Android)";
-    }
-    private void chooseTheme(String mode){
-        if(!mode.equals(themeChoice)){
-            prefs.edit().putString("theme_choice",mode).apply();
-            recreate();
-        }
-    }
-    private void cycleTheme(){
-        String next="auto".equals(themeChoice)?"dark":
-                    "dark".equals(themeChoice)?"light":"auto";
-        chooseTheme(next);
-    }
-    private void toast(String t){Toast.makeText(this,t,Toast.LENGTH_LONG).show();}
+    private void nextTheme(){chooseTheme(darkNow()?"light":"dark");}
+    private void toast(String text){Toast.makeText(this,text,Toast.LENGTH_SHORT).show();}
     @Override protected void onResume(){
         super.onResume();
         IntentFilter f=new IntentFilter();for(String a:ScannerProtocol.ACTIONS)f.addAction(a);
         try{
-            if(Build.VERSION.SDK_INT>=33)registerReceiver(scanTest,f,Context.RECEIVER_EXPORTED);
-            else registerReceiver(scanTest,f);
-            subscribed=true;
+            if(Build.VERSION.SDK_INT>=33)registerReceiver(scannerTest,f,Context.RECEIVER_EXPORTED);
+            else registerReceiver(scannerTest,f);
+            receiving=true;
         }catch(RuntimeException ignored){}
-        handler.post(tick);
+        handler.post(ticker);
     }
     @Override protected void onPause(){
-        handler.removeCallbacks(tick);
-        if(subscribed)try{unregisterReceiver(scanTest);}catch(RuntimeException ignored){}
-        subscribed=false;super.onPause();
+        handler.removeCallbacks(ticker);
+        if(receiving)try{unregisterReceiver(scannerTest);}catch(RuntimeException ignored){}
+        receiving=false;
+        super.onPause();
     }
 }

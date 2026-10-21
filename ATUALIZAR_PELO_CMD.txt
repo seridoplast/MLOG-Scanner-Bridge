@@ -1,19 +1,24 @@
-MLOG SCANNER BRIDGE v0.6
+MLOG SCANNER BRIDGE v0.7
+========================
 
-1. Coloque MLOG_Scanner_Bridge_v6_Conferencia_Atividades.zip em Downloads.
-2. CMD (uma linha de cada vez):
+BAIXAR O ZIP DA V0.7 EM DOWNLOADS. Atualizar GitHub:
 
 cd /d "%USERPROFILE%\Downloads\MLOG-Scanner-Bridge"
-powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v6_Conferencia_Atividades.zip') -DestinationPath . -Force"
+powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v7_Monocromatico.zip') -DestinationPath . -Force"
 git add -A
-git commit -m "MLOG Bridge v6 busca conferencia e atividades"
+git commit -m "MLOG Bridge v7 atividades e interface"
 git push origin main
 
-3. Abra https://github.com/seridoplast/MLOG-Scanner-Bridge/actions
-4. Na execucao verde, baixe MLOG-Scanner-Bridge-v6-APK.
-5. Instale o APK com o procedimento corporativo autorizado.
+Actions > execucao verde > Artifacts > MLOG-Scanner-Bridge-v7-APK.
+Extrair app-debug.apk para Downloads.
 
-ATENCAO: o projeto nao foi compilado nem testado no aparelho neste ambiente.
-Testar em pedidos de exemplo, com Enter desligado. Acessibilidade precisa de
-concessao de acesso pelo Android. Na conferencia a entrada deve ser o campo
-superior; em atividades, o icone do teclado no rodape do painel.
+INSTALAR PELO CABO USB, com depuracao ativada e computador autorizado:
+
+"%USERPROFILE%\Downloads\platform-tools\adb.exe" devices
+"%USERPROFILE%\Downloads\platform-tools\adb.exe" install -r "%USERPROFILE%\Downloads\app-debug.apk"
+
+Opcional, diagnosticar restricao:
+"%USERPROFILE%\Downloads\platform-tools\adb.exe" shell appops get br.com.seridoplast.mlogbridge
+
+Se unauthorized: desbloquear o coletor e autorizar computador.
+Se falha de assinatura: nao desinstalar sem avaliar backup/configuracoes.

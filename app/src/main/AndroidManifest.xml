@@ -9,6 +9,7 @@
         android:allowBackup="false"
         android:usesCleartextTraffic="false"
         android:label="MLOG Scanner Bridge"
+        android:icon="@mipmap/ic_launcher"
         android:theme="@style/BridgeThemeLight"
         android:supportsRtl="true">
         <activity android:name=".MainActivity" android:exported="true">

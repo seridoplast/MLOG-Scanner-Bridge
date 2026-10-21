@@ -1,11 +1,6 @@
-MLOG Scanner Bridge v0.6
-
-O APK e compilado automaticamente no GitHub Actions.
-1. Envie os arquivos deste ZIP para seu repositorio:
-   https://github.com/seridoplast/MLOG-Scanner-Bridge
-2. Actions > Gerar APK do MLOG Scanner Bridge.
-3. Em uma execucao verde, baixe o artefato MLOG-Scanner-Bridge-v6-APK.
-4. Extrair e instalar app-debug.apk somente em coletor de teste autorizado.
-
-O APK de debug pode mudar de assinatura entre compilações.
-Leia README.md antes de ativar acessibilidade e testar com o MLOG.
+1. Abrir https://github.com/seridoplast/MLOG-Scanner-Bridge/actions
+2. Abrir workflow 'Gerar APK do MLOG Scanner Bridge'.
+3. Esperar Success. Baixar Artifacts 'MLOG-Scanner-Bridge-v7-APK'.
+4. Extrair app-debug.apk para a pasta Downloads do computador.
+5. Instalar via ADB; comando completo no arquivo ATUALIZAR_PELO_CMD.txt.
+AVISO: Esta versao nao foi validada fisicamente no coletor. Testar fora da operacao.
