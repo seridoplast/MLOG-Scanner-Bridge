@@ -2,6 +2,10 @@ package br.com.seridoplast.mlogbridge;
 
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.AccessibilityServiceInfo;
+import android.accessibilityservice.InputMethod;
+import android.view.KeyEvent;
+import android.view.KeyCharacterMap;
+import android.view.inputmethod.EditorInfo;
 import android.accessibilityservice.GestureDescription;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -78,7 +82,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         AccessibilityServiceInfo si=getServiceInfo();
         if(si!=null){
             si.flags|=AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS |
-                      AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;
+                      AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS |
+                      AccessibilityServiceInfo.FLAG_INPUT_METHOD_EDITOR;
             setServiceInfo(si);
         }
         receiver=new BroadcastReceiver(){
@@ -99,7 +104,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             prefs().edit().putBoolean("prearm_field",false).apply();
             // Versoes anteriores podiam deixar o teclado oculto pelo controlador.
             restoreKeyboard();
-            status("v1.7: aguardando tecla de confirmacao pronta; fila e navegacao protegidas.");
+            status("v1.8: Enter direto pelo Android 14, com fallback seguro; CMX somente leitura.");
         }catch(RuntimeException e){status("Falha ao registrar o broadcast do scanner.");}
     }
 
@@ -712,6 +717,10 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private boolean verifyingImeClick;
     private long imeGestureAt;
     private long lastImeWaitLogAt;
+    // API 33+: controla o Enter pelo InputConnection sem clicar no Gboard.
+    private boolean directEnterSent;
+    private long directEnterSentAt;
+    private long lastConnectionLogAt;
 
     private void queueEnter(String expected,long delay){
         final long id=++enterAttempt;
@@ -721,7 +730,10 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         verifyingImeClick=false;
         imeGestureAt=0;
         lastImeWaitLogAt=0;
-        trace("ENTER_WAIT_NATIVE");
+        directEnterSent=false;
+        directEnterSentAt=0;
+        lastConnectionLogAt=0;
+        trace("ENTER_WAIT_INPUT_CONNECTION");
         main.postDelayed(()->confirmEnteredCode(expected,id),delay);
     }
 
@@ -753,7 +765,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         long age=SystemClock.elapsedRealtime()-confirmStartedAt;
         // O diagnostico mostrou que o campo esta preenchido em ~120-300 ms.
         // Dar uma janela curta ao Enter do CMX, nao aguardar 600 ms.
-        if(age<135){scheduleConfirm(expected,attempt,135-age);return;}
+        if(age<90){scheduleConfirm(expected,attempt,90-age);return;}
         if(!editor.isFocused()){
             if(age<1150){
                 focusOrClick(editor);
@@ -765,11 +777,44 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             }
             return;
         }
-        // O Enter do CMX pode chegar antes do editor do Flutter existir.
-        // Aguardar um curto periodo para estabilizar o IME. Caso o Flutter
-        // nao disponibilize ACTION_IME_ENTER, procurar Gboard repetidamente
-        // enquanto a entrada continuar visivel e com o codigo esperado.
-        // Na v1.6, uma unica busca prematura esgotava todas as tentativas.
+        // Prioridade v1.8: InputConnection Android 13+, sem toque no Gboard.
+        // Verificacao de foco / campo / pacote foi feita acima ANTES da acao.
+        if(directEnterSent){
+            // Nao enviar dois Enter para o mesmo bipe. O Flutter pode levar
+            // alguns frames para limpar o campo e atualizar a tela.
+            long since=SystemClock.elapsedRealtime()-directEnterSentAt;
+            if(since<440){
+                scheduleConfirm(expected,attempt,Math.min(110,440-since));
+                return;
+            }
+            trace("DIRECT_ENTER_SENT_UNVERIFIED");
+            status("Enter direto enviado, mas o campo ainda contem o codigo. Conferir MLOG.");
+            finishQueuedScan("direct_enter_nao_verificado");
+            return;
+        }
+        if(Build.VERSION.SDK_INT>=33){
+            if(sendDirectEnterToFocusedMlogField()){
+                directEnterSent=true;
+                directEnterSentAt=SystemClock.elapsedRealtime();
+                trace("DIRECT_ENTER_SENT");
+                scheduleConfirm(expected,attempt,130);
+                return;
+            }
+            // O InputConnection pode aparecer um frame apos o Flutter criar
+            // seu EditText. Espera adaptativa limitada, sem tocar na tela.
+            if(age<440){
+                long now=SystemClock.elapsedRealtime();
+                if(now-lastConnectionLogAt>190){
+                    lastConnectionLogAt=now;
+                    trace("INPUT_CONNECTION_NOT_READY");
+                }
+                scheduleConfirm(expected,attempt,65);
+                return;
+            }
+            if(!imeEnterRequested)trace("INPUT_CONNECTION_UNAVAILABLE_FALLBACK");
+        }
+        // Recuperacao antiga: somente se InputConnection nao existir.
+        // Nunca usar fallback depois de enviar KEYCODE_ENTER diretamente.
         if(!imeEnterRequested){
             imeEnterRequested=true;
             boolean accepted=false;
@@ -837,6 +882,37 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         status("Aguardando confirmacao no MLOG.");
         finishQueuedScan("confirmacao_nao_verificada");
     }
+    /** Android 13+ permite InputConnection diretamente no AccessibilityService.
+     * Nao ativa IME proprio, nao usa clipboard, nao injeta eventos globalmente.
+     * O Android so encaminha ao editor cujo InputConnection esta ativo. */
+    private boolean sendDirectEnterToFocusedMlogField(){
+        if(Build.VERSION.SDK_INT<33 || mlogRoot()==null)return false;
+        try{
+            InputMethod method=getInputMethod();
+            if(method==null || !method.getCurrentInputStarted())return false;
+            EditorInfo info=method.getCurrentInputEditorInfo();
+            if(info==null || !ScanCoordinator.TARGET.equals(info.packageName)){
+                trace("INPUT_CONNECTION_OTHER_PACKAGE");
+                return false;
+            }
+            InputMethod.AccessibilityInputConnection connection=method.getCurrentInputConnection();
+            if(connection==null)return false;
+            long t=SystemClock.uptimeMillis();
+            int flags=KeyEvent.FLAG_SOFT_KEYBOARD;
+            int device=KeyCharacterMap.VIRTUAL_KEYBOARD;
+            KeyEvent down=new KeyEvent(t,t,KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_ENTER,
+                    0,0,device,0,flags);
+            KeyEvent up=new KeyEvent(t,t+8,KeyEvent.ACTION_UP,KeyEvent.KEYCODE_ENTER,
+                    0,0,device,0,flags);
+            connection.sendKeyEvent(down);
+            connection.sendKeyEvent(up);
+            return true;
+        }catch(RuntimeException e){
+            trace("INPUT_CONNECTION_SEND_FAILED_"+e.getClass().getSimpleName());
+            return false;
+        }
+    }
+
     private void scheduleConfirm(String expected,long id,long delay){
         main.postDelayed(()->confirmEnteredCode(expected,id),Math.max(50,delay));
     }

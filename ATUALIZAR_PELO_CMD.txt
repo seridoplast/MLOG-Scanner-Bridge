@@ -2,18 +2,28 @@
 
 ```bat
 cd /d "%USERPROFILE%\Downloads\MLOG-Scanner-Bridge"
-powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v17_Enter_Resiliente.zip') -DestinationPath . -Force"
+powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v18_Enter_Direto.zip') -DestinationPath . -Force"
 git add -A
-git commit -m "MLOG Bridge v17 espera adaptativa do Enter"
+git commit -m "MLOG Bridge v18 Enter direto Android 14"
 git push origin main
 ```
 
-Baixar artefato **MLOG-Scanner-Bridge-v17-APK** no GitHub Actions e extrair `app-debug.apk` em Downloads.
+GitHub Actions: `MLOG-Scanner-Bridge-v18-APK`. Extraia `app-debug.apk` para Downloads.
 
-## Instalação ADB
+## Instalar pelo ADB
 
 ```bat
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" devices
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" install -r "%USERPROFILE%\Downloads\app-debug.apk"
 ```
+
+O coletor precisa aparecer como `device`; resultado de instalação esperado: `Success`. Acessibilidade já concedida normalmente permanece se a assinatura do APK continuar igual.
+
+## Diagnosticar
+
+```bat
+"%USERPROFILE%\Downloads\platform-tools\adb.exe" logcat -d -v time -s MLOGBridge:I > "%USERPROFILE%\Downloads\Bridge_v18_Log.txt"
+```
+
+Eventos: `INPUT_CONNECTION_NOT_READY`, `INPUT_CONNECTION_UNAVAILABLE_FALLBACK`, `DIRECT_ENTER_SENT`, `DIRECT_ENTER_SENT_UNVERIFIED`, `CODE_CHANGED_AFTER_ENTER`, `GBOARD_ACTION_GESTURE`.
 
