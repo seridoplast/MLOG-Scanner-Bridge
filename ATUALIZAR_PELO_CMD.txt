@@ -1,24 +1,20 @@
-MLOG SCANNER BRIDGE v0.7
-========================
+MLOG SCANNER BRIDGE v0.8 — ATUALIZACAO E INSTALACAO
 
-BAIXAR O ZIP DA V0.7 EM DOWNLOADS. Atualizar GitHub:
+1) Baixe MLOG_Scanner_Bridge_v8_Foco_Estavel.zip na pasta Downloads.
+2) Abra CMD e execute:
 
 cd /d "%USERPROFILE%\Downloads\MLOG-Scanner-Bridge"
-powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v7_Monocromatico.zip') -DestinationPath . -Force"
+powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v8_Foco_Estavel.zip') -DestinationPath . -Force"
 git add -A
-git commit -m "MLOG Bridge v7 atividades e interface"
+git commit -m "MLOG Bridge v8 foco estavel"
 git push origin main
 
-Actions > execucao verde > Artifacts > MLOG-Scanner-Bridge-v7-APK.
-Extrair app-debug.apk para Downloads.
+3) Espere GitHub Actions ficar VERDE, baixe o artefato MLOG-Scanner-Bridge-v8-APK,
+   extraia app-debug.apk na pasta Downloads.
 
-INSTALAR PELO CABO USB, com depuracao ativada e computador autorizado:
+4) Conecte o CMX por USB, deixe Depuracao USB ativa e AUTORIZE o PC:
 
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" devices
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" install -r "%USERPROFILE%\Downloads\app-debug.apk"
 
-Opcional, diagnosticar restricao:
-"%USERPROFILE%\Downloads\platform-tools\adb.exe" shell appops get br.com.seridoplast.mlogbridge
-
-Se unauthorized: desbloquear o coletor e autorizar computador.
-Se falha de assinatura: nao desinstalar sem avaliar backup/configuracoes.
+Observacao: nao altere formatos/mode output no CMX pelo Bridge; o v0.8 nao envia comandos.

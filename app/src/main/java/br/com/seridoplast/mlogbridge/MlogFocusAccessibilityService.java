@@ -50,6 +50,13 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private long lastScanAt;
     private long lastAutoActionAt;
     private boolean keyboardWatchActive;
+    // Preparacao ANTES da leitura: teclado do CMX pode enviar direto como teclas.
+    private String preparedScreen="";
+    private long preparedAt;
+    private boolean preparing;
+    private boolean prearmFallbackUsed;
+    private long lastPrepareCheck;
+    private final Runnable prearmRunnable=()->prepareReadingField();
 
     @Override protected void onServiceConnected(){
         super.onServiceConnected();
@@ -74,7 +81,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             if(Build.VERSION.SDK_INT>=33) registerReceiver(receiver,filter,Context.RECEIVER_EXPORTED);
             else registerReceiver(receiver,filter);
             receiverRegistered=true;
-            status("v0.7 pronto para leitura.");
+            status("v0.8: escuta passiva do CMX e foco automatico prontos.");
+            main.postDelayed(prearmRunnable,600);
         }catch(RuntimeException e){status("Falha ao registrar o broadcast do scanner.");}
     }
 
@@ -119,8 +127,12 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         if(event==null)return;
         CharSequence pkg=event.getPackageName();
         if(pkg==null || !ScanCoordinator.TARGET.contentEquals(pkg)){
-            // O usuario saiu do MLOG ou abriu o seletor de teclado: restaurar.
-            if(pendingCode==null)restoreKeyboard();
+            // Eventos do Gboard nao indicam saida do MLOG: ainda pode estar
+            // aberta a entrada de leitura por baixo do teclado virtual.
+            if(pendingCode==null && mlogRoot()==null){
+                restoreKeyboard();preparedAt=0;preparedScreen="";
+                prearmFallbackUsed=false;
+            }
             return;
         }
         if(event.getEventType()==AccessibilityEvent.TYPE_VIEW_CLICKED ||
@@ -140,6 +152,13 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             }
         }
         long time=SystemClock.elapsedRealtime();
+        if(prefs().getBoolean("prearm_field",true) &&
+           prefs().getBoolean("enabled",false) && pendingCode==null &&
+           time-lastPrepareCheck>430){
+            lastPrepareCheck=time;
+            main.removeCallbacks(prearmRunnable);
+            main.postDelayed(prearmRunnable,210);
+        }
         if(pendingCode==null && time-lastDiagnostic>1750 && time-lastAutoActionAt>30000){
             lastDiagnostic=time;
             AccessibilityNodeInfo root=mlogRoot();
@@ -183,8 +202,25 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         AccessibilityNodeInfo root=mlogRoot();
         if(root==null){status("Ignorado: MLOG nao esta na tela ativa.");return;}
         ScreenInfo i=inspect(root);
+        if("desconhecida".equals(i.screen) && !i.login && !i.dialog &&
+           i.editors.size()==1 && SystemClock.elapsedRealtime()-preparedAt<9000 &&
+           ("atividades".equals(preparedScreen) || "consulta".equals(preparedScreen) ||
+            "conferencia_venda".equals(preparedScreen))){
+            // Modal sem titulo do Flutter: somente editor unico do MLOG e
+            // somente apos preparacao de uma tela reconhecida.
+            i.screen=preparedScreen;
+        }
         if(i.login || i.dialog || "desconhecida".equals(i.screen)){
             status("Leitura pausada: tela desconhecida ou aviso aberto.");return;
+        }
+        // Se o campo ja foi aberto/preparado, nao pressionar o icone novamente.
+        AccessibilityNodeInfo ready=safeEditor(i,true);
+        if(ready!=null){
+            int id=++serial;
+            hideKeyboard();
+            focusAndSet(ready,code);
+            scheduleRestore(id);
+            return;
         }
 
         // Na tela de atividades, o botao de teclado e o portao de entrada.
@@ -207,7 +243,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
 
         // A busca de conferencia possui uma caixa visivel na parte superior.
         // Portanto NAO se deve clicar no botao de teclado/teclar por cima.
-        if("conferencia_venda".equals(i.screen)){
+        if("conferencia_venda".equals(i.screen) || "consulta".equals(i.screen)){
             AccessibilityNodeInfo editor=safeEditor(i,true);
             if(editor!=null){
                 hideKeyboard();
@@ -216,17 +252,18 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 scheduleRestore(id);
                 return;
             }
-            startPending(code,"conferencia_venda");
-            hideKeyboard();
+            startPending(code,i.screen);
+            // Não ocultar IME antes do campo existir. O Flutter pode nao abrir.
+
             if(i.searchField!=null){
                 AccessibilityNodeInfo target=clickable(i.searchField);
                 boolean ok=focusOrClick(target);
                 if(ok){status("Busca de conferencia selecionada; aguardando campo editavel.");
-                    retryFill(serial,"conferencia_venda");return;}
+                    retryFill(serial,i.screen);return;}
             }
-            if(prefs().getBoolean("guided_taps",true) && i.hasConferenceTitle){
-                // Somente no layout identificado com o titulo da busca.
-                tapKnownSearchField(serial);
+            if(prefs().getBoolean("guided_taps",true) &&
+                (i.hasConferenceTitle || i.hasConsultation)){
+                tapKnownSearchField(serial,i.screen);
             }else{
                 cancelPending();restoreKeyboard();
                 status("Busca: campo nao acessivel. Ative toque assistido ou envie diagnostico.");
@@ -264,6 +301,121 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         status("Icone nao identificado. Nao toquei em Quantidade nem em outro botao.");
     }
 
+    /** Prepara a entrada quando o MLOG apresenta a tela, antes do gatilho.
+     *  Nao depende de comandos de configuracao CMX nem exige broadcast.
+     *  Toca no maximo uma vez por visita a cada tela reconhecida.
+     */
+    private void prepareReadingField(){
+        if(preparing || pendingCode!=null || !prefs().getBoolean("prearm_field",true) ||
+           !prefs().getBoolean("enabled",false))return;
+        AccessibilityNodeInfo root=mlogRoot();
+        if(root==null)return;
+        ScreenInfo info=inspect(root);
+        if(info.login || info.dialog || "desconhecida".equals(info.screen))return;
+        String screen=info.screen;
+        if(!screen.equals(preparedScreen)){
+            preparedScreen=screen;
+            preparedAt=0;
+            prearmFallbackUsed=false;
+        }
+        // Revalidar apenas após uma nova visita ou uma leitura que concluiu.
+        if(preparedAt>0)return;
+        if(!("atividades".equals(screen) || "consulta".equals(screen) ||
+             "conferencia_venda".equals(screen) || "separacao".equals(screen)))return;
+        AccessibilityNodeInfo editor=safeEditor(info,false);
+        if(editor!=null){
+            preparedAt=SystemClock.elapsedRealtime();
+            preparedScreen=screen;
+            try{
+                if(!editor.isFocused()) editor.performAction(AccessibilityNodeInfo.ACTION_FOCUS);
+                // Aqui o campo JA existe. Ocultar IME nao deve fechar o modal.
+                hideKeyboard();
+            }catch(RuntimeException ignored){}
+            status("Campo de leitura preparado: "+screen);
+            return;
+        }
+        // Só abrir por gesto nas telas cuja posição do ícone foi identificada.
+        if(!prefs().getBoolean("guided_taps",true))return;
+        if("atividades".equals(screen) && info.hasActivitiesTitle){
+            preparedAt=SystemClock.elapsedRealtime();
+            AccessibilityNodeInfo button=activityKeyboard(info);
+            if(button!=null && focusOrClick(button)){
+                status("Atividades: botao de entrada aberto antes do bipe.");
+                main.postDelayed(()->postPrepareCheck("atividades"),320);
+            }else{
+                tapPrepare(screen,0.375f,0.888f);
+            }
+        }else if("consulta".equals(screen) && info.hasConsultation){
+            preparedAt=SystemClock.elapsedRealtime();
+            AccessibilityNodeInfo field=info.searchField;
+            if(field!=null && focusOrClick(clickable(field))){
+                status("Consulta: campo superior selecionado.");
+                main.postDelayed(()->postPrepareCheck("consulta"),320);
+            }else tapPrepare(screen,0.34f,0.090f);
+        }else if("conferencia_venda".equals(screen) && info.hasConferenceTitle){
+            preparedAt=SystemClock.elapsedRealtime();
+            if(info.searchField!=null && focusOrClick(clickable(info.searchField)))
+                status("Conferencia de venda: campo selecionado.");
+            else tapPrepare(screen,0.34f,0.145f);
+        }else if("separacao".equals(screen) && prefs().getBoolean("layout_fallback",false)){
+            AccessibilityNodeInfo n=relativeKeyboard(info);
+            if(n!=null){preparedAt=SystemClock.elapsedRealtime();focusOrClick(n);}
+        }
+    }
+
+    private void postPrepareCheck(String screen){
+        AccessibilityNodeInfo root=mlogRoot();
+        if(root==null)return;
+        ScreenInfo info=inspect(root);
+        if(!screen.equals(info.screen) && !"desconhecida".equals(info.screen))return;
+        if(safeEditor(info,true)!=null){
+            status("Campo pronto para leitura na tela: "+screen);
+            // Ocultar somente depois de o campo realmente existir.
+            // Se o modal nao expor editor Flutter, nao interferir no teclado.
+            hideKeyboard();
+        }else{
+            // Se ACTION_CLICK foi aceito mas o campo nao abriu, testar
+            // UMA vez a posicao homologada. Nunca encadear toques infinitos.
+            if(screen.equals(info.screen) && !prearmFallbackUsed &&
+               prefs().getBoolean("guided_taps",true)){
+                if("atividades".equals(screen) && info.hasActivitiesTitle){
+                    tapPrepare(screen,0.375f,0.888f);return;
+                }
+                if("consulta".equals(screen) && info.hasConsultation){
+                    tapPrepare(screen,0.34f,0.090f);return;
+                }
+            }
+            status("Campo Flutter nao exposto; pode exigir entrada nativa do CMX.");
+        }
+    }
+
+    /** Gesto limitado a uma tela identificada, uma vez por visita; sem inserir texto. */
+    private void tapPrepare(String screen,float nx,float ny){
+        if(prearmFallbackUsed)return;
+        prearmFallbackUsed=true;
+        Point size=realScreenSize();
+        if(!supportedAspect(size)){
+            status("Tela nao homologada para toque automatico; verifique diagnóstico.");return;
+        }
+        AccessibilityNodeInfo root=mlogRoot();
+        if(root==null || !screen.equals(inspect(root).screen))return;
+        Path path=new Path();path.moveTo(size.x*nx,size.y*ny);
+        GestureDescription.Builder builder=new GestureDescription.Builder();
+        builder.addStroke(new GestureDescription.StrokeDescription(path,0,75));
+        lastAutoActionAt=SystemClock.elapsedRealtime();
+        try{
+            if(!dispatchGesture(builder.build(),new GestureResultCallback(){
+                @Override public void onCompleted(GestureDescription g){
+                    status("Botao de leitura tocado: "+screen+". Aguardando campo.");
+                    main.postDelayed(()->postPrepareCheck(screen),320);
+                }
+                @Override public void onCancelled(GestureDescription g){
+                    status("Android cancelou o toque de preparacao.");
+                }
+            },main))status("Android nao autorizou toque de preparacao.");
+        }catch(RuntimeException e){status("Toque de preparacao indisponivel.");}
+    }
+
     private void startPending(String code,String type){
         // O codigo so permanece na memoria ate concluir a tentativa.
         pendingCode=code;
@@ -296,7 +448,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             // do MLOG, após nosso clique na busca ou no botão de atividades.
             if(!"desconhecida".equals(i.screen) || i.editors.size()!=1 ||
                 !("atividades".equals(intendedScreen) ||
-                  "conferencia_venda".equals(intendedScreen)))return;
+                  "conferencia_venda".equals(intendedScreen) ||
+                  "consulta".equals(intendedScreen)))return;
             i.screen=intendedScreen;
         }
         AccessibilityNodeInfo editor=safeEditor(i,true);
@@ -334,6 +487,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             boolean done=editor.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,data);
             if(!done){status("MLOG recusou preencher o campo de leitura.");return;}
             status("Leitura inserida no campo do MLOG; codigo nao foi registrado.");
+            main.postDelayed(()->{preparedAt=0;},1500);
             if(prefs().getBoolean("send_enter",false)){
                 int action=AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.getId();
                 if(supports(editor,action) && editor.performAction(action))
@@ -370,15 +524,17 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         return n;
     }
 
-    private void tapKnownSearchField(int id){
+    private void tapKnownSearchField(int id,String screen){
         // Captura da tela enviada pelo usuario: entrada a ~35% da largura e
         // ~14,4% da altura. Nunca aplicar esse gesto fora da tela nomeada.
         Point size=realScreenSize();
         if(!supportedAspect(size)){
             cancelPending();restoreKeyboard();status("Resolucao nao homologada para toque assistido; envie diagnostico.");return;
         }
-        status("Busca: tentando focar a caixa superior por posicao relativa.");
-        tapAt(id,size.x*0.34f,size.y*0.145f,"conferencia_venda");
+        boolean consultation="consulta".equals(screen);
+        status("Busca: tentando focar o campo superior por posicao relativa.");
+        tapAt(id,size.x*0.34f,
+             size.y*(consultation?0.090f:0.145f),screen);
     }
     private void tapKnownActivitiesKeyboard(int id){
         // Captura 720x1440 e video do coletor: botao direito do par camera /
@@ -411,7 +567,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         ScreenInfo before=inspect(root);
         if(!screen.equals(before.screen) || before.login ||
             ("atividades".equals(screen) && !before.hasActivitiesTitle) ||
-            ("conferencia_venda".equals(screen) && !before.hasConferenceTitle)){
+            ("conferencia_venda".equals(screen) && !before.hasConferenceTitle) ||
+            ("consulta".equals(screen) && !before.hasConsultation)){
             cancelPending();restoreKeyboard();status("Tela mudou: gesto cancelado.");return;
         }
         gestureInProgress=true;
@@ -454,7 +611,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     }
     private static final class ScreenInfo{
         String screen="desconhecida";
-        boolean login,hasActivitiesTitle,hasConferenceTitle,dialog,noActivities,hasStart;
+        boolean login,hasActivitiesTitle,hasConferenceTitle,hasConsultation,dialog,noActivities,hasStart;
         AccessibilityNodeInfo keyboard,searchField;
         final List<AccessibilityNodeInfo> editors=new ArrayList<>();
         final List<AccessibilityNodeInfo> clicks=new ArrayList<>();
@@ -463,7 +620,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         ScreenInfo v=new ScreenInfo();
         List<AccessibilityNodeInfo> nodes=new ArrayList<>();
         visit(root,nodes,0);
-        boolean separacao=false,notas=false;
+        boolean separacao=false,notas=false,consultationHint=false,consultationTitle=false;
         for(AccessibilityNodeInfo n:nodes){
             if(!n.isVisibleToUser())continue;
             String t=tag(n);
@@ -471,6 +628,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             if(has(t,"nenhuma atividade registrada"))v.noActivities=true;
             if(has(t,"iniciar"))v.hasStart=true;
             if(has(t,"busca da conferencia de venda"))v.hasConferenceTitle=true;
+            if(has(t,"bipe ou digite enderec", "bipe algum produto", "local de estoque"))consultationHint=true;
+            if(has(t,"consulta"))consultationTitle=true;
+            if(has(t,"bipe ou digite enderec"))v.searchField=n;
             if(has(t,"separacao","separar"))separacao=true;
             if(has(t,"bipar nota","nota fiscal","conferencia de nota","bipagem de nota"))notas=true;
             if(has(t,"login","autenticacao","senha de acesso"))v.login=true;
@@ -486,7 +646,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 }
             }
         }
+        v.hasConsultation=consultationHint && consultationTitle;
         if(v.hasConferenceTitle)v.screen="conferencia_venda";
+        else if(v.hasConsultation)v.screen="consulta";
         else if(v.hasActivitiesTitle || (v.noActivities && v.hasStart)){
             v.screen="atividades";
             v.hasActivitiesTitle=true;
@@ -519,11 +681,12 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             if(!e.isEnabled() || !e.isVisibleToUser() || e.isPassword())continue;
             String t=tag(e);
             if(blockedLabel(t))continue;
-            boolean named=has(t,"codigo", "cod.", "barcode", "barras", "atividade", "bipe");
+            boolean named=has(t,"codigo", "cod.", "barcode", "barras", "atividade", "bipe", "enderec", "produto");
             // Em busca de conferencia ha uma unica caixa de busca no topo.
             // Em atividades a entrada foi aberta pelo icone reconhecido.
             boolean expected=explicitlyOpened && ("atividades".equals(info.screen) ||
-                "conferencia_venda".equals(info.screen) || "notas".equals(info.screen));
+                "conferencia_venda".equals(info.screen) || "consulta".equals(info.screen) ||
+                "notas".equals(info.screen));
             if(named || expected)candidates.add(e);
         }
         return candidates.size()==1 ? candidates.get(0) : null;

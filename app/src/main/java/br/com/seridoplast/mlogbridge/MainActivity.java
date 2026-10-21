@@ -7,7 +7,6 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.res.Configuration;
-import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
@@ -17,8 +16,9 @@ import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
 import android.view.Gravity;
+import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.View;
-import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -26,11 +26,9 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import java.util.LinkedHashMap;
-import java.util.Map;
 
 /**
- * v0.7. Interface monocromatica por paginas, com Gboard intacto.
+ * v0.8. Interface monocromatica por paginas, com Gboard intacto.
  * O teste exibe leituras somente na tela; o codigo nao vai para preferências.
  */
 public final class MainActivity extends Activity {
@@ -44,8 +42,9 @@ public final class MainActivity extends Activity {
     private boolean receiving;
     private int scanCount;
     private String lastSample;
+    private long lastReceivedAt;
     private String lastSymbology;
-    private final LinkedHashMap<String,CheckBox> formatChecks=new LinkedHashMap<>();
+    private long lastThemeTapAt;
 
     private final BroadcastReceiver scannerTest = new BroadcastReceiver(){
         @Override public void onReceive(Context context,Intent intent){
@@ -56,6 +55,8 @@ public final class MainActivity extends Activity {
                 if(preview!=null)preview.setText("Sinal recebido sem codigo");
                 return;
             }
+            if(code.equals(lastSample) && android.os.SystemClock.elapsedRealtime()-lastReceivedAt<320)return;
+            lastReceivedAt=android.os.SystemClock.elapsedRealtime();
             scanCount++;
             lastSample=code;
             lastSymbology=ScannerProtocol.type(intent);
@@ -81,6 +82,13 @@ public final class MainActivity extends Activity {
     @Override public void onCreate(Bundle saved){
         prefs=getSharedPreferences(ScanCoordinator.PREFS,MODE_PRIVATE);
         themeChoice=prefs.getString("theme_choice","auto");
+        // Corrige preferencia que podia ter sido alterada por Enter do scanner
+        // em versoes antigas. A partir de agora, apenas toque real alterna tema.
+        if(!prefs.getBoolean("migrated_theme_v8",false)){
+            prefs.edit().putString("theme_choice","auto")
+                .putBoolean("migrated_theme_v8",true).apply();
+            themeChoice="auto";
+        }
         boolean dark=darkNow();
         setTheme(dark?R.style.BridgeThemeDark:R.style.BridgeThemeLight);
         super.onCreate(saved);
@@ -129,6 +137,8 @@ public final class MainActivity extends Activity {
         TextView b=label(name,14,filled?inverse:ink,true);
         b.setGravity(Gravity.CENTER);b.setPadding(dp(14),dp(13),dp(14),dp(13));
         b.setBackground(shape(filled?ink:card,filled?0:line,13));
+        b.setFocusable(false); // leitor em modo teclado nao deve ativar controles com Enter
+        b.setFocusableInTouchMode(false);
         b.setOnClickListener(w->callback.run());b.setClickable(true);
         return b;
     }
@@ -142,15 +152,26 @@ public final class MainActivity extends Activity {
         setContentView(root);
         LinearLayout head=row();head.setPadding(dp(20),dp(19),dp(20),dp(13));
         LinearLayout left=row();
-        ImageView logo=new ImageView(this);logo.setImageResource(R.drawable.bridge_logo);
-        logo.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        ImageView logo=new ImageView(this);logo.setImageResource(R.drawable.brand_monochrome);
+        logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        logo.setColorFilter(ink);
         left.addView(logo,new LinearLayout.LayoutParams(dp(42),dp(42)));
         TextView name=label("mlog bridge",19,ink,true);
         LinearLayout.LayoutParams nl=new LinearLayout.LayoutParams(-2,-2);nl.leftMargin=dp(12);
         left.addView(name,nl);
         head.addView(left,new LinearLayout.LayoutParams(0,-2,1));
-        TextView moon=action(darkNow()?"☀":"☾",false,this::nextTheme);
-        moon.setContentDescription("Alternar tema");head.addView(moon,new LinearLayout.LayoutParams(dp(49),dp(48)));
+        TextView moon=action(darkNow()?"☀":"☾",false,()->{});
+        moon.setContentDescription("Alternar tema com toque na tela");
+        // Apenas um toque fisico: o Enter/Tab enviado pelo scanner nunca alterna tema.
+        moon.setOnTouchListener((v,event)->{
+            if(event.getActionMasked()==MotionEvent.ACTION_UP){
+                long now=android.os.SystemClock.elapsedRealtime();
+                if(now-lastThemeTapAt>650){lastThemeTapAt=now;nextTheme();}
+                return true;
+            }
+            return true;
+        });
+        head.addView(moon,new LinearLayout.LayoutParams(dp(49),dp(48)));
         root.addView(head);
         View divider=new View(this);divider.setBackgroundColor(line);root.addView(divider,new LinearLayout.LayoutParams(-1,dp(1)));
         ScrollView sc=new ScrollView(this);sc.setFillViewport(true);sc.setClipToPadding(false);
@@ -180,7 +201,7 @@ public final class MainActivity extends Activity {
         }else space(content,22);
     }
     private void home(){
-        title("Leitura de códigos","Teste o gatilho antes de abrir o MLOG.");
+        title("Leitura de códigos","Aperte o gatilho físico para testar. Configuração do CMX preservada.");
         LinearLayout sample=card();
         TextView statusLabel=label("TESTE DO SCANNER",11,muted,true);sample.addView(statusLabel);
         space(sample,20);
@@ -190,10 +211,7 @@ public final class MainActivity extends Activity {
         lastStatus=label(scanCount==0?"Aperte o gatilho do coletor":"Leitura "+scanCount,12,muted,false);
         lastStatus.setGravity(Gravity.CENTER);space(sample,9);sample.addView(lastStatus);
         space(sample,18);
-        button(sample,"Testar gatilho",true,()->ScannerProtocol.trigger(this));
-        button(sample,"Configurar CMX",false,()->{
-            ScannerProtocol.configureBroadcast(this);toast("Comandos enviados ao scanner.");
-        });
+        subtitle(sample,"Use o gatilho fisico do coletor para testar a leitura. O Bridge nao modifica a configuracao do CMX.");
         LinearLayout service=card();
         service.addView(label("Serviço",17,ink,true));
         serviceState=label("Verificando acessibilidade...",14,muted,false);
@@ -206,7 +224,8 @@ public final class MainActivity extends Activity {
         LinearLayout read=card();read.addView(label("Leitura",17,ink,true));
         check(read,"Leitura assistida","enabled",false);
         check(read,"Ocultar teclado durante o bipe","hide_keyboard_on_scan",true);
-        check(read,"Toque guiado (atividades e busca)","guided_taps",true);
+        check(read,"Preparar campo ao abrir tela", "prearm_field",true);
+        check(read,"Toque guiado (telas reconhecidas)","guided_taps",true);
         check(read,"Foco experimental em produtos","layout_fallback",false);
         check(read,"Enviar Enter automático","send_enter",false);
         LinearLayout appearance=card();appearance.addView(label("Aparência",17,ink,true));
@@ -219,24 +238,8 @@ public final class MainActivity extends Activity {
             bar.addView(v,op);
         }
         appearance.addView(bar,bp);
-        LinearLayout scanner=card();scanner.addView(label("Formatos",17,ink,true));
-        subtitle(scanner,"Altere só se o CMX não reconhecer algum padrão.");
-        formatChecks.clear();
-        int mask=prefs.getInt("formats",1|2|4|8|16|32|8192|16384|524288);
-        for(Map.Entry<String,Integer> entry:ScannerProtocol.FORMATS.entrySet()){
-            CheckBox b=new CheckBox(this);b.setButtonTintList(android.content.res.ColorStateList.valueOf(ink));
-            b.setText(entry.getKey());b.setTextColor(ink);b.setTextSize(14);
-            b.setChecked((mask&entry.getValue())!=0);formatChecks.put(entry.getKey(),b);
-            scanner.addView(b);
-        }
-        button(scanner,"Aplicar formatos",false,()->{
-            int flags=0;
-            for(Map.Entry<String,CheckBox> entry:formatChecks.entrySet())
-                if(entry.getValue().isChecked())flags|=ScannerProtocol.FORMATS.get(entry.getKey());
-            if(flags==0){toast("Selecione ao menos um formato.");return;}
-            prefs.edit().putInt("formats",flags).apply();ScannerProtocol.configureFormats(this,flags);
-            toast("Configuração enviada ao coletor.");
-        });
+        LinearLayout cmx=card();cmx.addView(label("CMX Scanner",17,ink,true));
+        subtitle(cmx,"O Bridge agora apenas recebe leituras. Configure formatos, modo de saida e Enter no aplicativo CMX original.");
     }
     private void diagnostic(){
         title("Diagnóstico","Status da comunicação com o MLOG.");
@@ -249,11 +252,11 @@ public final class MainActivity extends Activity {
             toast("Diagnóstico copiado. Não inclui códigos.");
         });
         LinearLayout help=card();help.addView(label("O que testar",17,ink,true));
-        subtitle(help,"1. Abra 'Bipar Atividades de Separação'.\n2. Aperte o gatilho uma vez.\n3. Se não preencher, consulte o evento acima.\n4. Não confirme atividades reais nos testes.");
+        subtitle(help,"Abra Atividades, Conferência ou Consulta. O campo deve ser preparado antes do bipe. Aperte o gatilho e confira o último evento. Teste sem confirmar pedidos reais.");
         button(help,"Abrir MLOG",true,this::openMlog);
     }
     private void about(){
-        title("Sobre","MLOG Scanner Bridge · v0.7");
+        title("Sobre","MLOG Scanner Bridge · v0.8");
         LinearLayout about=card();about.addView(label("Integração local",17,ink,true));
         subtitle(about,"Criado para o scanner físico CMX e o MLOG. Sem acesso à internet. Os códigos de leitura não são salvos em histórico.");
         space(about,10);
@@ -285,6 +288,14 @@ public final class MainActivity extends Activity {
         recreate();
     }
     private void nextTheme(){chooseTheme(darkNow()?"light":"dark");}
+    @Override public boolean dispatchKeyEvent(KeyEvent event){
+        // Protege botoes e tema contra Enter/Tab emitidos pelo scanner (keyboard wedge).
+        // Esta tela nao tem campo de texto para edicao manual.
+        int k=event.getKeyCode();
+        if(k==KeyEvent.KEYCODE_ENTER || k==KeyEvent.KEYCODE_NUMPAD_ENTER ||
+           k==KeyEvent.KEYCODE_TAB) return true;
+        return super.dispatchKeyEvent(event);
+    }
     private void toast(String text){Toast.makeText(this,text,Toast.LENGTH_SHORT).show();}
     @Override protected void onResume(){
         super.onResume();

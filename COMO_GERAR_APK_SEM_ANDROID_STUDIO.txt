@@ -1,6 +1,9 @@
-1. Abrir https://github.com/seridoplast/MLOG-Scanner-Bridge/actions
-2. Abrir workflow 'Gerar APK do MLOG Scanner Bridge'.
-3. Esperar Success. Baixar Artifacts 'MLOG-Scanner-Bridge-v7-APK'.
-4. Extrair app-debug.apk para a pasta Downloads do computador.
-5. Instalar via ADB; comando completo no arquivo ATUALIZAR_PELO_CMD.txt.
-AVISO: Esta versao nao foi validada fisicamente no coletor. Testar fora da operacao.
+1. Envie o projeto para https://github.com/seridoplast/MLOG-Scanner-Bridge.
+2. Abra https://github.com/seridoplast/MLOG-Scanner-Bridge/actions
+3. Selecione a execucao mais recente. Aguarde Status Success (verde).
+4. Em Artifacts, baixe MLOG-Scanner-Bridge-v8-APK.
+5. Extraia app-debug.apk para Downloads do Windows.
+6. Instale no CMX pelo ADB autorizado; comandos completos em ATUALIZAR_PELO_CMD.txt.
+
+Esta versao NAO altera as configuracoes do scanner CMX.
+Testar em aparelho controlado antes de operar pedidos reais.
