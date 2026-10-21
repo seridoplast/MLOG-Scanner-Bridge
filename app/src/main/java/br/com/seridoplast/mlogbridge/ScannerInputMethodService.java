@@ -9,161 +9,132 @@ import android.inputmethodservice.InputMethodService;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
-import android.os.SystemClock;
 import android.text.InputType;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
+import java.util.Locale;
 
-/**
- * IME de leitura dedicado ao MLOG. Nao depende de acessibilidade.
- * Aceita broadcast do motor nativo CMX, so escreve no editor atualmente
- * conectado E somente quando o pacote do editor pertence ao MLOG.
- * Nao armazena, registra nem transmite textos ou codigos escaneados.
- */
+/** Teclado de leitura sem teclas. Jamais registra texto digitado, codigo ou senha. */
 public class ScannerInputMethodService extends InputMethodService {
-    static final String TARGET = "com.targetsistemas.target_mlog2";
-    static final String PREFS = "mlog_bridge_v2";
-    private final Handler handler = new Handler(Looper.getMainLooper());
+    private static volatile ScannerInputMethodService instance;
+    private final Handler main=new Handler(Looper.getMainLooper());
     private BroadcastReceiver receiver;
-    private boolean receiverRegistered;
-    private boolean editorStarted;
+    private boolean registered,editorStarted;
     private int editorSerial;
-    private String previousCode = ""; // apenas em memoria, para deduplicar broadcasts
-    private long previousAt;
+
+    static ScannerInputMethodService current(){return instance;}
 
     @Override public void onCreate() {
         super.onCreate();
-        receiver = new BroadcastReceiver() {
-            @Override public void onReceive(Context context, Intent intent) {
-                String code = ScannerProtocol.barcode(intent);
-                if (code != null) receiveBarcode(code);
+        instance=this;
+        receiver=new BroadcastReceiver(){
+            @Override public void onReceive(Context c,Intent intent){
+                // ScanCoordinator evita duplicar quando acessibilidade tambem recebe.
+                ScanCoordinator.onScan(ScannerInputMethodService.this,ScannerProtocol.barcode(intent));
             }
         };
-        IntentFilter filter = new IntentFilter();
-        for (String action : ScannerProtocol.ACTIONS) filter.addAction(action);
-        try {
-            if (Build.VERSION.SDK_INT >= 33) {
-                registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED);
-            } else {
-                registerReceiver(receiver, filter);
-            }
-            receiverRegistered = true;
-        } catch (RuntimeException ex) {
-            report("Falha ao ouvir scanner: verifique a configuracao CMX");
-        }
-        report("Teclado de leitura iniciado. Selecione o campo do MLOG.");
+        IntentFilter f=new IntentFilter();
+        for(String action:ScannerProtocol.ACTIONS)f.addAction(action);
+        try{
+            if(Build.VERSION.SDK_INT>=33)registerReceiver(receiver,f,Context.RECEIVER_EXPORTED);
+            else registerReceiver(receiver,f);
+            registered=true;
+        }catch(RuntimeException e){ ScanCoordinator.status(this,"Falha ao conectar transmissao do scanner."); }
     }
 
     @Override public View onCreateInputView() {
-        // Sem teclado na tela: view minima e vazia, sem teclas nem capturas de toque.
-        View empty = new View(this);
-        empty.setMinimumHeight(0);
-        empty.setLayoutParams(new android.view.ViewGroup.LayoutParams(-1, 1));
-        return empty;
+        // Area minima de 1px: nao esconde a tela de separacao.
+        View v=new View(this);
+        v.setMinimumHeight(0);
+        v.setLayoutParams(new android.view.ViewGroup.LayoutParams(-1,1));
+        return v;
     }
 
-    @Override public boolean onEvaluateFullscreenMode() { return false; }
+    @Override public boolean onEvaluateFullscreenMode(){return false;}
 
-    @Override public void onStartInput(EditorInfo attribute, boolean restarting) {
-        super.onStartInput(attribute, restarting);
+    @Override public void onStartInput(EditorInfo a,boolean restarting){
+        super.onStartInput(a,restarting);
+        editorStarted=true;
         editorSerial++;
-        editorStarted = true;
-        if (attribute != null && TARGET.equals(attribute.packageName)) {
-            report("Campo do MLOG conectado. Pronto para leitura.");
-        } else {
-            report("Aguardando o campo do MLOG.");
-        }
+        ScanCoordinator.onInputStarted(this);
+        if(hasSafeMlogEditor(ScanCoordinator.isArmed()))
+            ScanCoordinator.status(this,"Campo MLOG disponivel para leitura.");
     }
-
-    @Override public void onFinishInput() {
-        editorSerial++;
-        editorStarted = false;
-        report("Campo perdeu foco. Toque no campo de codigo do MLOG.");
+    @Override public void onFinishInput(){
+        editorStarted=false;editorSerial++;
+        ScanCoordinator.onInputFinished();
         super.onFinishInput();
     }
 
-    private boolean isPassword(EditorInfo info) {
-        int type = info.inputType;
-        int klass = type & InputType.TYPE_MASK_CLASS;
-        int var = type & InputType.TYPE_MASK_VARIATION;
-        return (klass == InputType.TYPE_CLASS_TEXT &&
-                   (var == InputType.TYPE_TEXT_VARIATION_PASSWORD ||
-                    var == InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD ||
-                    var == InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD)) ||
-               (klass == InputType.TYPE_CLASS_NUMBER &&
-                    var == InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+    private static boolean isPassword(EditorInfo i){
+        if(i==null)return true;
+        int cls=i.inputType & InputType.TYPE_MASK_CLASS;
+        int vari=i.inputType & InputType.TYPE_MASK_VARIATION;
+        return cls==InputType.TYPE_CLASS_TEXT &&
+            (vari==InputType.TYPE_TEXT_VARIATION_PASSWORD ||
+             vari==InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD ||
+             vari==InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD) ||
+            cls==InputType.TYPE_CLASS_NUMBER && vari==InputType.TYPE_NUMBER_VARIATION_PASSWORD;
+    }
+    private static boolean disallowedEditor(EditorInfo info,boolean verifiedButtonClick){
+        if(info==null)return true;
+        String hint=(info.hintText==null?"":info.hintText.toString()).toLowerCase(Locale.ROOT);
+        String field=(info.fieldName==null?"":info.fieldName).toLowerCase(Locale.ROOT);
+        String names=hint+" "+field;
+        if(names.contains("quantidade") || names.contains("senha") || names.contains("password") ||
+                names.contains("peso") || names.contains("volume") || names.contains("usuário") ||
+                names.contains("usuario"))return true;
+        // Quantidade costuma ser um campo numerico. So liberar a leitura em
+        // campo numerico se seu rotulo confirmar que se trata de codigo.
+        int kind=info.inputType & InputType.TYPE_MASK_CLASS;
+        if(kind==InputType.TYPE_CLASS_NUMBER && !verifiedButtonClick &&
+                !(names.contains("codigo") || names.contains("código") ||
+                  names.contains("barcode") || names.contains("barras")))return true;
+        return false;
+    }
+    boolean hasAnyMlogEditor(){
+        EditorInfo i=getCurrentInputEditorInfo();
+        return editorStarted && i!=null && ScanCoordinator.TARGET.equals(i.packageName) &&
+                getCurrentInputConnection()!=null;
+    }
+    boolean hasSafeMlogEditor(boolean verifiedButtonClick){
+        EditorInfo i=getCurrentInputEditorInfo();
+        return hasAnyMlogEditor() && !isPassword(i) &&
+                !disallowedEditor(i,verifiedButtonClick);
     }
 
-    private boolean validCode(String raw) {
-        if (raw.length() < 1 || raw.length() > 128) return false;
-        // Recusar controles, ENTER, quebras de linha, dados binarios e nao ASCII.
-        for (int i = 0; i < raw.length(); i++) {
-            char ch = raw.charAt(i);
-            if (ch < 32 || ch > 126) return false;
+    boolean tryInsert(String code,boolean requireArmed){
+        if(!ScanCoordinator.isActive(this) || !hasSafeMlogEditor(requireArmed))return false;
+        if(requireArmed && !ScanCoordinator.isArmed())return false;
+        InputConnection ic=getCurrentInputConnection();
+        if(ic==null)return false;
+        final int serial=editorSerial;
+        final boolean ok;
+        try{ok=ic.commitText(code,1);}catch(RuntimeException e){return false;}
+        if(!ok)return false;
+        ScanCoordinator.status(this,"Codigo entregue ao campo do MLOG (sem salvar conteudo).");
+        SharedPreferences p=getSharedPreferences(ScanCoordinator.PREFS,MODE_PRIVATE);
+        if(p.getBoolean("send_enter",false)){
+            main.postDelayed(()->{
+                if(editorSerial!=serial || !hasSafeMlogEditor(requireArmed) ||
+                        (requireArmed && !ScanCoordinator.isArmed()))return;
+                InputConnection con=getCurrentInputConnection();
+                if(con==null)return;
+                con.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_ENTER));
+                con.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP,KeyEvent.KEYCODE_ENTER));
+                ScanCoordinator.status(this,"Leitura entregue e Enter enviado.");
+            },110);
         }
         return true;
     }
 
-    private boolean targetAvailable() {
-        EditorInfo current = getCurrentInputEditorInfo();
-        return editorStarted && current != null && TARGET.equals(current.packageName)
-            && !isPassword(current) && getCurrentInputConnection() != null;
-    }
-
-    private void receiveBarcode(String code) {
-        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
-        if (!prefs.getBoolean("enabled", true)) return;
-        if (!targetAvailable()) {
-            // Nunca escrever em outro aplicativo, nem em campo de senha.
-            report("Leitura nao inserida: selecione o campo do MLOG.");
-            return;
-        }
-        if (!validCode(code)) {
-            report("Leitura rejeitada: codigo com caracteres nao suportados.");
-            return;
-        }
-        long now = SystemClock.elapsedRealtime();
-        if (code.equals(previousCode) && now - previousAt < 320) return;
-        previousCode = code;
-        previousAt = now;
-
-        InputConnection connection = getCurrentInputConnection();
-        if (connection == null) return;
-        int serialAtRead = editorSerial;
-        boolean inserted;
-        try { inserted = connection.commitText(code, 1); }
-        catch (Exception e) { inserted = false; }
-        if (!inserted) {
-            report("MLOG nao aceitou o texto; tente outro metodo de entrada.");
-            return;
-        }
-        report("Codigo entregue ao campo do MLOG (sem guardar o valor).");
-        if (prefs.getBoolean("send_enter", false)) {
-            handler.postDelayed(() -> {
-                // Nao enviar Enter caso tenha mudado o campo ou aplicativo.
-                if (editorSerial != serialAtRead || !targetAvailable()) return;
-                InputConnection current = getCurrentInputConnection();
-                if (current == null) return;
-                current.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER));
-                current.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER));
-                report("Enter enviado ao MLOG.");
-            }, 90);
-        }
-    }
-
-    private void report(String message) {
-        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-            .putString("last_status", message).apply();
-    }
-
-    @Override public void onDestroy() {
-        if (receiverRegistered) {
-            try { unregisterReceiver(receiver); }
-            catch (Exception ignored) { }
-        }
-        handler.removeCallbacksAndMessages(null);
+    @Override public void onDestroy(){
+        ScanCoordinator.onInputFinished();
+        if(instance==this)instance=null;
+        if(registered)try{unregisterReceiver(receiver);}catch(RuntimeException ignored){}
+        main.removeCallbacksAndMessages(null);
         super.onDestroy();
     }
 }

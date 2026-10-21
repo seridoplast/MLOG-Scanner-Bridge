@@ -17,7 +17,7 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <!-- Este e um teclado Android (IME), NAO e um servico de acessibilidade. -->
+        <!-- Teclado sem teclas. -->
         <service
             android:name=".ScannerInputMethodService"
             android:label="MLOG Scanner (sem teclas)"
@@ -27,6 +27,18 @@
                 <action android:name="android.view.InputMethod" />
             </intent-filter>
             <meta-data android:name="android.view.im" android:resource="@xml/input_method" />
+        </service>
+        <!-- Acessibilidade opcional, so MLOG. Autorizacao sempre pelo Android. -->
+        <service
+            android:name=".MlogFocusAccessibilityService"
+            android:label="MLOG Bridge - foco inteligente"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data android:name="android.accessibilityservice"
+                android:resource="@xml/focus_accessibility" />
         </service>
     </application>
 </manifest>

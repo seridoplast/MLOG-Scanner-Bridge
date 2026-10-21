@@ -1,15 +1,19 @@
-COMO INSTALAR v0.2 - SEM ACESSIBILIDADE
+MLOG SCANNER BRIDGE 0.3 — PELO CMD DO WINDOWS
 
-Extraia este ZIP e substitua o conteudo do repositorio git local.
-Remova dois arquivos antigos de acessibilidade.
-Abra o CMD na pasta do repositorio:
+1. Baixe o ZIP v3 e salve em Downloads.
+2. Abra CMD e rode estes comandos (o repo precisa estar em Downloads\MLOG-Scanner-Bridge):
 
-del app\src\main\java\br\com\seridoplast\mlogbridge\MlogAccessibilityService.java
-del app\src\main\res\xml\accessibility_config.xml
+cd /d "%USERPROFILE%\Downloads\MLOG-Scanner-Bridge"
+powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v3_Foco_Inteligente.zip') -DestinationPath . -Force"
+if exist "app\src\main\java\br\com\seridoplast\mlogbridge\MlogAccessibilityService.java" del "app\src\main\java\br\com\seridoplast\mlogbridge\MlogAccessibilityService.java"
+if exist "app\src\main\res\xml\accessibility_config.xml" del "app\src\main\res\xml\accessibility_config.xml"
 git add -A
-git commit -m "v2 sem acessibilidade"
+git commit -m "MLOG Bridge v3 foco inteligente"
 git push origin main
 
-Acesse GitHub Actions e baixe o artifact MLOG-Scanner-Bridge-v2-APK.
-Desinstale v0.1 antes de instalar v0.2.
-Abra Bridge, habilite e selecione o teclado de leitura, configure o scanner e teste.
+3. Acesse https://github.com/seridoplast/MLOG-Scanner-Bridge/actions
+4. Clique na ultima execucao verde e em Artifacts > MLOG-Scanner-Bridge-v3-APK.
+5. Extraia app-debug.apk. Esse prototipo NAO GARANTE desbloqueio da Acessibilidade no Android.
+6. Teste somente fora da operacao real e deixe Enter automatico OFF inicialmente.
+
+Se o GitHub ficar vermelho, abra a etapa que falhou e compartilhe AS LINHAS DE ERRO.
