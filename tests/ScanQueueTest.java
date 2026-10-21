@@ -20,6 +20,18 @@ final class ScanQueueTest {
         ok(q.offer("repeat") && q.offer("repeat"),"repeated scans are distinct");
         ok(q.complete() && "repeat".equals(q.active()),"repeat preserved");
         q.clear(); ok(q.isIdle() && q.waitingCount()==0,"clear");
+        // Limite simultaneo nao e limite total de leituras por sessao.
+        ScanQueue session=new ScanQueue(128);
+        for(int i=0;i<10000;i++){
+            ok(session.offer("codigo"+i),"continuous offer "+i);
+            ok(!session.complete(),"continuous complete "+i);
+        }
+        // Rajada de 129 leituras: uma ativa, 128 aguardando.
+        ok(session.offer("start"),"burst active");
+        for(int i=0;i<128;i++)ok(session.offer("wait"+i),"burst wait");
+        ok(!session.offer("overflow"),"backpressure explicit");
+        for(int i=0;i<128;i++)ok(session.complete(),"burst drain");
+        ok(!session.complete() && session.isIdle(),"burst drained");
         System.out.println("ScanQueueTest OK");
     }
 }

@@ -1,62 +1,65 @@
-# MLOG Scanner Bridge v1.5 — reparo a partir do diagnóstico ADB de 21/10/2026
+# MLOG Scanner Bridge v1.6 — Resposta Rápida
 
-**Projeto de testes Android para o coletor CMX (Android 14, resolução 720 × 1440).** Não modifica o APK do MLOG nem altera as configurações do CMX. Mantém o Gboard e a interface monocromática.
+Projeto de testes Android para coletor CMX com Android 14, integrado ao MLOG por acessibilidade e recepção passiva de broadcasts. **Não modifica as configurações do scanner original.** Não solicita internet e não persiste códigos de barras no disco.
 
-## O que o novo diagnóstico demonstrou
+## Base de diagnóstico — 21/10/2026 às 16:38–16:39
 
-Os alertas sobre códigos não pertencentes ao produto foram **ignorados**, conforme informado pelo operador.
+No arquivo `Diagnostico_MLOG_20261021_163737.zip`, ignorando as mensagens de códigos que não correspondem ao produto, foram identificadas sete leituras com `SET_TEXT_OK`, sete ocorrências de `IME_ENTER_UNAVAILABLE` e sete gestos `GBOARD_ACTION_GESTURE`. Não há registro de `QUEUE_FULL` ou `SCAN_QUEUED` nesse recorte.
 
-- **16:16:08.641** — `EDITOR_READY_separacao`; **16:16:08.642** — `Flutter nao expos ACTION_SET_TEXT; codigo nao enviado` e `SCAN_FINISH_sem_set_text`. O Flutter havia exibido um editor, mas ainda não disponibilizava a ação de preenchimento. A versão anterior **descartava a leitura**.
-- **16:16:13.908** — `SET_TEXT_OK`; **16:16:14.226** — `IME_ENTER_UNAVAILABLE`; **16:16:14.611** — `GBOARD_ENTER_NOT_FOUND`. O código foi inserido, mas o editor e o Gboard **não forneceram uma ação acessível de confirmação**.
-- Em outras leituras, `CODE_CHANGED_AFTER_ENTER` indica apenas que o código saiu do campo; **não comprova aceitação do produto** pelo MLOG.
+Exemplo: às 16:38:50.481 o Bridge recebeu um código; às 16:38:50.629 ele estava inserido (148 ms); às 16:38:50.951 a tentativa de `ACTION_IME_ENTER` foi negada; só às 16:38:51.246 foi tentado o gesto no Gboard. A latência principal estava **depois da inserção**.
 
-## Mudanças da v1.5
+## Alterações
 
-1. **Aguardar ação do Flutter**: mesmo quando o `EditText` é visto, se ainda não estiver focado ou não aceitar `ACTION_SET_TEXT`, o Bridge retém a leitura, observa os eventos e tenta de novo até o prazo do ciclo. Não encerra a operação no primeiro `ACTION_SET_TEXT` recusado.
-2. **Enter do Gboard no dispositivo diagnosticado**: primeiro respeita o Enter enviado pelo CMX; depois tenta `ACTION_IME_ENTER`; depois procura a tecla de confirmação pelo nome e acessibilidade. **Somente se nenhuma dessas funcionar**, com código ainda no campo MLOG, foco confirmado e janela do **Gboard original** identificada, faz um gesto restrito à tecla ✓ na geometria observada (720 × 1440). Nunca toca na antiga posição do botão de teclado do MLOG nem na tecla zero. Essa última tentativa é **experimental e específica** deste coletor e do layout de Gboard documentado; se a geometria mudar, o gesto é bloqueado.
-3. **Fila FIFO** de leituras consecutivas da v1.4 preservada; eventos temporizados registram a etapa sem gravar conteúdo dos códigos.
-4. Sem configurações de scanner, sem internet, sem clipboard e sem novo teclado. Acessibilidade atua somente no MLOG.
+1. **Confirmação mais rápida:** depois de inserir o código e dar uma breve chance ao Enter do CMX, tenta `ACTION_IME_ENTER` do campo. Caso indisponível, passa à tentativa verificada de ✓ no Gboard na mesma checagem — elimina um ciclo de espera adicional. A primeira verificação começa após 155 ms (antes eram 300 ms); se a leitura já estiver no campo por wedge, 160 ms (antes 450 ms). Os tempos são tentativas, não metas garantidas.
+2. **Sem limite total por sessão:** são permitidas quantas leituras consecutivas a operação suportar. A fila simultânea passou de **6 para 128 códigos pendentes** (mais o ativo), mantendo limite de memória para evitar travamento caso o MLOG pare de responder. Se chegar ao limite simultâneo, o app avisa e não lança códigos às cegas. Isso **não é um limite de 128 leituras totais**.
+3. **Não reabrir teclado enquanto navega:** quando detecta clique em Informações, Voltar, Cancelar ou aviso/modal no MLOG, cancela as ações de clique/foco/Enter ainda pendentes e limpa a fila. A tela só volta a receber automação com um novo bipe quando o aviso não estiver aberto. Removida a rotina de preparação automática sem gatilho.
+4. **Enter sem duplicidade:** uma vez acionado ✓, só observa a reação do Flutter por até aproximadamente 460 ms, sem clicar duas vezes em confirmar. Quando o campo some ou muda, encerra a leitura; isso não comprova aceitação do item, que depende do MLOG.
+5. Mantida a interface monocromática, o ícone, a leitura passiva e o Gboard do Android. A v1.6 não envia configurações para o CMX.
 
-**Não há como garantir que uma confirmação foi aceita apenas porque o Android registrou o gesto.** Confira o resultado na tela do MLOG. Teste fora da operação de pedidos até validar o comportamento, especialmente a confirmação ✓. A tentativa de toque no Gboard depende do layout e pode falhar, sem haver como forçar eventos privilegiados em outro aplicativo.
+## Como atualizar pelo CMD
 
-## Compilar pelo GitHub Actions usando CMD
-
-Baixe `MLOG_Scanner_Bridge_v15_Diagnostico_Corrigido.zip` e coloque na pasta Downloads. Execute:
+Coloque `MLOG_Scanner_Bridge_v16_Resposta_Rapida.zip` em Downloads e execute:
 
 ```bat
 cd /d "%USERPROFILE%\Downloads\MLOG-Scanner-Bridge"
-powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v15_Diagnostico_Corrigido.zip') -DestinationPath . -Force"
+powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v16_Resposta_Rapida.zip') -DestinationPath . -Force"
 git add -A
-git commit -m "MLOG Bridge v15 correcao diagnostico"
+git commit -m "MLOG Bridge v16 confirmacao rapida e navegacao"
 git push origin main
 ```
 
-Acesse https://github.com/seridoplast/MLOG-Scanner-Bridge/actions e baixe **MLOG-Scanner-Bridge-v15-APK** somente de uma execução **Success**. Extraia `app-debug.apk` na pasta Downloads.
+Acesse https://github.com/seridoplast/MLOG-Scanner-Bridge/actions e, após **Success**, baixe o artefato `MLOG-Scanner-Bridge-v16-APK`. Extraia `app-debug.apk` para Downloads.
 
-## Instalar usando ADB / depuração USB
+## Instalar/atualizar via ADB
 
-Conecte o coletor, desbloqueie a tela e autorize a depuração:
+Conecte o coletor, desbloqueie a tela e autorize a depuração USB:
 
 ```bat
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" devices
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" install -r "%USERPROFILE%\Downloads\app-debug.apk"
 ```
 
-O coletor precisa aparecer como `device` e a instalação terminar com `Success`. `unauthorized` exige autorizar a chave RSA no próprio coletor. A atualização com `-r` depende de assinatura de APK compatível.
+O serial deve aparecer com `device` e a instalação terminar em `Success`. O `-r` depende de assinatura de teste compatível; caso o GitHub Actions produza assinatura diferente, **não desinstale automaticamente**, pois isso apagaria configurações. Considere uma assinatura de distribuição persistente para produção.
 
-## Teste de regressão
+## Testes recomendados — coletor fora da operação
 
-1. Com código **correto** de teste, bipar uma vez na separação com quantidade: botão nativo → campo focado → valor → confirmação. Não repetir se aparecer operação pendente; conferir no MLOG.
-2. Repetir em separação sem quantidade. Bipar duas ou três vezes consecutivamente, observando se algum código fica no campo.
-3. Validar uma leitura na tela de atividades e duas consultas sequenciais, sem tocar na barra manualmente.
-4. Se ainda ocorrer erro, registre logo após a falha:
+- Bipar um código correto na separação com quantidade e confirmar se primeira leitura é processada.
+- Bipar 10–20 códigos sequenciais, observando se algum fica parado no campo ou dispara confirmação repetida.
+- Abrir Informações e Cancelar enquanto o campo está aberto. O teclado **não deve ser reaberto sozinho** depois da navegação.
+- Testar bipagem de atividades e duas consultas consecutivas.
+- Se aparecer Enter duplo ou alguma quantidade errada, interrompa o teste e volte à versão anterior; não use com pedidos reais até validar.
+
+Para extrair o diagnóstico temporizado após uma falha:
 
 ```bat
-"%USERPROFILE%\Downloads\platform-tools\adb.exe" logcat -d -v time -s MLOGBridge:I > "%USERPROFILE%\Downloads\MLOG_Bridge_Diagnostico_v15.txt"
+"%USERPROFILE%\Downloads\platform-tools\adb.exe" logcat -d -v time -s MLOGBridge:I > "%USERPROFILE%\Downloads\MLOG_Bridge_Diagnostico_v16.txt"
 ```
 
-Atenção: o log desta versão **não registra códigos de barras**. Ao coletar outros logs (`logcat` completo, vídeo ou tela), revise informações de pedidos e usuários antes de compartilhar.
+O log `MLOGBridge` não imprime o valor dos códigos. Logs completos e vídeos do MLOG podem mostrar dados operacionais, então revise antes de compartilhar.
 
-## Status da validação
+## Validação do pacote
 
-O parser do Java 17, os arquivos XML e a fila FIFO foram testados localmente. **O APK Android completo e o comportamento do gesto no CMX não puderam ser executados neste ambiente**; a compilação final é pelo GitHub Actions, seguida do teste físico.
+- Parser Java 17: **5 arquivos analisados, sem erros de sintaxe**.
+- Testes da fila: FIFO, repetição, 10.000 leituras sequenciais, rajada de 128 pendentes e rejeição explícita na capacidade máxima: **aprovados**.
+- XML: **7 arquivos válidos**.
+- Compilação Android integral, assinatura e testes físicos do CMX: **pendentes**; devem ser realizados no GitHub Actions e coletor.

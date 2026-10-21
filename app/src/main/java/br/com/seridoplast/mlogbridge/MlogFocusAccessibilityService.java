@@ -52,7 +52,10 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private int serial;
     // Uma leitura em processamento, com fila limitada para bipagens seguidas.
     // A fila vive apenas em memoria, sem persistir codigos.
-    private final ScanQueue scanQueue=new ScanQueue(6);
+    // Sem limite TOTAL de leituras durante a sessao. Limite apenas de
+    // leituras SIMULTANEAMENTE pendentes para evitar OOM em erro prolongado.
+    private final ScanQueue scanQueue=new ScanQueue(128);
+    private long totalFinished;
     private int workGeneration;
     private long lastEventProbe;
     private String pendingScreen="";
@@ -60,6 +63,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private boolean gestureInProgress;
     private long lastScanAt;
     private long lastAutoActionAt;
+    private long navigationGuardUntil;
     // Preparacao ANTES da leitura: teclado do CMX pode enviar direto como teclas.
     private String preparedScreen="";
     private long preparedAt;
@@ -91,9 +95,11 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             if(Build.VERSION.SDK_INT>=33) registerReceiver(receiver,filter,Context.RECEIVER_EXPORTED);
             else registerReceiver(receiver,filter);
             receiverRegistered=true;
+            // Nunca preparar/clicar na tela sem receber uma leitura.
+            prefs().edit().putBoolean("prearm_field",false).apply();
             // Versoes anteriores podiam deixar o teclado oculto pelo controlador.
             restoreKeyboard();
-            status("v1.5: editor com re-tentativa e confirmacao Gboard verificada.");
+            status("v1.6: confirmacao rapida; fila continua; navegacao protegida.");
         }catch(RuntimeException e){status("Falha ao registrar o broadcast do scanner.");}
     }
 
@@ -118,9 +124,21 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private void enqueueBarcode(String code){
         if(!ScanCoordinator.isActive(this))return;
         if(mlogRoot()==null){status("Leitura ignorada: MLOG nao esta ativo.");return;}
+        long now=SystemClock.elapsedRealtime();
+        if(now<navigationGuardUntil){
+            trace("SCAN_DURING_NAVIGATION_IGNORED");
+            status("Janela de informacoes/cancelamento: leitura nao executada.");
+            return;
+        }
+        AccessibilityNodeInfo currentRoot=mlogRoot();
+        if(currentRoot==null || isBlockingOverlay(currentRoot)){
+            trace("SCAN_BLOCKED_BY_OVERLAY");
+            status("Feche informacoes/aviso antes da proxima leitura.");
+            return;
+        }
         boolean idle=scanQueue.isIdle();
         if(!scanQueue.offer(code)){
-            status("Fila de leituras cheia: nenhuma acao executada para este bipe.");
+            status("Excesso de leituras simultaneas: confirme a tela antes de prosseguir.");
             trace("QUEUE_FULL");return;
         }
         trace(idle?"SCAN_RECEIVED":"SCAN_QUEUED");
@@ -144,6 +162,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private void finishQueuedScan(String reason){
         if(scanQueue.isIdle())return;
         trace("SCAN_FINISH_"+reason);
+        totalFinished++;
+        // Contador acumulado sem armazenar historico/codigo no disco.
+        if(totalFinished%50==0)trace("SCANS_COMPLETED_BATCH_50");
         cancelPending();
         preparedAt=0;
         preparedScreen="";
@@ -154,10 +175,71 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         ++workGeneration; // invalida timeout antigo
         if(more){
             // Breve intervalo para o Flutter recompor a arvore apos Enter.
-            main.postDelayed(this::startQueuedScan,130);
+            // O Flutter precisa reconstruir a arvore. Aguardar so um frame
+            // curto; cada nova leitura voltara a verificar campo/foco.
+            main.postDelayed(this::startQueuedScan,65);
         }
     }
 
+
+    /** Cancela operacoes em andamento quando o operador abre detalhes,
+     *  cancelamento ou um dialogo. Nunca retoma gestos pendentes sozinho. */
+    private void suspendForNavigation(String reason){
+        boolean busy=!scanQueue.isIdle() || pendingCode!=null;
+        navigationGuardUntil=SystemClock.elapsedRealtime()+350;
+        if(!busy)return;
+        trace("NAVIGATION_CANCEL_"+reason);
+        ++serial;
+        ++enterAttempt;
+        ++workGeneration;
+        cancelPending();
+        scanQueue.clear();
+        preparedAt=0;
+        preparedScreen="";
+        prearmFallbackUsed=false;
+        status("Operacao cancelada ao abrir informacoes/aviso. Novo bipe somente apos fechar.");
+    }
+
+    /** Flutter pode desenhar dialogs no mesmo TYPE_APPLICATION. Essa guarda
+     *  complementa o titulo detectado em inspect(), sem bloquear a pesquisa
+     *  normal que possui a secao 'Informacoes Gerais' recolhida. */
+    private boolean isBlockingOverlay(AccessibilityNodeInfo root){
+        if(root==null)return true;
+        ScreenInfo info=inspect(root);
+        if(info.dialog || info.login)return true;
+        CharSequence rootClass=root.getClassName();
+        if(rootClass!=null &&
+           (has(norm(rootClass),"dialog","popupwindow")))return true;
+        List<AccessibilityNodeInfo> nodes=new ArrayList<>();
+        visit(root,nodes,0);
+        boolean modalTitle=false,close=false;
+        for(AccessibilityNodeInfo n:nodes){
+            if(!n.isVisibleToUser())continue;
+            String name=tag(n).trim();
+            if(has(name,"informacoes do item", "informacoes do produto",
+                    "detalhes do item", "detalhes do produto",
+                    "cancelar separacao", "confirmar cancelamento",
+                    "deseja cancelar", "cancelar atividade"))modalTitle=true;
+            if(has(name,"fechar", "dispensar", "fechar janela", "voltar a separacao"))close=true;
+        }
+        return modalTitle && close;
+    }
+
+    private boolean isNavigationClick(AccessibilityNodeInfo source){
+        String label=tag(source).trim();
+        if(has(label,"informacoes", "informacao", "detalhes", "cancelar",
+                "voltar", "fechar", "dismiss", "cancelamento"))return true;
+        AccessibilityNodeInfo root=mlogRoot();
+        if(root==null)return false;
+        ScreenInfo i=inspect(root);
+        if(!"separacao".equals(i.screen) || !i.hasSeparationControls)return false;
+        Rect r=new Rect();source.getBoundsInScreen(r);
+        Point p=realScreenSize();
+        if(r.isEmpty() || r.width()>p.x*.25f)return false;
+        float cx=(float)r.centerX()/p.x,cy=(float)r.centerY()/p.y;
+        // Icone circular (i) na parte superior direita do cartao do item.
+        return cx>.77f && cx<.97f && cy>.15f && cy<.42f;
+    }
 
     @Override public void onAccessibilityEvent(AccessibilityEvent event){
         if(event==null)return;
@@ -171,14 +253,31 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             }
             return;
         }
-        if(event.getEventType()==AccessibilityEvent.TYPE_VIEW_CLICKED ||
-           event.getEventType()==AccessibilityEvent.TYPE_VIEW_FOCUSED){
+        if(event.getEventType()==AccessibilityEvent.TYPE_VIEW_CLICKED){
             AccessibilityNodeInfo source=event.getSource();
-            if(source!=null){
-                String label=tag(source);
-                if(blockedLabel(label)){
-                    cancelPending();
-                }
+            if(source!=null && isNavigationClick(source)){
+                suspendForNavigation("user_click");
+                return;
+            }
+        }
+        // Verificacao custosa da arvore somente durante uma leitura ativa.
+        // Sem leitura, a proxima tentativa ja verifica a tela antes de agir.
+        if((event.getEventType()==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+            event.getEventType()==AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) &&
+           (!scanQueue.isIdle() || pendingCode!=null)){
+            AccessibilityNodeInfo visible=mlogRoot();
+            if(visible!=null && isBlockingOverlay(visible)){
+                suspendForNavigation("overlay");
+                return;
+            }
+        }
+        if(event.getEventType()==AccessibilityEvent.TYPE_VIEW_FOCUSED){
+            AccessibilityNodeInfo source=event.getSource();
+            if(source!=null && blockedLabel(tag(source)) &&
+               pendingCode!=null){
+                // Quantidade ou outro campo nao deve receber codigo.
+                suspendForNavigation("other_field");
+                return;
             }
         }
         long time=SystemClock.elapsedRealtime();
@@ -256,7 +355,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             // somente apos preparacao de uma tela reconhecida.
             i.screen=preparedScreen;
         }
-        if(i.login || i.dialog || "desconhecida".equals(i.screen)){
+        if(i.login || i.dialog || isBlockingOverlay(root) ||
+           "desconhecida".equals(i.screen)){
             status("Leitura pausada: tela desconhecida ou aviso aberto.");finishQueuedScan("tela_bloqueada");return;
         }
         // Diferenciar um editor QUALQUER do campo efetivamente aberto pelo
@@ -404,80 +504,10 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private void startPendingIfNeeded(String code,String screen){
         if(pendingCode==null)startPending(code,screen);
     }
+    // O operador deve iniciar cada ciclo pelo gatilho. Desativado inclusive
+    // se preferencias antigas tinham prearm_field=true.
     private void prepareReadingField(){
-        if(preparing || pendingCode!=null || !prefs().getBoolean("prearm_field",true) ||
-           !prefs().getBoolean("enabled",false))return;
-        AccessibilityNodeInfo root=mlogRoot();
-        if(root==null)return;
-        ScreenInfo info=inspect(root);
-        if(info.login || info.dialog || "desconhecida".equals(info.screen))return;
-        String screen=info.screen;
-        // Atividades so ao bipar. Consulta reabre a busca apenas quando
-        // receber um codigo; nao tapar os detalhes do ultimo produto.
-        if("atividades".equals(screen) || "consulta".equals(screen) ||
-                "conferencia_venda".equals(screen))return;
-        if(!screen.equals(preparedScreen)){
-            preparedScreen=screen;
-            preparedAt=0;
-            prearmFallbackUsed=false;
-        }
-        // Evitar cliques repetidos no mesmo icone; se a proxima atividade
-        // mudou o produto, a leitura via broadcast reabrira o campo se preciso.
-        if(preparedAt>0)return;
-        if(!("consulta".equals(screen) || "conferencia_venda".equals(screen) ||
-             "separacao".equals(screen) ||
-             "pedidos".equals(screen) || "notas".equals(screen)))return;
-        AccessibilityNodeInfo editor=safeEditor(info,false);
-        if(editor!=null && nativeEntryReady(info,editor)){
-            preparedAt=SystemClock.elapsedRealtime();
-            preparedScreen=screen;
-            try{
-                if(!editor.isFocused()) editor.performAction(AccessibilityNodeInfo.ACTION_FOCUS);
-                // Campo ja existe: manter o Gboard normal.
-
-            }catch(RuntimeException ignored){}
-            status("Campo de leitura preparado: "+screen);
-            return;
-        }
-        // Só abrir por gesto nas telas cuja posição do ícone foi identificada.
-        if(!prefs().getBoolean("guided_taps",true))return;
-        if("consulta".equals(screen) && info.hasConsultation){
-            preparedAt=SystemClock.elapsedRealtime();
-            AccessibilityNodeInfo field=info.searchField;
-            if(field!=null && focusOrClick(clickable(field))){
-                status("Consulta: campo superior selecionado.");
-                main.postDelayed(()->postPrepareCheck("consulta"),320);
-            }else tapPrepare(screen,0.34f,0.090f);
-        }else if("conferencia_venda".equals(screen) && info.hasConferenceTitle){
-            preparedAt=SystemClock.elapsedRealtime();
-            if(info.searchField!=null && focusOrClick(clickable(info.searchField)))
-                status("Conferencia de venda: campo selecionado.");
-            else tapPrepare(screen,0.34f,0.145f);
-        }else if("separacao".equals(screen) || "pedidos".equals(screen) || "notas".equals(screen)){
-            // Ao entrar no item, preparar clicando diretamente no botao
-            // de teclado do proprio MLOG, nao apenas focando outro editor.
-            AccessibilityNodeInfo n=findKeyboardTarget(info);
-            if("separacao".equals(screen) && n!=null && focusOrClick(n)){
-                markNativeButton(screen,"botao identificado no preparo");
-                main.postDelayed(()->postPrepareCheck(screen),400);
-                return;
-            }
-            if("separacao".equals(screen) && info.hasSeparationControls &&
-               supportedAspect(realScreenSize())){
-                preparedAt=SystemClock.elapsedRealtime();
-                preparedScreen=screen;
-                tapPrepare(screen,info.hasQuantity?0.44f:0.60f,0.603f);
-                return;
-            }
-            if(n!=null && focusOrClick(n)){
-                markNativeButton(screen,"acessibilidade (preparo)");
-                main.postDelayed(()->postPrepareCheck(screen),520);
-            }else if("separacao".equals(screen) && info.hasSeparationControls){
-                preparedAt=SystemClock.elapsedRealtime();
-                preparedScreen=screen;
-                tapPrepare(screen,info.hasQuantity?0.44f:0.60f,0.603f);
-            }else status("MLOG: botao de entrada nao localizado na tela "+screen);
-        }
+        // Intencionalmente vazio: nenhuma abertura de teclado ao navegar.
     }
 
     private void postPrepareCheck(String screen){
@@ -560,8 +590,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         AccessibilityNodeInfo root=mlogRoot();
         if(root==null)return;
         ScreenInfo i=inspect(root);
-        if(i.login || i.dialog){
-            finishQueuedScan("aviso_aberto");
+        if(i.login || i.dialog || isBlockingOverlay(root)){
+            suspendForNavigation("editor_modal");
             status("Aviso/modal detectado: leitura cancelada para evitar erro.");return;
         }
         if(!intendedScreen.equals(i.screen)){
@@ -622,8 +652,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         if(existing!=null && existing.length()>0){
             if(code.equals(existing.toString().trim())){
                 cancelPending();
-                status("Codigo no campo: verificando Enter desta leitura.");
-                queueEnter(code,450);
+                status("Codigo ja no campo: confirmacao rapida desta leitura.");
+                queueEnter(code,160);
                 return;
             }
             // Em Consulta/Conferencia, a caixa de busca conserva o ultimo codigo.
@@ -669,7 +699,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             status("Leitura inserida: aguardando confirmacao.");
             // O estado preparado sera limpo ao terminar ESTA leitura;
             // nao usar timer que possa apagar o estado da leitura seguinte.
-            queueEnter(code,300);
+            queueEnter(code,155);
 
         }catch(RuntimeException e){status("Falha de acessibilidade ao inserir o codigo.");finishQueuedScan("erro_set_text");}
     }
@@ -680,6 +710,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private boolean imeEnterRequested;
     private boolean imeCheckRequested;
     private boolean verifyingImeClick;
+    private long imeGestureAt;
 
     private void queueEnter(String expected,long delay){
         final long id=++enterAttempt;
@@ -687,6 +718,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         imeEnterRequested=false;
         imeCheckRequested=false;
         verifyingImeClick=false;
+        imeGestureAt=0;
         trace("ENTER_WAIT_NATIVE");
         main.postDelayed(()->confirmEnteredCode(expected,id),delay);
     }
@@ -699,7 +731,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         AccessibilityNodeInfo root=mlogRoot();
         if(root==null){finishQueuedScan("tela_fechada");return;}
         ScreenInfo info=inspect(root);
-        if(info.login || info.dialog){finishQueuedScan("aviso_no_enter");return;}
+        if(info.login || info.dialog || isBlockingOverlay(root)){
+            suspendForNavigation("modal_during_confirmation");return;
+        }
         AccessibilityNodeInfo editor=safeEditor(info,true);
         if(editor==null && info.editors.size()==1 &&
            !blockedLabel(tag(info.editors.get(0))) &&
@@ -715,7 +749,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             finishQueuedScan("campo_mudou");return;
         }
         long age=SystemClock.elapsedRealtime()-confirmStartedAt;
-        if(age<260){scheduleConfirm(expected,attempt,260-age);return;}
+        // O diagnostico mostrou que o campo esta preenchido em ~120-300 ms.
+        // Dar uma janela curta ao Enter do CMX, nao aguardar 600 ms.
+        if(age<135){scheduleConfirm(expected,attempt,135-age);return;}
         if(!editor.isFocused()){
             if(age<1150){
                 focusOrClick(editor);
@@ -727,8 +763,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             }
             return;
         }
-        // Um Enter nativo pode ter chegado cedo demais. Se o campo segue
-        // contendo o codigo, tentar a ação oficial do editor apenas uma vez.
+        // O Enter do CMX costuma vir ANTES de o editor Flutter existir.
+        // Apos breve janela de assentamento, tentar ACTION_IME_ENTER. Se ela
+        // nao for exposta, NAO esperar outros 100+ ms: passar ao Gboard.
         if(!imeEnterRequested){
             imeEnterRequested=true;
             boolean accepted=false;
@@ -737,38 +774,46 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                     accepted=editor.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.getId());
             }catch(RuntimeException ignored){}
             trace(accepted?"IME_ENTER_REQUESTED":"IME_ENTER_UNAVAILABLE");
-            scheduleConfirm(expected,attempt,accepted?290:100);
-            return;
+            if(accepted){
+                // Flutter precisa de tempo para atualizar resultado do IME.
+                scheduleConfirm(expected,attempt,175);
+                return;
+            }
         }
-        // Se a ação Enter foi aceita, esperar o Flutter reagir antes de
-        // tentar o check do Gboard; evita dois Enters na mesma leitura.
         if(!imeCheckRequested){
             imeCheckRequested=true;
             if(pressVisibleImeEnter()){
                 trace("GBOARD_ENTER_CLICK");
                 verifyingImeClick=true;
-                scheduleConfirm(expected,attempt,330);
+                imeGestureAt=SystemClock.elapsedRealtime();
+                scheduleConfirm(expected,attempt,195);
                 return;
             }
-            // No CMX Android 14 o Gboard desenha a tecla ✓, mas nao a
-            // expoe como no clicavel. So neste layout homologado e SOMENTE
-            // com codigo presente em editor MLOG focado, tentar o ponto da
-            // tecla de acao DENTRO da janela do teclado (nao no MLOG).
+            // Gesto so quando Gboard real e o editor de codigo estao
+            // presentes; nunca na coordenada do antigo botao do MLOG.
             if(tapKnownGboardConfirm(info,editor)){
                 trace("GBOARD_ACTION_GESTURE");
                 verifyingImeClick=true;
-                scheduleConfirm(expected,attempt,380);
+                imeGestureAt=SystemClock.elapsedRealtime();
+                scheduleConfirm(expected,attempt,205);
                 return;
             }
             trace("GBOARD_ENTER_NOT_FOUND");
         }
         if(verifyingImeClick){
+            // Um frame Flutter ainda pode levar ~300 ms apos o gesto.
+            // Nao pressionar Enter novamente, so observar a conclusao.
+            long elapsed=SystemClock.elapsedRealtime()-imeGestureAt;
+            if(elapsed<460){
+                scheduleConfirm(expected,attempt,Math.min(125,460-elapsed));
+                return;
+            }
             trace("ENTER_GESTURE_UNCONFIRMED");
             status("Tecla de confirmacao acionada, mas codigo ainda visivel no campo; verificar MLOG.");
             finishQueuedScan("confirmacao_nao_verificada");
             return;
         }
-        if(age<1750 && !isImeVisible()){
+        if(age<1000 && !isImeVisible()){
             scheduleConfirm(expected,attempt,180);
         }else{
             status("Codigo ficou no campo: tecla de Enter nao localizada.");

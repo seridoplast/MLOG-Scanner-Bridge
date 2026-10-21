@@ -28,7 +28,7 @@ import android.widget.Toast;
 
 
 /**
- * v1.5. Interface monocromatica, teclado nativo e recuperacao de Enter.
+ * v1.6. Interface monocromatica, teclado nativo e recuperacao de Enter.
  * O teste exibe leituras somente na tela; o codigo nao vai para preferências.
  */
 public final class MainActivity extends Activity {
@@ -272,7 +272,7 @@ public final class MainActivity extends Activity {
         button(help,"Abrir MLOG",true,this::openMlog);
     }
     private void about(){
-        title("Sobre","MLOG Scanner Bridge · v1.5");
+        title("Sobre","MLOG Scanner Bridge · v1.6");
         LinearLayout about=card();about.addView(label("Integração local",17,ink,true));
         subtitle(about,"Criado para o scanner físico CMX e o MLOG. Sem acesso à internet. Os códigos de leitura não são salvos em histórico.");
         space(about,10);
