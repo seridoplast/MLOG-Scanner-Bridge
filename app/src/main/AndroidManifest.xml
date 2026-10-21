@@ -18,6 +18,19 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- Teclado experimental: Android exige habilitar e selecionar manualmente. -->
+        <service
+            android:name=".BridgeScanInputMethodService"
+            android:label="MLOG Bridge - teclado experimental"
+            android:permission="android.permission.BIND_INPUT_METHOD"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.view.InputMethod" />
+            </intent-filter>
+            <meta-data
+                android:name="android.view.im"
+                android:resource="@xml/bridge_input_method" />
+        </service>
         <!-- Acessibilidade opcional, so MLOG. Autorizacao sempre pelo Android. -->
         <service
             android:name=".MlogFocusAccessibilityService"

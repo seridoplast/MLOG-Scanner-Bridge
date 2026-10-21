@@ -243,7 +243,19 @@ public final class MainActivity extends Activity {
         // Preparacao antecipada removida: era a causa de campo abrindo antes do bipe.
         check(read,"Toque guiado (telas reconhecidas)","guided_taps",true);
         check(read,"Detectar teclado de produtos","layout_fallback",true);
-        subtitle(read,"O CMX envia Enter primeiro. Se o codigo permanecer no campo, o Bridge tenta a tecla de confirmacao do Gboard. Sem ajuste duplicado.");
+        subtitle(read,"A confirmacao direta Android 14 da v1.8 continua como padrao; o teclado novo e opcional.");
+        LinearLayout ime=card(); ime.addView(label("Teclado Bridge (experimental)",17,ink,true));
+        check(ime,"Usar teclado Bridge no Enter","experimental_bridge_ime",false);
+        subtitle(ime,"Experimento opcional. O Android exige habilitar e escolher o teclado manualmente. No MLOG, ele mostra uma barra compacta e so envia Enter durante a leitura; em outros apps oferece teclas para digitar.");
+        button(ime,"1. Habilitar teclado no Android",false,()->startActivity(new Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)));
+        button(ime,"2. Selecionar teclado / voltar ao Gboard",true,()->{
+            android.view.inputmethod.InputMethodManager imm=(android.view.inputmethod.InputMethodManager)getSystemService(Context.INPUT_METHOD_SERVICE);
+            if(imm!=null)imm.showInputMethodPicker();
+        });
+        String selectedIme=Settings.Secure.getString(getContentResolver(),Settings.Secure.DEFAULT_INPUT_METHOD);
+        boolean bridgeSelected=selectedIme!=null && selectedIme.startsWith(getPackageName()+"/");
+        subtitle(ime,bridgeSelected?"Teclado Bridge selecionado no Android.":"Teclado Bridge nao esta selecionado. Modo v1.8 permanece disponivel.");
+        subtitle(ime,"Para retornar ao modo estavel, desmarque a opcao e selecione Gboard. Nao precisa reinstalar a v1.8.");
         LinearLayout appearance=card();appearance.addView(label("Aparência",17,ink,true));
         subtitle(appearance,"Seguir o sistema ou escolher manualmente.");
         LinearLayout bar=row();LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(-1,-2);bp.topMargin=dp(14);
@@ -268,11 +280,11 @@ public final class MainActivity extends Activity {
             toast("Diagnóstico copiado. Não inclui códigos.");
         });
         LinearLayout help=card();help.addView(label("O que testar",17,ink,true));
-        subtitle(help,"Leitura aguarda o foco do campo. Se o MLOG nao disponibilizar insercao de imediato, tenta novamente. O Enter usa primeiro o CMX e depois o Gboard reconhecido. Teste fora da operacao.");
+        subtitle(help,"Leitura aguarda campo focado. A v1.9 pode confirmar pelo teclado Bridge se ele estiver habilitado, selecionado e com a opcao experimental ativa. Log: BRIDGE_IME_ENTER_SENT.");
         button(help,"Abrir MLOG",true,this::openMlog);
     }
     private void about(){
-        title("Sobre","MLOG Scanner Bridge · v1.8");
+        title("Sobre","MLOG Scanner Bridge · v1.9 experimental");
         LinearLayout about=card();about.addView(label("Integração local",17,ink,true));
         subtitle(about,"Criado para o scanner físico CMX e o MLOG. Sem acesso à internet. Os códigos de leitura não são salvos em histórico.");
         space(about,10);

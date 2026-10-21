@@ -1,29 +1,31 @@
 
 
+Baixe `MLOG_Scanner_Bridge_v19_Teclado_Experimental.zip` para Downloads, depois:
+
 ```bat
 cd /d "%USERPROFILE%\Downloads\MLOG-Scanner-Bridge"
-powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v18_Enter_Direto.zip') -DestinationPath . -Force"
+powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v19_Teclado_Experimental.zip') -DestinationPath . -Force"
 git add -A
-git commit -m "MLOG Bridge v18 Enter direto Android 14"
+git commit -m "MLOG Bridge v19 teclado experimental"
 git push origin main
 ```
 
-GitHub Actions: `MLOG-Scanner-Bridge-v18-APK`. Extraia `app-debug.apk` para Downloads.
+GitHub Actions: `MLOG-Scanner-Bridge-v19-APK` → extraia `app-debug.apk` para Downloads.
 
-## Instalar pelo ADB
+## Instalar via ADB (depuracao USB)
 
 ```bat
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" devices
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" install -r "%USERPROFILE%\Downloads\app-debug.apk"
 ```
 
-O coletor precisa aparecer como `device`; resultado de instalação esperado: `Success`. Acessibilidade já concedida normalmente permanece se a assinatura do APK continuar igual.
+Se `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, a chave de assinatura gerada no runner mudou. Nao desinstale cegamente: faça backup das configuracoes e confirme se deseja substituir o app de teste.
 
-## Diagnosticar
+## Diagnostico
 
 ```bat
-"%USERPROFILE%\Downloads\platform-tools\adb.exe" logcat -d -v time -s MLOGBridge:I > "%USERPROFILE%\Downloads\Bridge_v18_Log.txt"
+"%USERPROFILE%\Downloads\platform-tools\adb.exe" logcat -d -v time -s MLOGBridge:I > "%USERPROFILE%\Downloads\Bridge_v19_Log.txt"
 ```
 
-Eventos: `INPUT_CONNECTION_NOT_READY`, `INPUT_CONNECTION_UNAVAILABLE_FALLBACK`, `DIRECT_ENTER_SENT`, `DIRECT_ENTER_SENT_UNVERIFIED`, `CODE_CHANGED_AFTER_ENTER`, `GBOARD_ACTION_GESTURE`.
+Eventos `BRIDGE_IME_ENTER_SENT` e `BRIDGE_IME_ENTER_UNVERIFIED` indicam a tentativa pela nova via. `DIRECT_ENTER_SENT` indica retorno a v1.8. **Enviar Enter nao garante que o Flutter o processou**: validar leitura no MLOG.
 

@@ -719,6 +719,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private long lastImeWaitLogAt;
     // API 33+: controla o Enter pelo InputConnection sem clicar no Gboard.
     private boolean directEnterSent;
+    private boolean customImeSent;
     private long directEnterSentAt;
     private long lastConnectionLogAt;
 
@@ -731,6 +732,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         imeGestureAt=0;
         lastImeWaitLogAt=0;
         directEnterSent=false;
+        customImeSent=false;
         directEnterSentAt=0;
         lastConnectionLogAt=0;
         trace("ENTER_WAIT_INPUT_CONNECTION");
@@ -777,6 +779,18 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             }
             return;
         }
+        // Teclado Bridge v1.9: opcional e selecionado pelo proprio usuario.
+        // Apenas tenta enviar Enter depois que o codigo esta no editor correto,
+        // focado e reconhecido como MLOG. A v1.8 permanece como fallback.
+        if(!directEnterSent && prefs().getBoolean("experimental_bridge_ime",false)
+                && BridgeScanInputMethodService.sendEnterForFocusedMlog()){
+            directEnterSent=true;
+            customImeSent=true;
+            directEnterSentAt=SystemClock.elapsedRealtime();
+            trace("BRIDGE_IME_ENTER_SENT");
+            scheduleConfirm(expected,attempt,110);
+            return;
+        }
         // Prioridade v1.8: InputConnection Android 13+, sem toque no Gboard.
         // Verificacao de foco / campo / pacote foi feita acima ANTES da acao.
         if(directEnterSent){
@@ -787,8 +801,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 scheduleConfirm(expected,attempt,Math.min(110,440-since));
                 return;
             }
-            trace("DIRECT_ENTER_SENT_UNVERIFIED");
-            status("Enter direto enviado, mas o campo ainda contem o codigo. Conferir MLOG.");
+            trace(customImeSent?"BRIDGE_IME_ENTER_UNVERIFIED":"DIRECT_ENTER_SENT_UNVERIFIED");
+            status("Enter enviado, mas o campo ainda contem o codigo. Conferir MLOG.");
             finishQueuedScan("direct_enter_nao_verificado");
             return;
         }

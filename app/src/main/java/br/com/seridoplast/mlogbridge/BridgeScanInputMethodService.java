@@ -1,0 +1,188 @@
+package br.com.seridoplast.mlogbridge;
+
+import android.inputmethodservice.InputMethodService;
+import android.content.Context;
+import android.content.res.Configuration;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
+import android.text.InputType;
+import android.view.Gravity;
+import android.view.KeyCharacterMap;
+import android.view.KeyEvent;
+import android.view.View;
+import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.InputConnection;
+import android.view.inputmethod.InputMethodManager;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+
+/**
+ * IME experimental, habilitavel pelo usuario.
+ * Nao coleta/loga dados digitados e nao tem permissao de rede.
+ * Enquanto selecionado, eh um IME do sistema. Android NAO permite que apps
+ * comuns alternem automaticamente entre IMEs por gatilho.
+ * No MLOG: barra compacta por padrao (sem teclado grande).
+ * Outras apps: teclado manual simples para nao impedir digitacao.
+ */
+public final class BridgeScanInputMethodService extends InputMethodService {
+    private static BridgeScanInputMethodService active;
+    private final Handler main=new Handler(Looper.getMainLooper());
+    private LinearLayout panel;
+    private boolean targetMlog=false;
+    private boolean manual=false;
+    private boolean numeric=false;
+    private boolean upper=false;
+
+    static boolean sendEnterForFocusedMlog(){
+        BridgeScanInputMethodService service=active;
+        return service!=null && service.sendScanEnter();
+    }
+
+    private boolean sendScanEnter(){
+        if(Looper.myLooper()!=Looper.getMainLooper())return false;
+        if(!ScanCoordinator.isActive(this))return false;
+        EditorInfo info=getCurrentInputEditorInfo();
+        if(info==null || !ScanCoordinator.TARGET.equals(info.packageName))return false;
+        if(isPassword(info.inputType))return false;
+        InputConnection connection=getCurrentInputConnection();
+        if(connection==null)return false;
+        // Preferir KEYCODE_ENTER, como um leitor de codigo de barras.
+        // Acessibilidade ja validou campo, tela e texto ANTES desta chamada.
+        long t=SystemClock.uptimeMillis();
+        int flags=KeyEvent.FLAG_SOFT_KEYBOARD;
+        int device=KeyCharacterMap.VIRTUAL_KEYBOARD;
+        KeyEvent down=new KeyEvent(t,t,KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_ENTER,0,0,device,0,flags);
+        KeyEvent up=new KeyEvent(t,t+7,KeyEvent.ACTION_UP,KeyEvent.KEYCODE_ENTER,0,0,device,0,flags);
+        boolean okDown=connection.sendKeyEvent(down);
+        boolean okUp=connection.sendKeyEvent(up);
+        return okDown || okUp; // nunca reenviar por eventual resultado parcial.
+    }
+
+    private static boolean isPassword(int type){
+        int c=type&InputType.TYPE_MASK_CLASS;
+        int v=type&InputType.TYPE_MASK_VARIATION;
+        return c==InputType.TYPE_CLASS_TEXT &&
+             (v==InputType.TYPE_TEXT_VARIATION_PASSWORD ||
+              v==InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD ||
+              v==InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD) ||
+             c==InputType.TYPE_CLASS_NUMBER &&
+              v==InputType.TYPE_NUMBER_VARIATION_PASSWORD;
+    }
+
+    @Override public void onCreate(){super.onCreate();active=this;}
+    @Override public void onDestroy(){if(active==this)active=null;super.onDestroy();}
+
+    @Override public View onCreateInputView(){
+        panel=new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        render();
+        return panel;
+    }
+
+    @Override public void onStartInput(EditorInfo info,boolean restarting){
+        super.onStartInput(info,restarting);
+        targetMlog=info!=null && ScanCoordinator.TARGET.equals(info.packageName);
+        manual=!targetMlog; // Para outros apps, nunca bloquear a digitacao.
+        numeric=info!=null && ((info.inputType&InputType.TYPE_MASK_CLASS)==InputType.TYPE_CLASS_NUMBER);
+        upper=false;
+        if(panel!=null)render();
+    }
+
+    @Override public void onStartInputView(EditorInfo info,boolean restarting){
+        super.onStartInputView(info,restarting);
+        targetMlog=info!=null && ScanCoordinator.TARGET.equals(info.packageName);
+        if(!targetMlog)manual=true;
+        if(panel!=null)render();
+    }
+
+    private int dp(int n){return (int)(getResources().getDisplayMetrics().density*n+0.5f);}
+    private boolean dark(){return (getResources().getConfiguration().uiMode&Configuration.UI_MODE_NIGHT_MASK)==Configuration.UI_MODE_NIGHT_YES;}
+    private GradientDrawable background(int c,int stroke,int radius){
+        GradientDrawable g=new GradientDrawable();g.setColor(c);g.setCornerRadius(dp(radius));
+        if(stroke!=0)g.setStroke(dp(1),stroke);return g;
+    }
+    private TextView key(String caption,Runnable onClick,int weight){
+        TextView t=new TextView(this);
+        t.setText(caption);
+        t.setGravity(Gravity.CENTER);
+        t.setTextSize(17);
+        t.setTypeface(Typeface.DEFAULT,Typeface.NORMAL);
+        t.setTextColor(dark()?0xffeeeeee:0xff1a1a1a);
+        t.setBackground(background(dark()?0xff292929:0xfff0f0f0,dark()?0xff3b3b3b:0xffdddddd,8));
+        t.setOnClickListener(v->onClick.run());
+        t.setPadding(dp(2),dp(3),dp(2),dp(3));
+        return t;
+    }
+    private void render(){
+        if(panel==null)return;
+        panel.removeAllViews();
+        int surface=dark()?0xff111111:0xfff9f9f9;
+        panel.setBackgroundColor(surface);
+        // Tela MLOG: uma barra pequena em vez do Gboard de tela cheia.
+        LinearLayout top=new LinearLayout(this);
+        top.setOrientation(LinearLayout.HORIZONTAL);
+        top.setPadding(dp(5),dp(3),dp(5),dp(3));
+        top.setGravity(Gravity.CENTER_VERTICAL);
+        TextView label=new TextView(this);
+        label.setText(targetMlog?"Bridge · Leitura":"Bridge · Teclado");
+        label.setTextSize(12);
+        label.setTextColor(dark()?0xffeeeeee:0xff111111);
+        label.setGravity(Gravity.CENTER_VERTICAL);
+        top.addView(label,new LinearLayout.LayoutParams(0,dp(31),1));
+        TextView toggle=key(manual?"Ocultar teclas":"Digitar",()->{manual=!manual;render();},1);
+        top.addView(toggle,new LinearLayout.LayoutParams(dp(100),dp(32)));
+        TextView switcher=key("⇄",()->{
+            InputMethodManager imm=(InputMethodManager)getSystemService(Context.INPUT_METHOD_SERVICE);
+            if(imm!=null)imm.showInputMethodPicker();
+        },1);
+        LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(dp(38),dp(32));sp.leftMargin=dp(5);
+        top.addView(switcher,sp);
+        panel.addView(top);
+        if(manual){
+            row(numeric?new String[]{"1","2","3"}:new String[]{"1","2","3","4","5","6","7","8","9","0"});
+            if(numeric){
+                row(new String[]{"4","5","6"});
+                row(new String[]{"7","8","9"});
+                row(new String[]{".","0","⌫"});
+            }else{
+                rowChars("qwertyuiop");
+                rowChars("asdfghjkl");
+                rowChars("zxcvbnm");
+            }
+            row(new String[]{"⇧","ABC/123","Espaço","⌫","✓"});
+        }
+    }
+
+    private void rowChars(String chars){
+        String[] names=new String[chars.length()];
+        for(int i=0;i<chars.length();i++)names[i]=upper?chars.substring(i,i+1).toUpperCase():chars.substring(i,i+1);
+        row(names);
+    }
+    private void row(String[] names){
+        LinearLayout line=new LinearLayout(this);line.setOrientation(LinearLayout.HORIZONTAL);
+        line.setPadding(dp(3),dp(3),dp(3),dp(3));
+        for(String n:names){
+            TextView t=key(n,()->type(n),1);
+            LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,dp(46),"Espaço".equals(n)?2.5f:1f);
+            lp.leftMargin=dp(2);lp.rightMargin=dp(2);
+            line.addView(t,lp);
+        }
+        panel.addView(line);
+    }
+    private void type(String value){
+        InputConnection ic=getCurrentInputConnection();
+        if(ic==null)return;
+        if("⌫".equals(value)){ic.deleteSurroundingText(1,0);return;}
+        if("⇧".equals(value)){upper=!upper;render();return;}
+        if("ABC/123".equals(value)){numeric=!numeric;render();return;}
+        if("✓".equals(value)){
+            if(!sendDefaultEditorAction(true))sendDownUpKeyEvents(KeyEvent.KEYCODE_ENTER);
+            return;
+        }
+        if("Espaço".equals(value))value=" ";
+        ic.commitText(value,1);
+    }
+}
