@@ -1,18 +1,1 @@
-MLOG SCANNER BRIDGE v1.3 — ATUALIZAR VIA CMD
-
-1) Coloque MLOG_Scanner_Bridge_v13_Ciclo_Por_Bipe.zip em Downloads.
-2) Abra o CMD e cole:
-
-cd /d "%USERPROFILE%\Downloads\MLOG-Scanner-Bridge"
-powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v13_Ciclo_Por_Bipe.zip') -DestinationPath . -Force"
-git add -A
-git commit -m "MLOG Bridge v13 ciclo por bipe"
-git push origin main
-
-3) GitHub Actions: baixe MLOG-Scanner-Bridge-v13-APK; extraia app-debug.apk para Downloads.
-4) Com USB e depuracao autorizados:
-
-"%USERPROFILE%\Downloads\platform-tools\adb.exe" devices
-"%USERPROFILE%\Downloads\platform-tools\adb.exe" install -r "%USERPROFILE%\Downloads\app-debug.apk"
-
-5) Teste sem pedidos de producao e confira o Diagnostico se nao confirmar.
+Veja README.md para os comandos GitHub e ADB da v1.4.

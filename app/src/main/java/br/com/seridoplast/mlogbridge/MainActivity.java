@@ -28,7 +28,7 @@ import android.widget.Toast;
 
 
 /**
- * v1.3. Interface monocromatica, teclado nativo e recuperacao de Enter.
+ * v1.4. Interface monocromatica, teclado nativo e recuperacao de Enter.
  * O teste exibe leituras somente na tela; o codigo nao vai para preferências.
  */
 public final class MainActivity extends Activity {
@@ -268,11 +268,11 @@ public final class MainActivity extends Activity {
             toast("Diagnóstico copiado. Não inclui códigos.");
         });
         LinearLayout help=card();help.addView(label("O que testar",17,ink,true));
-        subtitle(help,"Atividades: abre quando bipar. Consulta: selecao renovada a cada leitura. Enter: recuperacao somente quando nao foi processado. Teste com pedidos de teste.");
+        subtitle(help,"Leituras sequenciais agora entram em fila, sem descartar o bipe seguinte. Ao inserir o codigo, confirma pelo editor ou Gboard quando necessario. Teste fora da operacao.");
         button(help,"Abrir MLOG",true,this::openMlog);
     }
     private void about(){
-        title("Sobre","MLOG Scanner Bridge · v1.2");
+        title("Sobre","MLOG Scanner Bridge · v1.4");
         LinearLayout about=card();about.addView(label("Integração local",17,ink,true));
         subtitle(about,"Criado para o scanner físico CMX e o MLOG. Sem acesso à internet. Os códigos de leitura não são salvos em histórico.");
         space(about,10);

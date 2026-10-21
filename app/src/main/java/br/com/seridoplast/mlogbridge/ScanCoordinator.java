@@ -2,6 +2,7 @@ package br.com.seridoplast.mlogbridge;
 
 import android.content.Context;
 import android.os.SystemClock;
+import android.util.Log;
 
 /** Scanner broadcast intake: in-memory deduplication, no stored scan payload. */
 final class ScanCoordinator {
@@ -11,6 +12,7 @@ final class ScanCoordinator {
     private static String lastCode="";
     private ScanCoordinator(){}
     static void status(Context c,String message){
+        Log.i("MLOGBridge","elapsed="+SystemClock.elapsedRealtime()+" status="+message);
         c.getSharedPreferences(PREFS,Context.MODE_PRIVATE).edit()
             .putString("last_status",message).apply();
     }
@@ -25,7 +27,7 @@ final class ScanCoordinator {
             if(ch<32 || ch>126)return false;
         }
         long t=SystemClock.elapsedRealtime();
-        if(code.equals(lastCode) && t-lastAt<280)return false;
+        if(code.equals(lastCode) && t-lastAt<140)return false;
         lastAt=t;lastCode=code;return true;
     }
 }
