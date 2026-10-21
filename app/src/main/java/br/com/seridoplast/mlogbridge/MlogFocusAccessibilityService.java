@@ -86,8 +86,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             receiverRegistered=true;
             // Versoes anteriores podiam deixar o teclado oculto pelo controlador.
             restoreKeyboard();
-            status("v1.2: confirma tecla de verificacao; foco renovado em consulta.");
-            main.postDelayed(prearmRunnable,600);
+            status("v1.3: um ciclo por bipe, campo primeiro, Enter depois.");
         }catch(RuntimeException e){status("Falha ao registrar o broadcast do scanner.");}
     }
 
@@ -135,13 +134,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 }
             }
         }
-        if(prefs().getBoolean("prearm_field",true) &&
-           prefs().getBoolean("enabled",false) && pendingCode==null &&
-           time-lastPrepareCheck>430){
-            lastPrepareCheck=time;
-            main.removeCallbacks(prearmRunnable);
-            main.postDelayed(prearmRunnable,210);
-        }
+        // v1.3: nenhum clique por simples mudanca de tela. Cada gesto do MLOG
+        // deve estar vinculado a uma leitura efetivamente recebida do CMX.
         if(pendingCode==null && time-lastDiagnostic>1750 && time-lastAutoActionAt>30000){
             lastDiagnostic=time;
             AccessibilityNodeInfo root=mlogRoot();
@@ -181,7 +175,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
 
     private void onBarcode(String code){
         lastAutoActionAt=SystemClock.elapsedRealtime();
-        if(pendingCode!=null){status("Leitura pendente: aguarde o campo de codigo.");return;}
+        if(pendingCode!=null){status("Leitura anterior aguardando campo; sem segundo envio.");return;}
         // Nao cancelar a confirmacao anterior simplesmente porque chegou
         // outro broadcast. A confirmacao nova sera identificada no queueEnter.
         AccessibilityNodeInfo root=mlogRoot();
@@ -217,10 +211,10 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             focusAndSet(ready,code);
             return;
         }
-        // Quando ja acionamos o botao MLOG, aguardar o campo aparecer:
-        // um segundo clique em certos modais Flutter fecha a janela.
+        // Quando ja acionamos o botao MLOG nesta tela, evitar um segundo
+        // clique que poderia alternar o modal ou atingir a tecla zero.
         if(preparedAt>0 && i.screen.equals(preparedScreen) &&
-           SystemClock.elapsedRealtime()-preparedAt<1600){
+           SystemClock.elapsedRealtime()-preparedAt<1100){
             startPending(code,i.screen);
             status("Campo ja acionado; aguardando editor sem segundo clique.");
             retryFill(serial,i.screen);
@@ -479,11 +473,11 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private void startPending(String code,String type){
         // O codigo so permanece na memoria ate concluir a tentativa.
         pendingCode=code;
-        pendingDeadline=SystemClock.elapsedRealtime()+4700;
+        pendingDeadline=SystemClock.elapsedRealtime()+3000;
         ++serial;
     }
     private void retryFill(int id,String intendedScreen){
-        for(int delay:new int[]{100,200,350,550,800,1100,1550,2050,2700,3400,4200,4700}){
+        for(int delay:new int[]{90,170,280,430,610,850,1150,1500,2000,2700,3100}){
             main.postDelayed(()->tryPending(id,intendedScreen),delay);
         }
         scheduleRestore(id);
@@ -583,16 +577,21 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
 
         }catch(RuntimeException e){status("Falha de acessibilidade ao inserir o codigo.");}
     }
-    /** A cada leitura aceita, cria um identificador novo de confirmacao.
-     *  Evita o erro da v1.1 que descartava Enter em leituras consecutivas do
-     *  mesmo codigo com menos de 1,1 segundo. */
+    // Cada bipe cria UMA confirmacao. O CMX pode enviar Enter antes do Flutter
+    // abrir seu campo; por isso verificamos brevemente se o valor ainda esta
+    // no editor antes de concluir que o Enter nativo foi recebido.
+    private long confirmStartedAt;
+    private boolean imeEnterRequested;
+    private boolean imeCheckRequested;
+
     private void queueEnter(String expected,long delay){
         final long id=++enterAttempt;
+        confirmStartedAt=SystemClock.elapsedRealtime();
+        imeEnterRequested=false;
+        imeCheckRequested=false;
         main.postDelayed(()->confirmEnteredCode(expected,id),delay);
     }
 
-    /** So confirma quando o campo do MLOG ainda contem exatamente o codigo.
-     *  Se o CMX ja enviou Enter, o campo normalmente desaparece ou e limpo. */
     private void confirmEnteredCode(String expected,long attempt){
         if(attempt!=enterAttempt || !ScanCoordinator.isActive(this))return;
         AccessibilityNodeInfo root=mlogRoot();
@@ -600,44 +599,56 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         ScreenInfo info=inspect(root);
         if(info.login || info.dialog)return;
         AccessibilityNodeInfo editor=safeEditor(info,true);
-        if(editor==null && info.editors.size()==1 && info.editors.get(0).isFocused() &&
-           !blockedLabel(tag(info.editors.get(0))))editor=info.editors.get(0);
+        if(editor==null && info.editors.size()==1 &&
+           !blockedLabel(tag(info.editors.get(0))) &&
+           info.editors.get(0).isEditable())editor=info.editors.get(0);
         if(editor==null || !editor.isVisibleToUser() || editor.isPassword()){
-            status("MLOG mudou o campo: nenhum Enter extra enviado.");return;
+            status("Leitura finalizada: entrada saiu da tela.");return;
         }
         CharSequence current=editor.getText();
         if(current==null || !expected.equals(current.toString().trim())){
-            status("Codigo ja processado ou alterado: sem Enter duplicado.");return;
+            status("Codigo consumido pelo MLOG; sem Enter duplicado.");return;
         }
-        try{
-            int action=AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.getId();
-            if(editor.performAction(action)){
-                status("Enter solicitado para esta leitura; verificando o retorno.");
-                main.postDelayed(()->verifyEnterOutcome(expected,attempt),280);
+        long age=SystemClock.elapsedRealtime()-confirmStartedAt;
+        // Delay curto, mas assegura um pequeno intervalo para o Flutter
+        // finalizar o editor e para o CMX entregar seu proprio Enter.
+        if(age<300){ scheduleConfirm(expected,attempt,300-age);return; }
+        if(!editor.isFocused()){
+            // Nunca dar Enter em editor que perdeu foco: poderia confirmar
+            // quantidade, pular item ou acionar outra tela.
+            if(age<1300){
+                focusOrClick(editor);
+                scheduleConfirm(expected,attempt,170);
+            }else status("Sem Enter: campo perdeu o foco. Consulte Diagnostico.");
+            return;
+        }
+        if(!imeEnterRequested){
+            imeEnterRequested=true;
+            boolean accepted=false;
+            try{
+                if(supports(editor,AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.getId()))
+                    accepted=editor.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.getId());
+            }catch(RuntimeException ignored){}
+            status(accepted?"Solicitei Enter ao campo do MLOG.":"Flutter sem Enter acessivel; verificando tecla de confirmacao.");
+            scheduleConfirm(expected,attempt,accepted?340:100);
+            return;
+        }
+        if(!imeCheckRequested){
+            imeCheckRequested=true;
+            if(pressVisibleImeEnter()){
+                status("Confirmei na tecla do Gboard desta leitura.");
+                // Nao emitir um segundo Enter para esta leitura.
                 return;
             }
-        }catch(RuntimeException ignored){}
-        // Fallback APENAS em tecla explicita de Enter, jamais coordenadas.
-        if(pressVisibleImeEnter()){
-            status("Enter identificado e acionado no teclado Android.");return;
         }
-        status("Codigo presente, mas MLOG nao expos Enter. Envie diagnostico.");
+        if(age<1550 && !isImeVisible()){
+            scheduleConfirm(expected,attempt,180);
+        }else{
+            status("Codigo inserido; Enter nao confirmado. Tecla do Gboard indisponivel.");
+        }
     }
-
-    private void verifyEnterOutcome(String expected,long attempt){
-        if(attempt!=enterAttempt)return;
-        AccessibilityNodeInfo root=mlogRoot();
-        if(root==null)return;
-        ScreenInfo info=inspect(root);
-        if(info.login || info.dialog)return;
-        AccessibilityNodeInfo editor=safeEditor(info,true);
-        if(editor==null && info.editors.size()==1 && info.editors.get(0).isFocused() &&
-           !blockedLabel(tag(info.editors.get(0))))editor=info.editors.get(0);
-        if(editor==null || !editor.isFocused())return;
-        CharSequence current=editor.getText();
-        if(current==null || !expected.equals(current.toString().trim()))return;
-        if(pressVisibleImeEnter())status("Confirmacao ✓ acionada apos campo manter o codigo.");
-        else status("Codigo no campo; Gboard nao expos tecla de confirmacao segura.");
+    private void scheduleConfirm(String expected,long id,long delay){
+        main.postDelayed(()->confirmEnteredCode(expected,id),Math.max(50,delay));
     }
 
     /** Nunca usar toque por posicao no teclado numerico: o local onde era o
@@ -677,40 +688,71 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                     if(chosen!=null && !sameBounds(chosen,target))return false;
                     chosen=target;
                 }
-                if(chosen!=null && chosen.performAction(AccessibilityNodeInfo.ACTION_CLICK))return true;
+                if(chosen!=null){
+                    if(chosen.performAction(AccessibilityNodeInfo.ACTION_CLICK))return true;
+                    if(gestureOnVerifiedImeKey(chosen,wr))return true;
+                }
                 // Alguns Gboard nao anunciam o texto do icone ✓. So usar um
                 // unico controle inferior direito SE o teclado estiver no modo
                 // numerico e as teclas 0..9 estiverem identificaveis.
                 AccessibilityNodeInfo check= root.getPackageName()!=null &&
                     "com.google.android.inputmethod.latin".contentEquals(root.getPackageName())
                         ?numericImeCheck(nodes,wr):null;
-                if(check!=null && check.performAction(AccessibilityNodeInfo.ACTION_CLICK))return true;
+                if(check!=null){
+                    if(check.performAction(AccessibilityNodeInfo.ACTION_CLICK))return true;
+                    if(gestureOnVerifiedImeKey(check,wr))return true;
+                }
             }
         }catch(RuntimeException ignored){}
         return false;
     }
+    /** Tocar somente em tecla cujo no acessivel foi validado dentro da
+     *  janela IME. Nao usar coordenadas fixas da tela do MLOG ou do teclado. */
+    private boolean gestureOnVerifiedImeKey(AccessibilityNodeInfo key,Rect imeBounds){
+        Rect r=new Rect();key.getBoundsInScreen(r);
+        if(r.isEmpty() || r.width()>imeBounds.width()*.33f ||
+           r.centerX()<imeBounds.left+imeBounds.width()*.70f ||
+           r.centerY()<imeBounds.top+imeBounds.height()*.65f ||
+           !imeBounds.contains(r.centerX(),r.centerY()))return false;
+        Path path=new Path();path.moveTo(r.centerX(),r.centerY());
+        GestureDescription.Builder gesture=new GestureDescription.Builder();
+        gesture.addStroke(new GestureDescription.StrokeDescription(path,0,65));
+        try{return dispatchGesture(gesture.build(),null,main);}
+        catch(RuntimeException ignored){return false;}
+    }
     private AccessibilityNodeInfo numericImeCheck(List<AccessibilityNodeInfo> nodes,Rect wr){
         java.util.HashSet<String> digits=new java.util.HashSet<>();
-        AccessibilityNodeInfo candidate=null;
+        Rect zero=new Rect();
         for(AccessibilityNodeInfo n:nodes){
-            if(!n.isEnabled() || !n.isVisibleToUser())continue;
+            if(!n.isVisibleToUser())continue;
             String t=norm(n.getText()).trim();
             String d=norm(n.getContentDescription()).trim();
-            if(t.length()==1 && t.charAt(0)>='0' && t.charAt(0)<='9')digits.add(t);
-            if(d.length()==1 && d.charAt(0)>='0' && d.charAt(0)<='9')digits.add(d);
-            if(!(n.isClickable() && n.getChildCount()==0))continue;
-            Rect r=new Rect();n.getBoundsInScreen(r);
-            // Regiao da tecla de aceite do teclado NUMERICO: ultimo quadrante,
-            // completamente afastada da tecla 0, da busca e do formulario.
-            if(r.isEmpty() || r.width()>wr.width()*.30f ||
-               r.centerX() < wr.left+wr.width()*.77f ||
-               r.centerY() < wr.top+wr.height()*.68f ||
-               r.centerY() > wr.bottom)continue;
-            if(candidate!=null && !sameBounds(candidate,n))return null;
-            candidate=n;
+            String digit=t.length()==1?t:d;
+            if(digit.length()==1 && digit.charAt(0)>='0' && digit.charAt(0)<='9'){
+                digits.add(digit);
+                if("0".equals(digit))n.getBoundsInScreen(zero);
+            }
         }
-        if(digits.size()<8)return null;
-        return candidate;
+        // Confirmar que se trata do teclado numerico fotografado, nunca
+        // clicar em um '0' ou em botoes do MLOG por coordenadas.
+        if(digits.size()<8 || zero.isEmpty())return null;
+        AccessibilityNodeInfo result=null;
+        Rect best=new Rect();
+        for(AccessibilityNodeInfo n:nodes){
+            if(!n.isEnabled() || !n.isVisibleToUser() || !n.isClickable())continue;
+            Rect r=new Rect();n.getBoundsInScreen(r);
+            if(r.isEmpty() || r.width()>wr.width()*.32f ||
+               r.centerX()<wr.left+wr.width()*.77f ||
+               Math.abs(r.centerY()-zero.centerY())>Math.max(24,zero.height()*.7f) ||
+               r.centerY()<wr.top+wr.height()*.70f ||
+               r.centerY()>wr.bottom)continue;
+            // Confirmacao no extremo direito da MESMA linha do zero.
+            // Se houver dois botoes ambiguos, nao arriscar.
+            if(result!=null && !sameBounds(result,n))return null;
+            result=n;
+            best.set(r);
+        }
+        return result;
     }
     private static boolean supports(AccessibilityNodeInfo n,int action){
         for(AccessibilityNodeInfo.AccessibilityAction a:n.getActionList())
@@ -743,8 +785,12 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         boolean named=has(tag(editor),"bipe","digite","barcode","codigo de barras","leitura");
         // Campo focado por toque real ou pelo clique nativo anterior.
         boolean recentlyOpened=info.screen.equals(preparedScreen) &&
-            SystemClock.elapsedRealtime()-preparedAt<12000;
-        return editor.isFocused() && (named || recentlyOpened);
+            SystemClock.elapsedRealtime()-preparedAt<5000;
+        // Na separacao por quantidade, exigir que o botao do proprio MLOG
+        // tenha sido acionado nesta leitura. Um editor numerico generico nao
+        // e prova de que estamos na caixa de codigo de barras.
+        if(info.hasQuantity && !recentlyOpened && !named)return false;
+        return editor.isFocused() && (recentlyOpened || (named && isImeVisible()));
     }
 
     private void markNativeButton(String screen,String source){

@@ -28,7 +28,7 @@ import android.widget.Toast;
 
 
 /**
- * v1.2. Interface monocromatica, teclado nativo e recuperacao de Enter.
+ * v1.3. Interface monocromatica, teclado nativo e recuperacao de Enter.
  * O teste exibe leituras somente na tela; o codigo nao vai para preferências.
  */
 public final class MainActivity extends Activity {
@@ -99,6 +99,11 @@ public final class MainActivity extends Activity {
             // Registro da migracao anterior; a confirmacao agora e automatica,
             // sem preferencia visivel.
             prefs.edit().putBoolean("migrated_enter_v10",true).apply();
+        }
+        if(!prefs.getBoolean("migrated_bipe_only_v13",false)){
+            // O teclado nativo deve ser acionado apenas com um bipe real.
+            prefs.edit().putBoolean("prearm_field",false)
+                .putBoolean("migrated_bipe_only_v13",true).apply();
         }
         boolean dark=darkNow();
         setTheme(dark?R.style.BridgeThemeDark:R.style.BridgeThemeLight);
@@ -235,7 +240,7 @@ public final class MainActivity extends Activity {
         LinearLayout read=card();read.addView(label("Leitura",17,ink,true));
         check(read,"Leitura assistida","enabled",false);
         subtitle(read,"O Bridge clica no botao de teclado do MLOG antes de inserir. Gboard continua disponivel.");
-        check(read,"Preparar busca/produto ao abrir tela", "prearm_field",true);
+        // Preparacao antecipada removida: era a causa de campo abrindo antes do bipe.
         check(read,"Toque guiado (telas reconhecidas)","guided_taps",true);
         check(read,"Detectar teclado de produtos","layout_fallback",true);
         subtitle(read,"O CMX envia Enter primeiro. Se o codigo permanecer no campo, o Bridge tenta a tecla de confirmacao do Gboard. Sem ajuste duplicado.");

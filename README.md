@@ -1,57 +1,51 @@
-# MLOG Scanner Bridge v1.2 — Campo e confirmação confiáveis
+# MLOG Scanner Bridge v1.3 — Ciclo por bipe (protótipo)
 
-Projeto Android para Android 14 / CMX. Compatível com a v1.1 para atualização mantendo o pacote `br.com.seridoplast.mlogbridge` e, quando assinada com a mesma chave, as preferências.
+Esta versão atualiza **somente o MLOG Scanner Bridge**. Não modifica o APK do MLOG nem envia configuração ao CMX Scanner.
 
-## Correções desta versão
+## Alterações
 
-- Reconhecimento do botão de teclado do MLOG aprimorado: em Separação (inclusive com Quantidade), prioriza o botão exposto pela acessibilidade e só recorre às coordenadas dos layouts conhecidos quando necessário. Aguarda um único editor válido.
-- Teclado Gboard permanece disponível, sem alternar o método de entrada.
-- Quando o CMX envia Enter antes de o campo Flutter estar preparado, o Bridge aguarda **420–450 ms** e verifica se o código permanece no campo. Se permanecer, tenta `ACTION_IME_ENTER` e, na falta de efeito, a tecla **✓ / check / concluir** do Gboard.
-- Tecla numérica sem legenda somente quando a janela é do **Gboard**, pelo menos 8 teclas numéricas estão identificadas e há exatamente um botão seguro no canto inferior direito. Não tenta acertar Enter clicando em coordenadas da tela do MLOG.
-- Consulta e conferência de venda: sempre que receber nova leitura e o campo estiver sem foco, tentar selecionar o campo novamente antes de preencher. A consulta não abre teclado sozinha enquanto o usuário vê um resultado.
-- Tela de atividades só abre o botão de teclado quando chega a leitura. Separação conserva os dois layouts (com e sem quantidade) da v1.1.
-- Removido o ajuste visível de Enter do Bridge. O CMX permanece como fonte primária, e a recuperação do Bridge é automática e condicional.
-- Sem comandos de configuração do scanner, sem permissão de internet e sem histórico de códigos.
+- **Não abre mais o botão do MLOG ao entrar na tela.** O clique fica associado ao código recebido pelo broadcast do CMX.
+- **Separação comum e com quantidade:** prioriza o controle nativo de teclado do MLOG; só aceita editor de código após foco confiável, para não confundir com quantidade/peso.
+- **Bipar atividades:** recebe o código, clica uma vez no botão de teclado da tela, espera o editor aparecer e insere o código recebido. Não realiza toques no local anterior quando o Gboard está visível.
+- **Confirmação:** deixa o Enter que o próprio CMX envia agir; se o mesmo código permanecer no editor, tenta a ação Enter do campo e, em último caso, a tecla de confirmação **do próprio Gboard**, validada dentro da janela de teclado. Se não puder identificar o botão com segurança, não clica em posições aleatórias.
+- **Consulta/conferência:** tenta refocar o campo de leitura após exibição de resultado, em cada novo bipe.
+- **Interface:** mantém preto e branco, ícone da marca, teste passivo de leitura e diagnóstico.
 
-### Limitações e cuidados
+## Limitações importantes
 
-O resultado de `ACTION_IME_ENTER` não comprova que o Flutter processou a ação. Por isso há uma única verificação de seguimento, sem toques cegos no teclado. **Ainda é um protótipo e não foi executado no CMX nesta etapa.** Testar primeiro fora de pedidos reais; o Enter automatizado pode confirmar operações.
+Este protótipo foi verificado estaticamente, **não foi compilado ou testado no coletor nesta entrega**. O resultado depende do conteúdo de acessibilidade exposto pelo Flutter e pelo Gboard. `ACTION_IME_ENTER` pode não ser implementada pelo campo do MLOG. Não há garantia de confirmação em todas as telas nem de duração fixa em milissegundos.
 
-Se a tela não expuser o campo à acessibilidade ou o Gboard não expuser um botão identificável, o Bridge registrará o erro no Diagnóstico, sem improvisar ações arriscadas. Nas telas de produtos, o reconhecimento do botão nativo continua sujeito ao layout real do MLOG.
+Sem um evento pós-processamento do MLOG, desaparecer o código do campo não prova, por si só, que uma operação de estoque foi confirmada. Não utilize esta versão para confirmar pedidos de produção sem validar cada tipo de tela.
 
-## Atualizar o repositório pelo CMD
+## Gerar APK pelo GitHub
 
-1. Baixar `MLOG_Scanner_Bridge_v12_Enter_Foco_Continuo.zip` para Downloads.
-2. Abrir CMD e executar:
+Baixe o ZIP e salve em `Downloads`. No CMD:
 
 ```bat
 cd /d "%USERPROFILE%\Downloads\MLOG-Scanner-Bridge"
-powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v12_Enter_Foco_Continuo.zip') -DestinationPath . -Force"
+powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v13_Ciclo_Por_Bipe.zip') -DestinationPath . -Force"
 git add -A
-git commit -m "MLOG Bridge v12 Enter e foco continuo"
+git commit -m "MLOG Bridge v13 ciclo por bipe"
 git push origin main
 ```
 
-Na execução bem-sucedida do GitHub Actions, baixe o artefato `MLOG-Scanner-Bridge-v12-APK`. Extraia `app-debug.apk` para Downloads.
+Entre em **https://github.com/seridoplast/MLOG-Scanner-Bridge/actions** e aguarde a compilação verde. Baixe o artefato `MLOG-Scanner-Bridge-v13-APK`, extraia `app-debug.apk` e salve em `Downloads`.
 
-## Instalar com depuração USB
+## Instalar/atualizar por ADB (com depuração USB autorizada)
 
 ```bat
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" devices
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" install -r "%USERPROFILE%\Downloads\app-debug.apk"
 ```
 
-O dispositivo deve constar como `device` e a instalação terminar em `Success`. Se receber `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, não desinstale automaticamente: veja se a assinatura de debug foi alterada, pois a desinstalação pode apagar configurações e exigir autorizações novamente.
+Aparecerá `Success` se a atualização for aceita. Se a assinatura da versão instalada for diferente, não desinstale sem antes salvar as configurações.
 
-## Validação rápida no aparelho
+## Testes controlados
 
-1. Na tela **Bipar Atividades**, verificar que não abre antes da leitura e que confirma ✓ já no primeiro bipe.
-2. Repetir **três** leituras seguidas (inclusive após rejeição pelo MLOG); nenhuma deve clicar na tecla `0`.
-3. Em **Consulta**, consultar dois produtos diferentes seguidos sem tocar na barra entre eles.
-4. Na **Busca da conferência de venda**, testar confirmação e nova leitura.
-5. Na **Separação**, testar produto normal e produto com botão `Quantidade`, com e sem o campo já aberto.
-6. Se falhar, abrir **Diagnóstico** e copiar o último status; informar a tela e se o código apareceu no campo ou no teclado.
+1. Abra Bipar Atividades, espere sem bipar: o Bridge não deve clicar sozinho.
+2. Bipe um código de teste: verifique abertura de campo → preenchimento → confirmação.
+3. Repita a leitura de teste e observe se a confirmação ocorre de novo sem lançar `0`.
+4. Faça o teste de item por quantidade e depois Consulta com dois códigos distintos.
+5. Em falha, entre em **Diagnóstico** no Bridge e copie o status; informe em qual tela ocorreu e se o teclado abriu. **Não envie códigos reais de pedidos, dados pessoais ou senhas.**
 
-## Segurança
-
-Acessibilidade autorizada pelo Android, somente na janela do MLOG. Este APK de depuração não é uma versão auditada para 30 coletores; antes de distribuição empresarial usar assinatura estável e testes controlados.
+A acessibilidade deve ser autorizada no Android; mantenha o Play Protect ativo. O Bridge não exige internet nem coleta histórico persistente de códigos.
