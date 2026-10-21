@@ -1,14 +1,19 @@
-1) Salve o arquivo MLOG_Scanner_Bridge_v5_Sem_Teclado.zip em Downloads.
-2) Abra o CMD e cole (ajuste a pasta do repositório se estiver em outro local):
+MLOG SCANNER BRIDGE v0.6
+
+1. Coloque MLOG_Scanner_Bridge_v6_Conferencia_Atividades.zip em Downloads.
+2. CMD (uma linha de cada vez):
 
 cd /d "%USERPROFILE%\Downloads\MLOG-Scanner-Bridge"
-powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v5_Sem_Teclado.zip') -DestinationPath . -Force"
-if exist "app\src\main\java\br\com\seridoplast\mlogbridge\ScannerInputMethodService.java" del "app\src\main\java\br\com\seridoplast\mlogbridge\ScannerInputMethodService.java"
-if exist "app\src\main\res\xml\input_method.xml" del "app\src\main\res\xml\input_method.xml"
+powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v6_Conferencia_Atividades.zip') -DestinationPath . -Force"
 git add -A
-git commit -m "v5 scanner sem teclado proprio"
+git commit -m "MLOG Bridge v6 busca conferencia e atividades"
 git push origin main
 
-3) Actions > execute a compilacao; baixe MLOG-Scanner-Bridge-v5-APK.
-4) No coletor, retorne o teclado padrão para Gboard e use a acessibilidade do Bridge.
-OBS: versões debug em GitHub Actions podem ter assinatura diferente; talvez seja necessário remover a antiga e instalar esta. Veja README.
+3. Abra https://github.com/seridoplast/MLOG-Scanner-Bridge/actions
+4. Na execucao verde, baixe MLOG-Scanner-Bridge-v6-APK.
+5. Instale o APK com o procedimento corporativo autorizado.
+
+ATENCAO: o projeto nao foi compilado nem testado no aparelho neste ambiente.
+Testar em pedidos de exemplo, com Enter desligado. Acessibilidade precisa de
+concessao de acesso pelo Android. Na conferencia a entrada deve ser o campo
+superior; em atividades, o icone do teclado no rodape do painel.

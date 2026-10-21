@@ -76,7 +76,7 @@ public class MainActivity extends Activity {
         top.setGravity(Gravity.CENTER_VERTICAL);
         top.setOrientation(LinearLayout.HORIZONTAL);
         TextView title=new TextView(this);
-        title.setText("MLOG Scanner Bridge v0.5");
+        title.setText("MLOG Scanner Bridge v0.6");
         title.setTextSize(21);
         title.setTextColor(ink);
         title.setTypeface(null,1);
@@ -109,7 +109,7 @@ public class MainActivity extends Activity {
         layout.addView(themeOptions);
 
         heading("MLOG + CMX");
-        text("Foco inteligente: usa a acessibilidade para preencher o MLOG diretamente. Mantem o teclado normal do Android; nao e preciso trocar de teclado.");
+        text("v0.6: busca da conferencia de venda e bipagem de atividades usam rotinas separadas de foco. Preserva o Gboard; o teclado normal nao precisa ser trocado.");
         text("AVISO: a acessibilidade pode consultar elementos do MLOG. Nao ha permissao de internet, nem gravacao de codigos em disco; uma transmissao externa de broadcast nao e autenticada pelo CMX. Teste em ambiente controlado.");
 
         heading("1. Permissoes e seguranca");
@@ -121,9 +121,10 @@ public class MainActivity extends Activity {
         });
         text("Acessibilidade depende da autorizacao do Android. Se aparecer 'Configuracao restrita': tente ativar o servico, volte a Configuracoes > Aplicativos > Ver todos > MLOG Scanner Bridge e procure 'Permitir configuracoes restritas' no menu ou na pagina. Se nao existir, instale pelo ADB em dispositivo corporativo de teste, como ja funcionou no Android 14; para muitos aparelhos, prefira implantacao gerenciada. Nao desligue Play Protect.");
         option("Ativar as leituras assistidas", "enabled",false);
-        option("Ocultar teclado somente durante o scan", "hide_keyboard_on_scan",true);
-        option("Permitir tentativa por layout relativo (teste controlado)", "layout_fallback",false);
-        text("Deixe a tentativa por layout DESLIGADA ate verificar o diagnostico. O app nao clica por coordenada fixa e nao age sobre Quantidade.");
+        option("Ocultar teclado virtual durante a leitura", "hide_keyboard_on_scan",true);
+        option("Reconhecer toques nas telas de atividade e conferencia (720x1440)", "guided_taps",true);
+        option("Tentar foco por layout relativo na separacao de produtos (experimental)", "layout_fallback",false);
+        text("Toques guiados usam proporcoes das imagens fornecidas e SOMENTE acontecem nas telas reconhecidas. Desative em coletores com tela diferente. Se o Flutter nao oferecer um campo editavel valido, o Bridge NAO injeta codigo. A opcao experimental de produtos permanece desligada.");
         option("Enviar Enter apos inserir codigo (TESTAR antes)", "send_enter",false);
         status=new TextView(this);
         status.setTextSize(15);status.setPadding(dp(10),dp(10),dp(10),dp(10));
@@ -158,13 +159,13 @@ public class MainActivity extends Activity {
         });
 
         heading("4. Procedimento recomendado");
-        text("1. Teste o scanner aqui antes de abrir pedidos reais.\n"+
-             "2. Deixe Gboard (ou o teclado padrao) selecionado; NAO use teclado Bridge.\n"+
-             "3. Ative acessibilidade pelo Android e leituras assistidas neste aplicativo.\n"+
-             "4. Abra separacao comum, bobina ou bipagem de atividades.\n"+
-             "5. Teste um codigo com Enter desligado; confira o destino antes de confirmar.\n"+
-             "6. Para digitar quantidade, basta tocar no controle Quantidade: o teclado normal volta.\n"+
-             "7. Se Flutter nao expuser o botao/editor, confira diagnostico; nao force coordenadas sem validar.");
+        text("1. Configure scanner para broadcast e teste um codigo neste aplicativo.\n"+
+             "2. Deixe o Gboard como teclado padrao e mantenha Enter desligado.\n"+
+             "3. Teste primeiro Busca da conferencia de venda: a caixa de codigo fica no topo.\n"+
+             "4. Teste Bipar Atividades de Separacao: o Bridge procura o icone de teclado na base.\n"+
+             "5. Confira se o codigo entrou NO CAMPO CORRETO antes de confirmar.\n"+
+             "6. Teste separacao de produtos somente depois; seu comportamento foi preservado.\n"+
+             "7. Se o diagnostico indicar editor nao exposto, envie o status e uma captura.");
         text("Observacao: ACTION_SET_TEXT exige um campo editavel acessivel; em Flutter nao ha garantia. Confira o diagnostico, principalmente em telas de notas.");
     }
     private void openMlog(){

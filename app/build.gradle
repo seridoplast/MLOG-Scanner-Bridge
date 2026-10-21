@@ -6,8 +6,8 @@ android {
         applicationId 'br.com.seridoplast.mlogbridge'
         minSdk 26
         targetSdk 35
-        versionCode 5
-        versionName '0.5-scanner-direto'
+        versionCode 6
+        versionName '0.6-busca-e-atividades'
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
