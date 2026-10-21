@@ -99,7 +99,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             prefs().edit().putBoolean("prearm_field",false).apply();
             // Versoes anteriores podiam deixar o teclado oculto pelo controlador.
             restoreKeyboard();
-            status("v1.6: confirmacao rapida; fila continua; navegacao protegida.");
+            status("v1.7: aguardando tecla de confirmacao pronta; fila e navegacao protegidas.");
         }catch(RuntimeException e){status("Falha ao registrar o broadcast do scanner.");}
     }
 
@@ -653,7 +653,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             if(code.equals(existing.toString().trim())){
                 cancelPending();
                 status("Codigo ja no campo: confirmacao rapida desta leitura.");
-                queueEnter(code,160);
+                queueEnter(code,EnterReadinessPolicy.INITIAL_DELAY_MS);
                 return;
             }
             // Em Consulta/Conferencia, a caixa de busca conserva o ultimo codigo.
@@ -699,7 +699,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             status("Leitura inserida: aguardando confirmacao.");
             // O estado preparado sera limpo ao terminar ESTA leitura;
             // nao usar timer que possa apagar o estado da leitura seguinte.
-            queueEnter(code,155);
+            queueEnter(code,EnterReadinessPolicy.INITIAL_DELAY_MS);
 
         }catch(RuntimeException e){status("Falha de acessibilidade ao inserir o codigo.");finishQueuedScan("erro_set_text");}
     }
@@ -711,6 +711,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private boolean imeCheckRequested;
     private boolean verifyingImeClick;
     private long imeGestureAt;
+    private long lastImeWaitLogAt;
 
     private void queueEnter(String expected,long delay){
         final long id=++enterAttempt;
@@ -719,6 +720,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         imeCheckRequested=false;
         verifyingImeClick=false;
         imeGestureAt=0;
+        lastImeWaitLogAt=0;
         trace("ENTER_WAIT_NATIVE");
         main.postDelayed(()->confirmEnteredCode(expected,id),delay);
     }
@@ -763,9 +765,11 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             }
             return;
         }
-        // O Enter do CMX costuma vir ANTES de o editor Flutter existir.
-        // Apos breve janela de assentamento, tentar ACTION_IME_ENTER. Se ela
-        // nao for exposta, NAO esperar outros 100+ ms: passar ao Gboard.
+        // O Enter do CMX pode chegar antes do editor do Flutter existir.
+        // Aguardar um curto periodo para estabilizar o IME. Caso o Flutter
+        // nao disponibilize ACTION_IME_ENTER, procurar Gboard repetidamente
+        // enquanto a entrada continuar visivel e com o codigo esperado.
+        // Na v1.6, uma unica busca prematura esgotava todas as tentativas.
         if(!imeEnterRequested){
             imeEnterRequested=true;
             boolean accepted=false;
@@ -781,24 +785,40 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             }
         }
         if(!imeCheckRequested){
-            imeCheckRequested=true;
+            // Nao marcar "tentativa executada" antes de efetivamente encontrar
+            // um controle. No diagnostico v1.6, a busca falhou ~2 ms depois
+            // de IME_ENTER_UNAVAILABLE, enquanto Gboard ainda animava.
             if(pressVisibleImeEnter()){
+                imeCheckRequested=true;
                 trace("GBOARD_ENTER_CLICK");
                 verifyingImeClick=true;
                 imeGestureAt=SystemClock.elapsedRealtime();
                 scheduleConfirm(expected,attempt,195);
                 return;
             }
-            // Gesto so quando Gboard real e o editor de codigo estao
-            // presentes; nunca na coordenada do antigo botao do MLOG.
             if(tapKnownGboardConfirm(info,editor)){
+                imeCheckRequested=true;
                 trace("GBOARD_ACTION_GESTURE");
                 verifyingImeClick=true;
                 imeGestureAt=SystemClock.elapsedRealtime();
                 scheduleConfirm(expected,attempt,205);
                 return;
             }
-            trace("GBOARD_ENTER_NOT_FOUND");
+            if(EnterReadinessPolicy.canRetry(age)){
+                long now=SystemClock.elapsedRealtime();
+                if(now-lastImeWaitLogAt>=260){
+                    lastImeWaitLogAt=now;
+                    trace("GBOARD_KEY_NOT_READY_RETRY");
+                }
+                // Estado, nao atraso fixo: verifica janela e tecla em ciclos
+                // curtos, sem perder o codigo e sem tocar em numero/quantidade.
+                scheduleConfirm(expected,attempt,EnterReadinessPolicy.nextDelay(age));
+                return;
+            }
+            trace("GBOARD_KEY_TIMEOUT");
+            status("Codigo no campo, mas tecla de confirmacao nao ficou disponivel.");
+            finishQueuedScan("enter_nao_disponivel");
+            return;
         }
         if(verifyingImeClick){
             // Um frame Flutter ainda pode levar ~300 ms apos o gesto.
@@ -813,12 +833,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             finishQueuedScan("confirmacao_nao_verificada");
             return;
         }
-        if(age<1000 && !isImeVisible()){
-            scheduleConfirm(expected,attempt,180);
-        }else{
-            status("Codigo ficou no campo: tecla de Enter nao localizada.");
-            finishQueuedScan("enter_nao_disponivel");
-        }
+        // Fluxo defensivo: nunca repetir um Enter ja enviado.
+        status("Aguardando confirmacao no MLOG.");
+        finishQueuedScan("confirmacao_nao_verificada");
     }
     private void scheduleConfirm(String expected,long id,long delay){
         main.postDelayed(()->confirmEnteredCode(expected,id),Math.max(50,delay));
