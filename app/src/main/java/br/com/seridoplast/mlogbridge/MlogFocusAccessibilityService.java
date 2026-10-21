@@ -95,8 +95,17 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         receiver=new BroadcastReceiver(){
             @Override public void onReceive(Context context,Intent intent){
                 String code=ScannerProtocol.barcode(intent);
-                if(!ScanCoordinator.isActive(MlogFocusAccessibilityService.this) ||
-                        !ScanCoordinator.accept(code,fastImeMode()))return;
+                if(!ScanCoordinator.isActive(MlogFocusAccessibilityService.this))return;
+                // Logar apenas a ORIGEM do broadcast, nunca o codigo lido.
+                final String action=intent==null?null:intent.getAction();
+                final String source=ScannerProtocol.ACTION_CMX.equals(action)?"CMX":
+                        ScannerProtocol.ACTION_HIK.equals(action)?"HIK":
+                        ScannerProtocol.ACTION_GENERIC.equals(action)?"GENERIC":"UNKNOWN";
+                if(!ScanCoordinator.accept(code,fastImeMode())){
+                    if(code!=null && !code.isEmpty()) trace("BROADCAST_SUPPRESSED_"+source);
+                    return;
+                }
+                trace("BROADCAST_ACCEPTED_"+source);
                 enqueueBarcode(code);
             }
         };
@@ -110,7 +119,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             prefs().edit().putBoolean("prearm_field",false).apply();
             // Versoes anteriores podiam deixar o teclado oculto pelo controlador.
             restoreKeyboard();
-            status("v2.0: teclado Bridge com modo rapido opcional; CMX somente leitura.");
+            status("v2.1: modo rapido com protecao contra leitura duplicada; CMX somente leitura.");
         }catch(RuntimeException e){status("Falha ao registrar o broadcast do scanner.");}
     }
 

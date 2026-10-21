@@ -282,11 +282,11 @@ public final class MainActivity extends Activity {
             toast("Diagnóstico copiado. Não inclui códigos.");
         });
         LinearLayout help=card();help.addView(label("O que testar",17,ink,true));
-        subtitle(help,"Leitura aguarda campo focado. A v2.0 pode confirmar pelo teclado Bridge se ele estiver habilitado, selecionado e com a opcao experimental ativa. Log: BRIDGE_IME_ENTER_SENT.");
+        subtitle(help,"Leitura aguarda campo focado. A v2.1 pode confirmar pelo teclado Bridge se ele estiver habilitado, selecionado e com a opcao experimental ativa. Log: BRIDGE_IME_ENTER_SENT.");
         button(help,"Abrir MLOG",true,this::openMlog);
     }
     private void about(){
-        title("Sobre","MLOG Scanner Bridge · v2.0 beta");
+        title("Sobre","MLOG Scanner Bridge · v2.1 beta");
         LinearLayout about=card();about.addView(label("Integração local",17,ink,true));
         subtitle(about,"Criado para o scanner físico CMX e o MLOG. Sem acesso à internet. Os códigos de leitura não são salvos em histórico.");
         space(about,10);
