@@ -1,6 +1,7 @@
 package br.com.seridoplast.mlogbridge;
 
 import android.accessibilityservice.AccessibilityService;
+import android.accessibilityservice.AccessibilityServiceInfo;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -8,270 +9,303 @@ import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.graphics.Rect;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
+import android.view.accessibility.AccessibilityWindowInfo;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 
 /**
- * Foco assistido EXCLUSIVAMENTE no MLOG.
- * Nao le outros aplicativos, nao captura teclas/senhas, nao usa coordenadas
- * de toque nem APIs de gestos, nao armazena texto de tela/codigos.
- * O Flutter pode nao publicar o botao na arvore de acessibilidade: nesse caso
- * falha com seguranca, ao inves de tocar numa posicao arbitraria.
+ * MLOG-only accessibility bridge. Neither an input method nor a key mapper.
+ * Barcode broadcasts -> find explicit code field OR click labelled keyboard
+ * button -> write via ACTION_SET_TEXT. No gestures or clipboard. Never logs codes.
  */
 public class MlogFocusAccessibilityService extends AccessibilityService {
     private static volatile MlogFocusAccessibilityService instance;
-    private final Handler ui=new Handler(Looper.getMainLooper());
+    static MlogFocusAccessibilityService current(){return instance;}
+    private final Handler main=new Handler(Looper.getMainLooper());
     private BroadcastReceiver scanReceiver;
-    private long lastProbe, lastAutoTry;
-    private boolean registered;
-    private static final String TARGET=ScanCoordinator.TARGET;
+    private boolean registered=false, keyboardSuppressed=false;
+    private long lastStatusAt;
+    private String pending=null;
+    private long pendingUntil;
+    private int attemptSerial=0;
 
-    static MlogFocusAccessibilityService current() { return instance; }
-
-    @Override protected void onServiceConnected() {
+    @Override protected void onServiceConnected(){
         super.onServiceConnected();
         instance=this;
-        scanReceiver=new BroadcastReceiver() {
-            @Override public void onReceive(Context c, Intent intent) {
-                ScanCoordinator.onScan(MlogFocusAccessibilityService.this,ScannerProtocol.barcode(intent));
+        AccessibilityServiceInfo info=getServiceInfo();
+        if(info!=null){
+            info.flags |= AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;
+            setServiceInfo(info);
+        }
+        scanReceiver=new BroadcastReceiver(){
+            @Override public void onReceive(Context c,Intent intent){
+                String barcode=ScannerProtocol.barcode(intent);
+                if(!ScanCoordinator.isActive(MlogFocusAccessibilityService.this) ||
+                        !ScanCoordinator.accept(barcode))return;
+                receiveScan(barcode);
             }
         };
-        IntentFilter f=new IntentFilter();
-        for(String action:ScannerProtocol.ACTIONS) f.addAction(action);
-        try {
-            if(Build.VERSION.SDK_INT>=33) registerReceiver(scanReceiver,f,Context.RECEIVER_EXPORTED);
-            else registerReceiver(scanReceiver,f);
+        IntentFilter filter=new IntentFilter();
+        for(String action:ScannerProtocol.ACTIONS) filter.addAction(action);
+        try{
+            if(Build.VERSION.SDK_INT>=33)
+                registerReceiver(scanReceiver,filter,Context.RECEIVER_EXPORTED);
+            else registerReceiver(scanReceiver,filter);
             registered=true;
-            ScanCoordinator.status(this,"Acessibilidade conectada: aguardando MLOG.");
-        } catch(RuntimeException e) {
-            ScanCoordinator.status(this,"Nao foi possivel receber os eventos do scanner.");
-        }
+            status("v0.5 ativo: scanner por broadcast, Gboard preservado.");
+        }catch(RuntimeException e){status("Falha ao registrar eventos do CMX.");}
     }
 
-    @Override public void onAccessibilityEvent(AccessibilityEvent event) {
-        if(event==null || event.getPackageName()==null ||
-                !TARGET.contentEquals(event.getPackageName())) return;
-        long now=SystemClock.elapsedRealtime();
-        if(now-lastProbe<700) return;
-        lastProbe=now;
-        ui.postDelayed(() -> {
-            AccessibilityNodeInfo root=mlogRoot();
-            if(root==null) return;
-            UiScan s=inspect(root);
-            ScanCoordinator.status(this, describe(s));
-            SharedPreferences prefs=getSharedPreferences(ScanCoordinator.PREFS,MODE_PRIVATE);
-            if(!ScanCoordinator.isActive(this) || !prefs.getBoolean("auto_focus",true))return;
-            if(!(s.separation || (s.workScreen && s.labeledKeyboard!=null)) ||
-                    now-lastAutoTry<4500) return;
-            // Nunca roubar foco enquanto a pessoa esta digitando quantidade ou texto.
-            if(ScanCoordinator.hasAnyMlogEditor() || ScanCoordinator.isArmed())return;
-            lastAutoTry=SystemClock.elapsedRealtime();
-            openCodeField(s, false);
-        },200);
+    private void status(String message){ ScanCoordinator.status(this,message); }
+    private SharedPreferences prefs(){return getSharedPreferences(ScanCoordinator.PREFS,MODE_PRIVATE);}
+    private void suppressKeyboard(){
+        if(!prefs().getBoolean("hide_keyboard_on_scan",true))return;
+        try{keyboardSuppressed=getSoftKeyboardController().setShowMode(SHOW_MODE_HIDDEN);}
+        catch(RuntimeException e){status("Android recusou ocultar teclado virtual.");}
+    }
+    private void restoreKeyboard(){
+        if(!keyboardSuppressed)return;
+        try{getSoftKeyboardController().setShowMode(SHOW_MODE_AUTO);}catch(RuntimeException ignored){}
+        keyboardSuppressed=false;
+    }
+    private void delayedRestore(int serial){
+        main.postDelayed(()->{if(serial==attemptSerial)restoreKeyboard();},1600);
     }
 
-    @Override public void onInterrupt() {
-        ScanCoordinator.status(this,"Servico de foco interrompido pelo Android.");
-    }
-
-    @Override public void onDestroy() {
-        if(instance==this) instance=null;
-        if(registered)try{ unregisterReceiver(scanReceiver); }catch(RuntimeException ignored){}
-        ui.removeCallbacksAndMessages(null);
-        ScanCoordinator.onInputFinished();
-        super.onDestroy();
-    }
-
-    private AccessibilityNodeInfo mlogRoot() {
-        AccessibilityNodeInfo root=getRootInActiveWindow();
-        return root!=null && root.getPackageName()!=null &&
-                TARGET.contentEquals(root.getPackageName())?root:null;
-    }
-
-    void handleBarcode(String barcode) {
-        if(barcode==null || !ScanCoordinator.isActive(this)) return;
-        // Com IME visivel, a janela ativa pode ser o proprio teclado invisivel.
-        // O EditorInfo do IME confirma o pacote MLOG sem depender da janela.
-        if(ScanCoordinator.insertIfArmed(barcode))return;
-        AccessibilityNodeInfo root=mlogRoot();
-        if(root==null) {
-            ScanCoordinator.status(this,"Leitura ignorada: janela do MLOG nao acessivel.");return;
-        }
-        UiScan s=inspect(root);
-        // Mesmo com uma tela diferente, so abre um botao rotulado e inequivoco.
-        if((!s.separation && !s.workScreen) ||
-                (s.labeledKeyboard==null && !s.separation)) {
-            ScanCoordinator.status(this,"Campo nao identificado nesta tela; nada foi enviado.");
+    @Override public void onAccessibilityEvent(AccessibilityEvent event){
+        if(event==null)return;
+        CharSequence pkg=event.getPackageName();
+        if(pkg==null || !ScanCoordinator.TARGET.contentEquals(pkg)){
+            // Do not prevent normal typing in any other app.
+            if(pending==null)restoreKeyboard();
             return;
         }
-        ScanCoordinator.queueAfterClick(barcode);
-        ui.postDelayed(ScanCoordinator::expirePending,2100);
-        if(!openCodeField(s,true)) {
-            ScanCoordinator.cancelExpect();
-            ScanCoordinator.status(this,"Nao achei o botao de codigo com confianca; leitura nao inserida.");
+        if(event.getEventType()==AccessibilityEvent.TYPE_VIEW_CLICKED ||
+                event.getEventType()==AccessibilityEvent.TYPE_VIEW_FOCUSED){
+            AccessibilityNodeInfo src=event.getSource();
+            if(src!=null){
+                String label=tag(src);
+                if(blockedLabel(label) && (label.contains("quantidade") || label.contains("peso"))){
+                    clearPending();restoreKeyboard();
+                }
+            }
+        }
+        long now=SystemClock.elapsedRealtime();
+        if(now-lastStatusAt>1400 && pending==null){
+            lastStatusAt=now;
+            AccessibilityNodeInfo root=mlogWindow();
+            if(root!=null){
+                ViewInfo info=inspect(root);
+                status("Tela="+info.screen+"; campos="+info.editors.size()+
+                       "; teclado="+(info.keyboard!=null?"identificado":"nao identificado")+
+                       "; botoes="+info.buttons+". Aguardando scanner.");
+            }
         }
     }
 
-    private boolean openCodeField(UiScan scan,boolean fromScan) {
-        AccessibilityNodeInfo button=scan.labeledKeyboard;
-        if(button==null && scan.separation && getSharedPreferences(ScanCoordinator.PREFS,MODE_PRIVATE)
-                .getBoolean("layout_fallback",false)) button=scan.relativeKeyboard;
-        if(button==null || !button.isEnabled() || !button.isVisibleToUser()) {
-            if(fromScan) ScanCoordinator.status(this,"Botao teclado nao acessivel nesta tela. Veja diagnostico.");
-            return false;
-        }
-        ScanCoordinator.expectCodeEditor();
-        boolean clicked=button.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-        if(!clicked) {
-            ScanCoordinator.cancelExpect();
-            ScanCoordinator.status(this,"MLOG recusou abrir campo do codigo.");
-            return false;
-        }
-        ScanCoordinator.status(this,"Botao de codigo acionado; aguardando campo de texto.");
-        // Algumas versoes Flutter nao disparam novo onStartInput apos o clique.
-        ui.postDelayed(ScanCoordinator::flushIfEditorOpened,220);
-        ui.postDelayed(ScanCoordinator::flushIfEditorOpened,520);
-        return true;
+    private AccessibilityNodeInfo mlogWindow(){
+        try{
+            for(AccessibilityWindowInfo w:getWindows()){
+                if(w.getType()!=AccessibilityWindowInfo.TYPE_APPLICATION)continue;
+                AccessibilityNodeInfo root=w.getRoot();
+                if(root!=null && ScanCoordinator.TARGET.contentEquals(root.getPackageName()) &&
+                    (w.isActive() || w.isFocused()))return root;
+            }
+            AccessibilityNodeInfo root=getRootInActiveWindow();
+            if(root!=null && ScanCoordinator.TARGET.contentEquals(root.getPackageName()))return root;
+        }catch(RuntimeException ignored){}
+        return null;
     }
 
-    private String describe(UiScan scan) {
-        if(scan.separation) {
-            return "Separacao: "+scan.buttons+" botoes acessiveis; teclado " +
-                    (scan.labeledKeyboard!=null?"rotulado":(scan.relativeKeyboard!=null?"identificado por layout":"nao identificado")) +
-                    "; quantidade "+(scan.quantity?"visivel":"ausente")+".";
+    private void receiveScan(String code){
+        AccessibilityNodeInfo root=mlogWindow();
+        if(root==null){status("Ignorado: MLOG nao esta em primeiro plano.");return;}
+        ViewInfo info=inspect(root);
+        if(info.screen.equals("desconhecida") || info.login){
+            status("Ignorado: tela nao autorizada para bipagem.");return;
         }
-        return "MLOG "+(scan.workScreen?"operacional":"sem contexto seguro")+": "+
-                scan.buttons+" botoes; teclado "+
-                (scan.labeledKeyboard!=null?"rotulado":"nao identificado")+".";
+        // An already open editor must identify itself as a barcode field.
+        AccessibilityNodeInfo verified=findSafeEditor(info,false);
+        if(verified!=null){
+            suppressKeyboard();
+            int serial=++attemptSerial;
+            setBarcode(verified,code);
+            delayedRestore(serial);
+            return;
+        }
+        AccessibilityNodeInfo keyboard=info.keyboard;
+        if(keyboard==null && prefs().getBoolean("layout_fallback",false))
+            keyboard=relativeKeyboard(info);
+        if(keyboard==null){
+            status("Nao achei botao de teclado com seguranca. Abra o diagnostico.");
+            return;
+        }
+        // Hold data only in memory for a short timeout, never persist scanned code.
+        clearPending();
+        pending=code;
+        pendingUntil=SystemClock.elapsedRealtime()+1850;
+        int serial=++attemptSerial;
+        suppressKeyboard();
+        boolean clicked=keyboard.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+        if(!clicked){clearPending();restoreKeyboard();status("Botao identificado, mas Flutter recusou clique.");return;}
+        status("Botao de codigo acionado; procurando editor sem teclado virtual.");
+        for(int wait:new int[]{100,250,450,750,1150,1600})
+            main.postDelayed(()->attemptFill(serial),wait);
+        delayedRestore(serial);
     }
 
-    static final class UiScan {
-        boolean separation,quantity,workScreen,ambiguousKeyboard,loginScreen;
+    private void attemptFill(int serial){
+        if(serial!=attemptSerial || pending==null)return;
+        if(SystemClock.elapsedRealtime()>pendingUntil){
+            clearPending();status("Tempo esgotado: editor nao publicado pela tela Flutter.");return;
+        }
+        AccessibilityNodeInfo root=mlogWindow();
+        if(root==null)return;
+        ViewInfo info=inspect(root);
+        if(info.screen.equals("desconhecida") || info.login)return;
+        AccessibilityNodeInfo editor=findSafeEditor(info,true);
+        if(editor==null)return;
+        String value=pending;
+        clearPending();
+        setBarcode(editor,value);
+    }
+
+    private void setBarcode(AccessibilityNodeInfo editor,String value){
+        if(editor==null || !editor.isEditable() || editor.isPassword() || !editor.isEnabled()){
+            status("Campo nao editavel: nenhuma leitura enviada.");return;
+        }
+        boolean canSet=false;
+        for(AccessibilityNodeInfo.AccessibilityAction a:editor.getActionList())
+            if(a.getId()==AccessibilityNodeInfo.ACTION_SET_TEXT)canSet=true;
+        if(!canSet){status("Flutter nao expoe ACTION_SET_TEXT; campo nao alterado.");return;}
+        Bundle args=new Bundle();
+        args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,value);
+        boolean done;
+        try{done=editor.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,args);}
+        catch(RuntimeException e){done=false;}
+        if(!done){status("MLOG recusou preencher o campo via acessibilidade.");return;}
+        status("Codigo enviado ao campo editavel do MLOG (sem salvar conteudo).");
+        if(prefs().getBoolean("send_enter",false)){
+            // ACTION_IME_ENTER is supported only when the target widget exposes it.
+            boolean supported=false;
+            for(AccessibilityNodeInfo.AccessibilityAction a:editor.getActionList())
+                if(a.getId()==AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.getId())supported=true;
+            if(supported && editor.performAction(
+                    AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.getId()))
+                status("Codigo enviado; confirmacao IME solicitada.");
+            else status("Codigo enviado; MLOG nao expos acao de confirmar.");
+        }
+    }
+    private void clearPending(){pending=null;pendingUntil=0;}
+    private static String tag(AccessibilityNodeInfo n){
+        return clean(n.getContentDescription())+" "+clean(n.getHintText())+" "+
+               clean(n.getViewIdResourceName())+" "+clean(n.getText());
+    }
+    private static String clean(CharSequence c){return c==null?"":c.toString().toLowerCase(Locale.ROOT);}
+    private static boolean has(String s,String... tokens){for(String t:tokens)if(s.contains(t))return true;return false;}
+    private static boolean blockedLabel(String label){
+        return has(label,"quantidade","peso","volume","senha","password","valor", "iniciar");
+    }
+    static final class ViewInfo {
+        String screen="desconhecida";
+        boolean login;
         int buttons;
-        AccessibilityNodeInfo labeledKeyboard,relativeKeyboard;
-        Rect fabricAnchor;
+        AccessibilityNodeInfo keyboard;
+        final List<AccessibilityNodeInfo> editors=new ArrayList<>();
         final List<AccessibilityNodeInfo> controls=new ArrayList<>();
-        final List<Rect> controlRects=new ArrayList<>();
     }
-
-    private UiScan inspect(AccessibilityNodeInfo root) {
-        UiScan result=new UiScan();
-        int[] limit={0};
-        traverse(root,result,limit,0);
-        if(result.loginScreen) { result.labeledKeyboard=null; result.relativeKeyboard=null; return result; }
-        if(result.separation && result.labeledKeyboard==null && result.fabricAnchor!=null)
-            result.relativeKeyboard=findSecondButtonBelowCode(result);
-        return result;
-    }
-
-    private static String clean(CharSequence value) {
-        return value==null?"":value.toString().toLowerCase(Locale.ROOT);
-    }
-    private static boolean has(String s,String... pieces) {
-        for(String p:pieces) if(s.contains(p))return true;
-        return false;
-    }
-    private static String tag(AccessibilityNodeInfo node) {
-        return clean(node.getContentDescription())+" "+clean(node.getText())+" "+
-                clean(node.getHintText())+" "+clean(node.getViewIdResourceName());
-    }
-    private boolean badButtonLabel(String tag) {
-        return has(tag,"quantidade","volume","pular item","encerrar item","trocar lote",
-                "camera","câmera","excluir","cancelar","fechar","pesquisar");
-    }
-    private void traverse(AccessibilityNodeInfo node, UiScan out,int[] visited,int depth) {
-        if(node==null || depth>45 || visited[0]++>430) return;
-        if(!node.isVisibleToUser())return;
-        String id=tag(node);
-        if(has(id,"separação","separacao"))out.separation=true;
-        if(has(id,"nota fiscal","notas fiscais","entrada de notas","recebimento",
-                "conferencia de nota","conferência de nota","conferir notas"))out.workScreen=true;
-        if(has(id,"senha","login","autenticacao","autenticação"))out.loginScreen=true;
-        if(has(id,"quantidade:"))out.quantity=true;
-        if(out.fabricAnchor==null && has(id,"cod. fabric:","cód. fabric:","cod fabric:")) {
-            Rect r=new Rect();node.getBoundsInScreen(r);
-            int height=getResources().getDisplayMetrics().heightPixels;
-            if(!r.isEmpty() && r.height()<height*.18f)out.fabricAnchor=r;
-        }
-        if(node.isClickable() && node.isEnabled()) {
-            out.buttons++;
-            Rect rect=new Rect();node.getBoundsInScreen(rect);
-            if(!rect.isEmpty()) {out.controls.add(node);out.controlRects.add(rect);}
-            if(!badButtonLabel(id) && has(id,"teclado","keyboard","digitar codigo",
-                    "digitar código","entrada manual","ler codigo","ler código",
-                    "inserir codigo","inserir código")) {
-                if(out.labeledKeyboard==null && !out.ambiguousKeyboard)out.labeledKeyboard=node;
-                else if(out.labeledKeyboard!=null && !sameBounds(out.labeledKeyboard,node)) {
-                    out.labeledKeyboard=null;out.ambiguousKeyboard=true;
+    private ViewInfo inspect(AccessibilityNodeInfo root){
+        ViewInfo info=new ViewInfo();
+        List<AccessibilityNodeInfo> nodes=new ArrayList<>();
+        traverse(root,nodes,0);
+        for(AccessibilityNodeInfo node:nodes){
+            if(!node.isVisibleToUser())continue;
+            String label=tag(node);
+            // Only these named workflows may receive codes.
+            if(has(label,"bipar atividades de separa", "bipar atividade de separa")) info.screen="atividades";
+            else if(has(label,"separação","separacao") && info.screen.equals("desconhecida")) info.screen="separacao";
+            else if(has(label,"nota fiscal","conferência de nota","conferencia de nota",
+                    "bipar nota","bipagem de nota","bipar atividades" ) && info.screen.equals("desconhecida")) info.screen="notas";
+            if(has(label,"senha", "autenticacao", "autenticação", "login"))info.login=true;
+            if(node.isEditable() && !node.isPassword())info.editors.add(node);
+            if(node.isClickable() && node.isEnabled()){
+                info.buttons++;
+                info.controls.add(node);
+                if(!blockedLabel(label) && has(label,"teclado","keyboard","inserir código",
+                    "digitar codigo","digitar código","entrada manual", "ler codigo","ler código")){
+                    if(info.keyboard==null)info.keyboard=node;
+                    else if(!samePosition(info.keyboard,node))info.keyboard=null; // ambiguous
                 }
             }
         }
-        for(int j=0;j<node.getChildCount();j++) traverse(node.getChild(j),out,visited,depth+1);
+        if(info.login){ info.keyboard=null; info.screen="desconhecida"; }
+        return info;
     }
-    private static boolean sameBounds(AccessibilityNodeInfo a,AccessibilityNodeInfo b) {
-        Rect ra=new Rect(),rb=new Rect();a.getBoundsInScreen(ra);b.getBoundsInScreen(rb);
-        return Math.abs(ra.centerX()-rb.centerX())<15 && Math.abs(ra.centerY()-rb.centerY())<15;
+    private void traverse(AccessibilityNodeInfo root,List<AccessibilityNodeInfo> out,int depth){
+        if(root==null || depth>45 || out.size()>500)return;
+        out.add(root);
+        for(int i=0;i<root.getChildCount();i++)traverse(root.getChild(i),out,depth+1);
     }
-
-    /**
-     * Fallback OPCIONAL e restrito a separacao: encontra a segunda acao na
-     * fileira situada abaixo de 'Cod. Fabric'. Nao usa pixel fixo nem gestos.
-     * Exige 2 ou 3 controles distintos e alinhados, rejeita qualquer ambiguidade.
-     */
-    private AccessibilityNodeInfo findSecondButtonBelowCode(UiScan scan) {
-        Rect anchor=scan.fabricAnchor;
-        if(anchor==null || anchor.isEmpty())return null;
-        int w=getResources().getDisplayMetrics().widthPixels;
-        int h=getResources().getDisplayMetrics().heightPixels;
-        float dp=getResources().getDisplayMetrics().density;
-        class Candidate {
-            AccessibilityNodeInfo node; Rect bounds;
-            Candidate(AccessibilityNodeInfo n,Rect b){node=n;bounds=b;}
+    private static boolean samePosition(AccessibilityNodeInfo a, AccessibilityNodeInfo b){
+        Rect x=new Rect(),y=new Rect();a.getBoundsInScreen(x);b.getBoundsInScreen(y);
+        return Math.abs(x.centerX()-y.centerX())<15 && Math.abs(x.centerY()-y.centerY())<15;
+    }
+    private AccessibilityNodeInfo findSafeEditor(ViewInfo info,boolean openedByUs){
+        List<AccessibilityNodeInfo> valid=new ArrayList<>();
+        for(AccessibilityNodeInfo n:info.editors){
+            if(!n.isEnabled() || !n.isVisibleToUser())continue;
+            String label=tag(n);
+            if(blockedLabel(label))continue;
+            boolean clearlyCode=has(label,"codigo","código","barcode","cód. barras",
+                    "code", "digite o codigo","barras");
+            // If user has explicitly opened the code dialog through a verified
+            // button, accept an unlabelled editor only if it is the UNIQUE edit.
+            if(clearlyCode || openedByUs)valid.add(n);
         }
-        List<Candidate> candidates=new ArrayList<>();
-        for(int i=0;i<scan.controls.size();i++) {
-            Rect r=scan.controlRects.get(i);
-            if(r.centerY()<anchor.bottom+8*dp || r.centerY()>h*.85f ||
-                    r.width()<34*dp || r.width()>w*.38f ||
-                    r.height()<32*dp || r.height()>130*dp)continue;
-            String t=tag(scan.controls.get(i));
-            if(badButtonLabel(t))continue;
+        return valid.size()==1?valid.get(0):null;
+    }
+    private AccessibilityNodeInfo relativeKeyboard(ViewInfo info){
+        // Opt-in fallback: narrow, order-based heuristic only for known scanner
+        // screens. Requires two aligned clickable icons with plausible sizes.
+        if(info.screen.equals("desconhecida") || info.login)return null;
+        final float density=getResources().getDisplayMetrics().density;
+        final int w=getResources().getDisplayMetrics().widthPixels;
+        final int h=getResources().getDisplayMetrics().heightPixels;
+        class C {AccessibilityNodeInfo n;Rect r;C(AccessibilityNodeInfo n,Rect r){this.n=n;this.r=r;}}
+        List<C> candidates=new ArrayList<>();
+        for(AccessibilityNodeInfo n:info.controls){
+            Rect r=new Rect();n.getBoundsInScreen(r);
+            String t=tag(n);
+            if(blockedLabel(t) || has(t,"camera","câmera","pular","encerrar","fechar","cancelar"))continue;
+            if(r.centerY()<h*.48f || r.centerY()>h*.95f ||
+               r.width()<46*density || r.width()>w*.26f ||
+               r.height()<42*density || r.height()>105*density)continue;
             boolean duplicate=false;
-            for(Candidate cand:candidates) {
-                if(Math.abs(r.centerX()-cand.bounds.centerX())<18*dp &&
-                        Math.abs(r.centerY()-cand.bounds.centerY())<18*dp){
-                    duplicate=true;break;
-                }
-            }
-            if(!duplicate)candidates.add(new Candidate(scan.controls.get(i),r));
+            for(C c:candidates)if(Math.abs(c.r.centerX()-r.centerX())<20*density &&
+                    Math.abs(c.r.centerY()-r.centerY())<20*density)duplicate=true;
+            if(!duplicate)candidates.add(new C(n,r));
         }
-        // Normalmente camera+teclado ou camera+teclado+quantidade.
-        // Um terceiro botao de quantidade pode estar rotulado e foi excluido acima;
-        // nesse caso ficarao somente camera e teclado.
-        List<Candidate> row=new ArrayList<>();
-        int bestCount=0;
-        for(Candidate c:candidates) {
-            List<Candidate> cluster=new ArrayList<>();
-            for(Candidate d:candidates)
-                if(Math.abs(c.bounds.centerY()-d.bounds.centerY())<24*dp)cluster.add(d);
-            if(cluster.size()>bestCount && cluster.size()<=3) {
-                row=cluster; bestCount=cluster.size();
-            }
-        }
-        if(row.size()!=2 && row.size()!=3)return null;
-        row.sort(Comparator.comparingInt(x->x.bounds.centerX()));
-        // Segurança: se 3 botoes, ultimo precisa ser Quantidade, mas esse foi
-        // excluido na selecao. Rejeitamos a linha de tres sem rotulo confiavel.
-        if(row.size()==3)return null;
-        int delta=row.get(1).bounds.centerX()-row.get(0).bounds.centerX();
-        if(delta<w*.12f || delta>w*.50f)return null;
-        return row.get(1).node;
+        if(candidates.size()!=2)return null;
+        C a=candidates.get(0),b=candidates.get(1);
+        if(Math.abs(a.r.centerY()-b.r.centerY())>18*density)return null;
+        if(a.r.centerX()>b.r.centerX()){C tmp=a;a=b;b=tmp;}
+        if((b.r.centerX()-a.r.centerX())<w*.10f ||
+           (b.r.centerX()-a.r.centerX())>w*.48f)return null;
+        return b.n;
+    }
+    @Override public void onInterrupt(){clearPending();restoreKeyboard();status("Acessibilidade interrompida.");}
+    @Override public void onDestroy(){
+        if(registered)try{unregisterReceiver(scanReceiver);}catch(RuntimeException ignored){}
+        main.removeCallbacksAndMessages(null);
+        clearPending();restoreKeyboard();
+        if(instance==this)instance=null;
+        super.onDestroy();
     }
 }

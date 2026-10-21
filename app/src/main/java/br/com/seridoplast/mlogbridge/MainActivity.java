@@ -17,7 +17,6 @@ import android.view.View;
 import android.widget.RadioGroup;
 import android.widget.RadioButton;
 import android.provider.Settings;
-import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.LinearLayout;
@@ -77,7 +76,7 @@ public class MainActivity extends Activity {
         top.setGravity(Gravity.CENTER_VERTICAL);
         top.setOrientation(LinearLayout.HORIZONTAL);
         TextView title=new TextView(this);
-        title.setText("MLOG Scanner Bridge v0.4");
+        title.setText("MLOG Scanner Bridge v0.5");
         title.setTextSize(21);
         title.setTextColor(ink);
         title.setTypeface(null,1);
@@ -110,8 +109,8 @@ public class MainActivity extends Activity {
         layout.addView(themeOptions);
 
         heading("MLOG + CMX");
-        text("Foco inteligente para CMX + MLOG. Usa teclado de leitura e acessibilidade OPCIONAL e limitada ao MLOG.");
-        text("AVISO: a acessibilidade consegue ler elementos da tela do MLOG. Nao habilite ate entender isso. Nao ha internet, coleta em segundo plano nem armazenamento de codigos. Ainda e versao de testes.");
+        text("Foco inteligente: usa a acessibilidade para preencher o MLOG diretamente. Mantem o teclado normal do Android; nao e preciso trocar de teclado.");
+        text("AVISO: a acessibilidade pode consultar elementos do MLOG. Nao ha permissao de internet, nem gravacao de codigos em disco; uma transmissao externa de broadcast nao e autenticada pelo CMX. Teste em ambiente controlado.");
 
         heading("1. Permissoes e seguranca");
         button("Abrir acessibilidade no Android",()->startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
@@ -120,18 +119,12 @@ public class MainActivity extends Activity {
                 Uri.parse("package:"+getPackageName()));
             startActivity(i);
         });
-        text("Acessibilidade e opcional e depende da autorizacao do Android. Se aparecer 'Configuracao restrita': tente ativar o servico, volte a Configuracoes > Aplicativos > Ver todos > MLOG Scanner Bridge e procure 'Permitir configuracoes restritas' no menu ou na pagina. Se nao existir, a ROM CMX pode nao permitir essa autorizacao; nao desative o Play Protect e nao tente burlar a protecao. Use o teclado v2 ate haver distribuicao gerenciada ou uma configuracao autorizada pelo fabricante.");
-        button("Habilitar teclado de leitura",()->startActivity(new Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)));
-        button("Selecionar teclado MLOG",()->{
-            InputMethodManager m=(InputMethodManager)getSystemService(INPUT_METHOD_SERVICE);
-            if(m!=null)m.showInputMethodPicker();
-        });
+        text("Acessibilidade depende da autorizacao do Android. Se aparecer 'Configuracao restrita': tente ativar o servico, volte a Configuracoes > Aplicativos > Ver todos > MLOG Scanner Bridge e procure 'Permitir configuracoes restritas' no menu ou na pagina. Se nao existir, instale pelo ADB em dispositivo corporativo de teste, como ja funcionou no Android 14; para muitos aparelhos, prefira implantacao gerenciada. Nao desligue Play Protect.");
         option("Ativar as leituras assistidas", "enabled",false);
-        option("Pre-armar campo automaticamente em separacao", "auto_focus",true);
-        option("Permitir tentativa por layout relativo (apenas separacao)", "layout_fallback",false);
+        option("Ocultar teclado somente durante o scan", "hide_keyboard_on_scan",true);
+        option("Permitir tentativa por layout relativo (teste controlado)", "layout_fallback",false);
         text("Deixe a tentativa por layout DESLIGADA ate verificar o diagnostico. O app nao clica por coordenada fixa e nao age sobre Quantidade.");
         option("Enviar Enter apos inserir codigo (TESTAR antes)", "send_enter",false);
-        option("Modo v2 sem acessibilidade, exigindo foco manual", "compat_fallback",false);
         status=new TextView(this);
         status.setTextSize(15);status.setPadding(dp(10),dp(10),dp(10),dp(10));
         status.setBackgroundColor(panel);status.setTextColor(ink);layout.addView(status);
@@ -166,12 +159,13 @@ public class MainActivity extends Activity {
 
         heading("4. Procedimento recomendado");
         text("1. Teste o scanner aqui antes de abrir pedidos reais.\n"+
-             "2. Habilite o teclado sem teclas e selecione ele.\n"+
-             "3. Ative a acessibilidade, SE o Android autorizar, e ative as leituras assistidas.\n"+
-             "4. Abra uma separacao de teste. O diagnostico deve identificar a tela e o botao teclado.\n"+
-             "5. Faça uma leitura com Enter desligado. Confira o campo antes de confirmar.\n"+
-             "6. Se o teclado nao for encontrado, volte a este app e leia o diagnostico. Nao habilite tentativa de layout sem testar.");
-        text("Observacao: telas de notas ainda dependem de o Flutter publicar um controle identificado como teclado. Caso contrario e necessario um diagnostico adicional do layout.");
+             "2. Deixe Gboard (ou o teclado padrao) selecionado; NAO use teclado Bridge.\n"+
+             "3. Ative acessibilidade pelo Android e leituras assistidas neste aplicativo.\n"+
+             "4. Abra separacao comum, bobina ou bipagem de atividades.\n"+
+             "5. Teste um codigo com Enter desligado; confira o destino antes de confirmar.\n"+
+             "6. Para digitar quantidade, basta tocar no controle Quantidade: o teclado normal volta.\n"+
+             "7. Se Flutter nao expuser o botao/editor, confira diagnostico; nao force coordenadas sem validar.");
+        text("Observacao: ACTION_SET_TEXT exige um campo editavel acessivel; em Flutter nao ha garantia. Confira o diagnostico, principalmente em telas de notas.");
     }
     private void openMlog(){
         Intent i=getPackageManager().getLaunchIntentForPackage(ScanCoordinator.TARGET);

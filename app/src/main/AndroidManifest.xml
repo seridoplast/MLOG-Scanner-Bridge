@@ -17,17 +17,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <!-- Teclado sem teclas. -->
-        <service
-            android:name=".ScannerInputMethodService"
-            android:label="MLOG Scanner (sem teclas)"
-            android:permission="android.permission.BIND_INPUT_METHOD"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.view.InputMethod" />
-            </intent-filter>
-            <meta-data android:name="android.view.im" android:resource="@xml/input_method" />
-        </service>
         <!-- Acessibilidade opcional, so MLOG. Autorizacao sempre pelo Android. -->
         <service
             android:name=".MlogFocusAccessibilityService"

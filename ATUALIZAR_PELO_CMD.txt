@@ -1,0 +1,14 @@
+1) Salve o arquivo MLOG_Scanner_Bridge_v5_Sem_Teclado.zip em Downloads.
+2) Abra o CMD e cole (ajuste a pasta do repositório se estiver em outro local):
+
+cd /d "%USERPROFILE%\Downloads\MLOG-Scanner-Bridge"
+powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v5_Sem_Teclado.zip') -DestinationPath . -Force"
+if exist "app\src\main\java\br\com\seridoplast\mlogbridge\ScannerInputMethodService.java" del "app\src\main\java\br\com\seridoplast\mlogbridge\ScannerInputMethodService.java"
+if exist "app\src\main\res\xml\input_method.xml" del "app\src\main\res\xml\input_method.xml"
+git add -A
+git commit -m "v5 scanner sem teclado proprio"
+git push origin main
+
+3) Actions > execute a compilacao; baixe MLOG-Scanner-Bridge-v5-APK.
+4) No coletor, retorne o teclado padrão para Gboard e use a acessibilidade do Bridge.
+OBS: versões debug em GitHub Actions podem ter assinatura diferente; talvez seja necessário remover a antiga e instalar esta. Veja README.

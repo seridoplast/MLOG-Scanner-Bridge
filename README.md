@@ -1,93 +1,52 @@
-# MLOG Scanner Bridge v0.3 — foco inteligente (protótipo)
+# MLOG Scanner Bridge v0.5 — leitura direta, sem teclado próprio
 
-Projeto **Android/Java** para o coletor CMX e o MLOG (`com.targetsistemas.target_mlog2`). **Nao e um APK pronto**: o GitHub Actions compila `app-debug.apk` para testes. **Nao foi validado no coletor fisico nem na arvore de acessibilidade real do MLOG Flutter.**
+Projeto Android para compilação automatizada pelo GitHub Actions. **Protótipo não homologado no coletor CMX / no MLOG da Target.**
 
-## Motivacao — os dois layouts enviados
+## Mudanças em relação à v0.4
 
-No modulo **Separacao**, a tela de item comum apresenta os icones Camera + Teclado. Em itens fracionados/por quantidade ha ainda o botao **Quantidade: 1**. Um mapeamento fixo por posicao de tela acaba clicando em botoes errados. Nas telas de notas o icone de teclado pode aparecer em lugar diferente.
+- Retira completamente o InputMethodService e o teclado invisível. O teclado normal (Gboard ou outro) continua selecionado.
+- Acessibilidade limitada ao pacote `com.targetsistemas.target_mlog2`.
+- Scanner envia código através de broadcast (motor nativo CMX/Hikrobotics).
+- No momento da leitura, serviço procura campo editável de código claramente identificado. Se ainda não existir, procura botão de teclado e tenta acioná-lo por ação de acessibilidade.
+- Após abrir editor, tenta `AccessibilityNodeInfo.ACTION_SET_TEXT`, **sem mudar o teclado padrão**.
+- `SoftKeyboardController.SHOW_MODE_HIDDEN` pode ocultar temporariamente o teclado do Android, restaurando `SHOW_MODE_AUTO` em até 1,6 s ou em eventos de quantidade/peso. O Android não garante que todo IME cumpra a solicitação.
+- Telas identificadas: separação, notas (quando legendadas) e “Bipar Atividades de Separação”. A semântica do Flutter pode não disponibilizar título, botão ou editor: nesse caso, o aplicativo não insere nada e informa falha no diagnóstico.
+- Modo escuro/claro/automático da v0.4 mantido.
+- Enter automático **desativado** por padrão. Quando habilitado, usa ACTION_IME_ENTER somente se a própria tela oferecer essa ação; não tenta clicar automaticamente em “Iniciar”.
+- Tentativa pelo layout relativo **desativada** por padrão; é uma heurística experimental e deve ser testada manualmente antes de habilitar.
 
-## O que a v0.3 faz
+## Segurança
 
-1. Mantem o **IME invisivel** da v0.2, que usa `InputConnection.commitText` somente no MLOG.
-2. Adiciona um `AccessibilityService` opcional, registrado SOMENTE para o pacote do MLOG, que consulta os controles de interface e tenta clicar no botao de teclado usando `ACTION_CLICK` (**sem tocar em coordenadas absolutas**).
-3. Pode pre-armar o campo na tela *Separacao* se o MLOG expuser o controle de teclado com descricao compreensivel.
-4. Se o scanner entregar um codigo mas ainda nao houver campo conectado, tenta abrir o teclado do MLOG e aguarda ate 1,9 segundo para entregar aquele codigo; senao o descarta sem alterar pedido.
-5. Possui um **fallback de layout relativo** somente para *Separacao*; opcional, **DESLIGADO por padrao**. Usa a linha abaixo de `Cod. Fabric`, compara controles clicaveis e escolhe o segundo, apenas quando a linha e inequivoca. Nao serve como identificador geral de todos os icones do MLOG.
-6. Se a acessibilidade estiver desativada, pode funcionar como v0.2, com toque manual no campo (configuracao de compatibilidade inicialmente DESLIGADA para evitar inserir codigos em Quantidade).
-7. Diagnostico no proprio app com situacao do servico, numero de controles visiveis e se encontrou teclado / quantidade. **Nao registra o conteudo do produto, numero do pedido ou codigo de barras**.
-8. Os formatos do scanner continuam configuraveis, mas dependem do decodificador fisico.
+- Não solicita `android.permission.INTERNET`.
+- Não armazena códigos lidos em disco nem em diagnósticos; só armazena estado de funcionalidades e mensagens sem o conteúdo do código.
+- Não usa captura de tela, clipboard, injeção ADB ou filtros globais de teclado.
+- O broadcast enviado pelo hardware não está autenticado criptograficamente: outro aplicativo com permissão para enviar broadcast equivalente pode tentar forjar uma leitura. Por esse motivo, teste antes de empregar em pedidos reais e controle os aplicativos instalados nos coletores.
+- Só responde quando a janela principal do MLOG está visível/ativa e quando reconhece uma das telas permitidas.
+- Campos de quantidade/peso/senha são barrados por rótulo, mas **campos sem rótulos adequados no Flutter exigem validação real**; não é possível provar correspondência apenas a partir de prints.
+- O modo de tela relativa é opcional e pode selecionar um botão errado se o Flutter não expuser os nós adequadamente.
+- Não oculta Play Protect nem muda configurações restritas de Android. Usuário deve autorizar a acessibilidade manualmente ou por procedimento corporativo permitido.
 
-## Limites e protecoes deliberadas
+## Compilação e instalação
 
-- Nao altera, recompila ou substitui o MLOG original.
-- Nao pede permissao de internet, contatos, arquivos, gravacao de tela, captura de teclas ou screenshots.
-- Somente eventos do pacote `com.targetsistemas.target_mlog2` entram no servico de acessibilidade.
-- A acessibilidade usa consulta de nos e `ACTION_CLICK`: **nao requisita gestos nem intercepta botoes fisicos**.
-- O IME valida `EditorInfo.packageName` e recusa senhas e editores rotulados como quantidade/peso/volume; tambem bloqueia campo numerico sem identificacao de codigo. Esses controles podem ser insuficientes se o MLOG nao publicar rotulos apropriados.
-- **Enter automatico OFF** e **fallback de layout OFF** por padrao. Primeiro teste deve ocorrer em pedido de homologacao.
-- Codigos transitam somente pela memoria do processo, com expiração curta. Nao sao gravados em arquivos, preferencias ou logs.
-- Os broadcasts do firmware CMX nao parecem exigir permissao criptografica de origem. **Um aplicativo malicioso no mesmo Android poderia falsificar um broadcast**. Nao classificar como aplicativo de alta garantia ate validar o firmware e possivelmente implementar verificacao de origem/assinatura do emissor.
-- No MLOG Flutter, a arvore de acessibilidade pode nao publicar o botao de teclado ou campo de texto. Nesse caso nao ha como garantir foco automatico; o diagnostico vai mostrar a ausencia e o app falhara de modo conservador.
-- Os prints da Separacao mostram icones, mas **nao comprovam** os nomes das opcoes no `AccessibilityNodeInfo`. A tela de notas ainda nao tem captura de arvore de acessibilidade.
-- App instalavel por APK com acessibilidade **pode ser restringido pelo Android/Play Protect mesmo com codigo correto**. Nao ha solucao legitima via alteracao de manifesto para garantir ausencia de alerta. Use distribuicao gerenciada (Google Play privado/MDM) e aprovacao do administrador se necessario.
-- Builds `debug` do GitHub Actions nao sao versoes de producao. Configure **assinatura release persistente** e processo de atualizacao antes de implantar em varios coletores. Nao envie chave privada ao repositorio.
+1. Atualize os arquivos na raiz do repositório, removendo `ScannerInputMethodService.java` e `app/src/main/res/xml/input_method.xml` antigos.
+2. `git add -A && git commit -m "v0.5 leitura direta" && git push origin main`.
+3. GitHub Actions > `Gerar APK do MLOG Scanner Bridge` > execução verde > artefato `MLOG-Scanner-Bridge-v5-APK`.
+4. Para instalar em um dispositivo de teste com USB debugging, use Android SDK Platform Tools `adb install -r caminho\app-debug.apk`. **Se houver `INSTALL_FAILED_UPDATE_INCOMPATIBLE`**, a assinatura debug mudou; antes de desinstalar, anote configurações, e faça a desinstalação somente após avaliar o impacto.
+5. Ative o serviço de acessibilidade `MLOG Bridge - foco inteligente`, selecione **Gboard** (não existe mais teclado Bridge), abra o app e marque **Ativar as leituras assistidas**.
+6. Confirme que o CMX envia leituras por broadcast. Teste primeiro separação comum, bobina com quantidade, atividades e nota, sem lançar dados reais.
+7. Se não entrar código, abra o aplicativo e anote a linha Diagnóstico: tela, editores, botões, ações disponíveis. Precisamos de um dump de acessibilidade real para tratar elementos Flutter que não são publicados.
 
-## Instalar pelo GitHub Actions (sem Android Studio)
+### Conflitos CMX
 
-1. Extraia este ZIP na **raiz** de seu checkout `Downloads\MLOG-Scanner-Bridge`, sobrescrevendo os arquivos antigos. **Nao crie uma pasta dentro do repo**.
-2. Exclua dois arquivos antigos v0.1 se ainda existirem:
-   - `app/src/main/java/br/com/seridoplast/mlogbridge/MlogAccessibilityService.java`
-   - `app/src/main/res/xml/accessibility_config.xml`
-3. Dentro do checkout, execute:
+Dois serviços de acessibilidade tentando atuar no mesmo campo podem conflitar. Se o **serviço de acessibilidade do aplicativo CMX Scanner** não for necessário para o scanner transmitir código via broadcast, desative **somente esse serviço**, conservando instalado o aplicativo/serviço de hardware CMX. Teste o scanner na tela de diagnóstico primeiro. Não desative acessibilidade do Bridge.
 
-```cmd
-git add -A
-git commit -m "Bridge v3 foco inteligente"
-git push origin main
-```
+### Escalonamento para 30 coletores
 
-4. Abra `https://github.com/seridoplast/MLOG-Scanner-Bridge/actions`. Quando a nova execucao tiver sucesso, abra **Artifacts → MLOG-Scanner-Bridge-v3-APK** e extraia `app-debug.apk`.
-5. Como o runner assina APK `debug` usando chave temporaria, talvez seja preciso desinstalar o prototipo anterior antes de instalar o novo. Essa desinstalacao apaga as preferencias do Bridge (nao do MLOG).
-6. **Reative o Play Protect** se estiver desligado. Se o Android recusar o app ou a acessibilidade, nao tente contornar a protecao; distribua por um canal administrado e autorizado. A permissao so pode ser concedida pelo usuario/administrador, nao pelo proprio app.
+Para testes em alguns aparelhos: instale via `adb` em cada unidade autorizada e conectada. Para operação empresarial: use Android Enterprise (MDM/UEM, Managed Google Play privado) e **assine versões de produção com uma chave de assinatura estável protegida fora do repositório**, sem depender de assinaturas debug aleatórias geradas pelo GitHub Actions. Instalar pela Google Drive/Files pode voltar a gerar restrições de acessibilidade no Android 14. A gestão de acessibilidade depende das políticas aplicáveis e não é automaticamente autorizada pela instalação gerenciada.
 
-## Testes minimos obrigatorios (antes de producao)
+## Limites funcionais
 
-1. Confira que o CMX envia o codigo na tela de teste do Bridge.
-2. Ative o teclado especial e selecione-o como teclado atual. Nao o use para login ou senha.
-3. Tente habilitar `MLOG Bridge - foco inteligente` em Acessibilidade. Se o Android nao oferecer essa opcao, nao podemos resolver o bloqueio apenas mudando a API do projeto.
-4. No Bridge, marque `Ativar as leituras assistidas` e deixe **Enter OFF** e **layout relativo OFF**.
-5. Abra um pedido de teste na Separacao, tire um print do diagnostico no Bridge: `Separacao: N botoes acessiveis; teclado rotulado/nao identificado; quantidade visivel/ausente`.
-6. Teste um item comum (sem Quantidade), depois um item fracionado (com `Quantidade: 1`), **conferindo que o codigo NAO entra no campo de quantidade**.
-7. Teste telas de notas de entrada com o botao do teclado em outro lugar.
-8. Se a arvore de acessibilidade nao identificar o teclado, **pare** e envie o diagnostico. So considere ativar o fallback relativo na Separacao, com pedido de teste, se houver dois controles alinhados; nunca ative em operacao sem homologacao.
-9. So depois dos testes avalie ativar Enter automatico, com verificacao das confirmacoes do MLOG.
-
-## Compilacao
-
-Gradle 8.11.1 / Android Gradle Plugin 8.9.1 / Java 17 / Android SDK 35. O workflow nao usa `sdkmanager --licenses` interativo. Este pacote passou por revisao estatica e verificacao de XML/arquivos, **nao por compilacao em Android SDK real** neste ambiente.
-
-## v0.4 — tema automatico e restricao de acessibilidade (21/10/2026)
-
-- Aparencia segue o modo escuro/claro do Android por padrao.
-- Botao `☾/☀` na parte superior alterna Sistema → Escuro → Claro → Sistema.
-- Em **Configuracoes / Aparencia** ha opcoes visiveis Sistema, Escuro e Claro.
-- A escolha e salva nas preferencias privadas do proprio aplicativo.
-- Tela inicial e componentes de diagnostico seguem as cores escolhidas.
-- Botao **Abrir informacoes deste aplicativo** facilita localizar as configuracoes de autorizacao do Android.
-- Mecanismo de scanner, teclado invisivel e acessibilidade limitada ao MLOG sao preservados da v0.3.
-
-### Importante sobre Android 13+ e a protecao do sistema
-
-A mensagem 'Configuracao restrita — Para sua seguranca, essa configuracao esta indisponivel' e uma politica do Android para aplicativos instalados fora de uma origem reconhecida. O projeto NAO pode remover essa protecao por codigo, nem podemos garantir que ela desapareca mudando a aparencia ou assinando o APK.
-
-Procedimento oficial, quando disponibilizado pela ROM: abra **Configuracoes → Acessibilidade → MLOG Bridge**, tente habilitar e confirme o aviso; depois abra **Configuracoes → Aplicativos → Ver todos → MLOG Scanner Bridge**, procure **Permitir configuracoes restritas** no menu de mais opcoes e autorize conscientemente, retornando a Acessibilidade. Em certos coletores CMX a opcao nao aparece; nesse caso deve ser consultado o fabricante/administrador do dispositivo ou usada uma distribuicao empresarial aprovada. Nao desligue o Play Protect como solucao permanente e nao tente ocultar ou retirar a declaracao de acessibilidade apenas para passar pela verificacao.
-
-### Teste seguro
-
-1. Compile e valide o APK; se houver `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, pode ser necessario desinstalar **somente o Bridge antigo**, nunca o MLOG (a assinatura debug de runners temporarios varia).
-2. Reative o Play Protect caso tenha sido desligado durante tentativas anteriores.
-3. Confira os modos Sistema, Escuro e Claro antes de habilitar a leitura assistida.
-4. Teste em ambiente sem pedido real, com **Enter automatico DESLIGADO**.
-5. Se o Android bloquear a acessibilidade, o teclado v2 ainda pode ser utilizado com foco manual, enquanto a politica de instalacao e resolvida.
-
-Este pacote e o **projeto-fonte** para GitHub Actions, nao e um APK ja compilado e testado no coletor.
+- O Bridge pode impedir que o teclado **do Android** apareça temporariamente, mas não consegue ocultar componentes próprios (diálogos/formulários) que o MLOG exibir por dentro do Flutter.
+- O botão físico de gatilho inicia a leitura no serviço nativo do coletor; este aplicativo responde ao **resultado decodificado**, não intercepta o key-event físico (para evitar conflito).
+- O app não determina quando o pedido foi gravado ou confirmado; o sucesso de `ACTION_SET_TEXT` não garante confirmação no MLOG.
+- Compile e valide no equipamento antes de usar em produção.
