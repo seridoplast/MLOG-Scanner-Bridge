@@ -1,22 +1,25 @@
-MLOG Scanner Bridge v0.9 — Atualizacao via CMD
 
-1) Salve MLOG_Scanner_Bridge_v9_Teclado_Enter.zip em Downloads.
-2) Abra CMD e execute:
 
+Baixe `MLOG_Scanner_Bridge_v10_Botao_Nativo.zip` para Downloads e execute:
+
+```cmd
 cd /d "%USERPROFILE%\Downloads\MLOG-Scanner-Bridge"
-powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v9_Teclado_Enter.zip') -DestinationPath . -Force"
+powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v10_Botao_Nativo.zip') -DestinationPath . -Force"
 git add -A
-git commit -m "MLOG Bridge v9 teclado visivel e enter"
+git commit -m "MLOG Bridge v10 clicar botao nativo de leitura"
 git push origin main
+```
 
-3) GitHub Actions: baixar MLOG-Scanner-Bridge-v9-APK apos Success.
-4) Extraia app-debug.apk para Downloads.
+Abra `https://github.com/seridoplast/MLOG-Scanner-Bridge/actions`. Se a execução terminar com sucesso, baixe o artefato `MLOG-Scanner-Bridge-v10-APK`, extraia `app-debug.apk` e coloque-o em Downloads.
 
-INSTALAR PELO ADB:
+## Instalar no coletor via ADB
+
+Conecte USB, ative depuração, autorize o PC no coletor e rode:
+
+```cmd
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" devices
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" install -r "%USERPROFILE%\Downloads\app-debug.apk"
+```
 
-Esperado: device, depois Success. Se aparecer unauthorized, confirme a depuracao no coletor.
+O dispositivo precisa aparecer como `device` e a instalação mostrar `Success`. O `-r` mantém os dados apenas quando a assinatura é compatível. Não desinstale o antigo sem checar isso.
 
-ATENCAO: teclado Gboard visivel, Enter assistido ligado como padrao na v9.
-Se o CMX ja emite Enter e duplicar a confirmacao, desative "Confirmar leitura com Enter" nos Ajustes do Bridge.

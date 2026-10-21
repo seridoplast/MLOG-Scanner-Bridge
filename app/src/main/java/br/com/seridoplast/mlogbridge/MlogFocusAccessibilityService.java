@@ -82,7 +82,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             receiverRegistered=true;
             // Versoes anteriores podiam deixar o teclado oculto pelo controlador.
             restoreKeyboard();
-            status("v0.9: Gboard visivel, foco por tela e confirmacao assistida.");
+            status("v1.0: toque no botao MLOG primeiro; Gboard preservado; Enter verificado.");
             main.postDelayed(prearmRunnable,600);
         }catch(RuntimeException e){status("Falha ao registrar o broadcast do scanner.");}
     }
@@ -193,18 +193,20 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         if(i.login || i.dialog || "desconhecida".equals(i.screen)){
             status("Leitura pausada: tela desconhecida ou aviso aberto.");return;
         }
-        // Se o campo ja foi aberto/preparado, nao pressionar o icone novamente.
+        // Diferenciar um editor QUALQUER do campo efetivamente aberto pelo
+        // botao de teclado do MLOG. Antes, um editor desfocado bloqueava o
+        // clique no botao e somente fazia o Gboard aparecer.
         AccessibilityNodeInfo ready=safeEditor(i,true);
-        if(ready!=null){
+        if(ready!=null && nativeEntryReady(i,ready)){
             int id=++serial;
             focusAndSet(ready,code);
             scheduleRestore(id);
             return;
         }
-        // Se acabamos de tocar um ícone guiado, não acioná-lo de novo no bipe:
-        // em telas Flutter o segundo toque pode FECHAR o campo aberto.
-        if(prearmFallbackUsed && i.screen.equals(preparedScreen) &&
-           SystemClock.elapsedRealtime()-preparedAt<2500){
+        // Quando ja acionamos o botao MLOG, aguardar o campo aparecer:
+        // um segundo clique em certos modais Flutter fecha a janela.
+        if(preparedAt>0 && i.screen.equals(preparedScreen) &&
+           SystemClock.elapsedRealtime()-preparedAt<1600){
             startPending(code,i.screen);
             status("Campo ja acionado; aguardando editor sem segundo clique.");
             retryFill(serial,i.screen);
@@ -258,29 +260,39 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         }
 
         AccessibilityNodeInfo editor=safeEditor(i,false);
-        if(editor!=null){
+        if(editor!=null && nativeEntryReady(i,editor)){
             int id=++serial;
             focusAndSet(editor,code);
             scheduleRestore(id);
             return;
         }
 
-        // Separacao, pedidos e notas: a entrada de codigo pode aparecer somente
-        // apos o clique no icone do teclado. Quantidade NUNCA e elegivel.
+        // Separacao, pedidos e notas: acionar o botao DO MLOG primeiro,
+        // jamais simplesmente mandar mostrar teclado do sistema.
         startPending(code,i.screen);
-        // Ocultacao so acontece DEPOIS de o campo estar aberto.
+        // Esta e a tela do print do usuario: o botao nativo de teclado e
+        // clicado fisicamente (dispatchGesture), NAO usando SHOW_SOFT_INPUT.
+        // A acao direta evita que ACTION_FOCUS abra apenas o Gboard.
+        if("separacao".equals(i.screen) && i.hasSeparationControls &&
+           prefs().getBoolean("guided_taps",true) && supportedAspect(realScreenSize())){
+            status("Separacao: tocando o botao de teclado proprio do MLOG.");
+            tapKnownSeparationKeyboard(serial,i);
+            return;
+        }
         AccessibilityNodeInfo button=findKeyboardTarget(i);
         if(button!=null && focusOrClick(button)){
-            status("Icone de teclado acionado. Aguardando campo com Gboard.");
+            markNativeButton(i.screen,"acessibilidade");
             retryFill(serial,i.screen);
+            scheduleNativeFallback(serial,i.screen);
             return;
         }
         if("separacao".equals(i.screen) &&
                 prefs().getBoolean("layout_fallback",true)){
             AccessibilityNodeInfo n=relativeKeyboard(i);
             if(n!=null && focusOrClick(n)){
-                status("Botao de leitura de produto acionado por layout relativo.");
-                retryFill(serial,i.screen);return;
+                markNativeButton(i.screen,"par camera/teclado");
+                retryFill(serial,i.screen);
+                scheduleNativeFallback(serial,i.screen);return;
             }
         }
         if("separacao".equals(i.screen) && prefs().getBoolean("guided_taps",true)
@@ -318,7 +330,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
              "conferencia_venda".equals(screen) || "separacao".equals(screen) ||
              "pedidos".equals(screen) || "notas".equals(screen)))return;
         AccessibilityNodeInfo editor=safeEditor(info,false);
-        if(editor!=null){
+        if(editor!=null && nativeEntryReady(info,editor)){
             preparedAt=SystemClock.elapsedRealtime();
             preparedScreen=screen;
             try{
@@ -353,12 +365,24 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 status("Conferencia de venda: campo selecionado.");
             else tapPrepare(screen,0.34f,0.145f);
         }else if("separacao".equals(screen) || "pedidos".equals(screen) || "notas".equals(screen)){
-            AccessibilityNodeInfo n=findKeyboardTarget(info);
-            if(n!=null){preparedAt=SystemClock.elapsedRealtime();focusOrClick(n);}
-            else if("separacao".equals(screen) && info.hasSeparationControls){
+            // Ao entrar no item, preparar clicando diretamente no botao
+            // de teclado do proprio MLOG, nao apenas focando outro editor.
+            if("separacao".equals(screen) && info.hasSeparationControls &&
+               supportedAspect(realScreenSize())){
                 preparedAt=SystemClock.elapsedRealtime();
-                tapPrepare(screen,info.hasQuantity?0.47f:0.60f,0.603f);
+                preparedScreen=screen;
+                tapPrepare(screen,info.hasQuantity?0.44f:0.60f,0.603f);
+                return;
             }
+            AccessibilityNodeInfo n=findKeyboardTarget(info);
+            if(n!=null && focusOrClick(n)){
+                markNativeButton(screen,"acessibilidade (preparo)");
+                main.postDelayed(()->postPrepareCheck(screen),520);
+            }else if("separacao".equals(screen) && info.hasSeparationControls){
+                preparedAt=SystemClock.elapsedRealtime();
+                preparedScreen=screen;
+                tapPrepare(screen,info.hasQuantity?0.44f:0.60f,0.603f);
+            }else status("MLOG: botao de entrada nao localizado na tela "+screen);
         }
     }
 
@@ -367,8 +391,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         if(root==null)return;
         ScreenInfo info=inspect(root);
         if(!screen.equals(info.screen) && !"desconhecida".equals(info.screen))return;
-        if(safeEditor(info,true)!=null){
-            status("Campo pronto para leitura na tela: "+screen);
+        AccessibilityNodeInfo ready=safeEditor(info,true);
+        if(ready!=null && nativeEntryReady(info,ready)){
+            status("Campo MLOG pronto para leitura: "+screen);
             // Nao ocultar teclado nem tocar novamente se ja existe editor.
 
         }else{
@@ -380,7 +405,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                     tapPrepare(screen,0.375f,0.888f);return;
                 }
                 if("separacao".equals(screen) && info.hasSeparationControls){
-                    tapPrepare(screen,info.hasQuantity?0.47f:0.60f,0.603f);return;
+                    tapPrepare(screen,info.hasQuantity?0.44f:0.60f,0.603f);return;
                 }
                 if("consulta".equals(screen) && info.hasConsultation){
                     tapPrepare(screen,0.34f,0.090f);return;
@@ -455,7 +480,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             i.screen=intendedScreen;
         }
         AccessibilityNodeInfo editor=safeEditor(i,true);
-        if(editor==null)return;
+        if(editor==null || !nativeEntryReady(i,editor))return;
         String code=pendingCode;
         cancelPending();
         // O teclado deve permanecer disponivel; ele pode ser necessario ao Flutter.
@@ -533,7 +558,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         int action=AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.getId();
         try{
             if(editor.performAction(action)){
-                status("Codigo preenchido e Enter do MLOG acionado.");return;
+                status("Enter solicitado ao MLOG; verificando resultado.");
+                main.postDelayed(()->verifyEnterOutcome(expected),360);
+                return;
             }
         }catch(RuntimeException ignored){}
         // Fallback seguro: tecla Enter/Ir/Buscar do teclado Android visivel.
@@ -542,6 +569,22 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         }
         status("Codigo preenchido, mas MLOG/Gboard nao disponibilizaram Enter. Envie diagnostico.");
     }
+    /** ACTION_IME_ENTER pode retornar true mesmo quando o Flutter ignora a
+     *  confirmacao. Se o codigo ainda for o mesmo apos o atraso, tentamos UMA
+     *  vez a tecla visivel do Gboard. Nunca repetimos Enter sem verificar. */
+    private void verifyEnterOutcome(String expected){
+        AccessibilityNodeInfo root=mlogRoot();
+        if(root==null)return;
+        ScreenInfo current=inspect(root);
+        if(current.login || current.dialog)return;
+        AccessibilityNodeInfo editor=safeEditor(current,true);
+        if(editor==null || !editor.isFocused())return;
+        CharSequence text=editor.getText();
+        if(text==null || !expected.equals(text.toString().trim()))return;
+        if(pressVisibleImeEnter())status("Enter do teclado acionado apos IME nao concluir.");
+        else status("MLOG manteve codigo; Enter nao exposto pelo Gboard.");
+    }
+
     private boolean pressVisibleImeEnter(){
         try{
             for(AccessibilityWindowInfo window:getWindows()){
@@ -587,6 +630,63 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             }
             if(n.isClickable() && n.performAction(AccessibilityNodeInfo.ACTION_CLICK))return true;
             if(n.isFocusable() && n.performAction(AccessibilityNodeInfo.ACTION_FOCUS))return true;
+        }catch(RuntimeException ignored){}
+        return false;
+    }
+
+    /** Campo da tela pronto: nao confundir um editor qualquer com o input
+     *  aberto pelo icone nativo do MLOG. Para separacao o campo precisa estar
+     *  focado ou ter rotulo explicito E ter sido aberto na tela atual. */
+    private boolean nativeEntryReady(ScreenInfo info,AccessibilityNodeInfo editor){
+        if(editor==null || !editor.isEditable() || !editor.isEnabled() ||
+           !editor.isVisibleToUser() || editor.isPassword() ||
+           blockedLabel(tag(editor)))return false;
+        if(!("separacao".equals(info.screen) || "pedidos".equals(info.screen) ||
+             "notas".equals(info.screen)))return editor.isFocused() ||
+                has(tag(editor),"bipe","digite o codigo","codigo da atividade");
+        boolean named=has(tag(editor),"bipe","digite","barcode","codigo de barras","leitura");
+        // Campo focado por toque real ou pelo clique nativo anterior.
+        boolean recentlyOpened=info.screen.equals(preparedScreen) &&
+            SystemClock.elapsedRealtime()-preparedAt<12000;
+        return editor.isFocused() && (named || recentlyOpened);
+    }
+
+    private void markNativeButton(String screen,String source){
+        preparedScreen=screen;
+        preparedAt=SystemClock.elapsedRealtime();
+        status("Botao de teclado do MLOG clicado ("+source+"); esperando input.");
+    }
+
+    /** Verificar falha em ACTION_CLICK sem entrar em loop de toques.
+     * Se o Gboard ja abriu, nao fazer segundo toque (poderia fechar o campo).
+     * Se nao abriu, apenas UM gesto no botao conhecido da tela de separacao. */
+    private void scheduleNativeFallback(int token,String screen){
+        if(!"separacao".equals(screen))return;
+        main.postDelayed(()->{
+            if(token!=serial || pendingCode==null || prearmFallbackUsed)return;
+            AccessibilityNodeInfo root=mlogRoot();
+            if(root==null)return;
+            ScreenInfo info=inspect(root);
+            if(!"separacao".equals(info.screen) || !info.hasSeparationControls ||
+                info.dialog || info.login)return;
+            AccessibilityNodeInfo e=safeEditor(info,true);
+            if(e!=null && nativeEntryReady(info,e))return;
+            if(isImeVisible()){
+                status("Teclado abriu, mas campo Flutter nao foi exposto; aguardando.");return;
+            }
+            if(!prefs().getBoolean("guided_taps",true) || !supportedAspect(realScreenSize()))return;
+            prearmFallbackUsed=true;
+            Point screenSize=realScreenSize();
+            status("Primeiro clique nao abriu input: tentando botao do MLOG por posicao.");
+            tapAt(token,screenSize.x*(info.hasQuantity?0.44f:0.60f),
+                screenSize.y*.603f,screen);
+        },650);
+    }
+
+    private boolean isImeVisible(){
+        try{
+            for(AccessibilityWindowInfo w:getWindows())
+                if(w.getType()==AccessibilityWindowInfo.TYPE_INPUT_METHOD)return true;
         }catch(RuntimeException ignored){}
         return false;
     }
@@ -641,7 +741,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         }
         // Fotos 720x1440: teclado entre camera e quantidade OU camera e margem.
         // Fallback SOMENTE com textos Pular Item + Encerrar Item reconhecidos.
-        tapAt(id,size.x*(info.hasQuantity?0.47f:0.60f),size.y*.603f,"separacao");
+        markNativeButton("separacao","toque na posicao do icone do MLOG");
+        tapAt(id,size.x*(info.hasQuantity?0.44f:0.60f),size.y*.603f,"separacao");
     }
     private AccessibilityNodeInfo activityKeyboard(ScreenInfo info){
         // Em Flutter um "keyboard" sem descricao pode ser um container inteiro.

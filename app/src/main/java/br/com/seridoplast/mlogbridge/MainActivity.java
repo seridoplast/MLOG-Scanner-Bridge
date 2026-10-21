@@ -28,7 +28,7 @@ import android.widget.Toast;
 
 
 /**
- * v0.9. Interface monocromatica, Gboard visivel e Enter assistido.
+ * v1.0. Interface monocromatica, Gboard visivel e Enter assistido.
  * O teste exibe leituras somente na tela; o codigo nao vai para preferências.
  */
 public final class MainActivity extends Activity {
@@ -95,6 +95,12 @@ public final class MainActivity extends Activity {
                 .putBoolean("send_enter",true)
                 .putBoolean("layout_fallback",true)
                 .putBoolean("migrated_scan_v9",true).apply();
+        }
+        if(!prefs.getBoolean("migrated_enter_v10",false)){
+            // Solicitado: ao concluir leitura o Bridge tenta Enter, apenas
+            // se codigo ainda estiver no campo para nao duplicar o CMX.
+            prefs.edit().putBoolean("send_enter",true)
+                .putBoolean("migrated_enter_v10",true).apply();
         }
         boolean dark=darkNow();
         setTheme(dark?R.style.BridgeThemeDark:R.style.BridgeThemeLight);
@@ -230,7 +236,7 @@ public final class MainActivity extends Activity {
         title("Ajustes","Preferências de leitura e aparência.");
         LinearLayout read=card();read.addView(label("Leitura",17,ink,true));
         check(read,"Leitura assistida","enabled",false);
-        subtitle(read,"Gboard permanece visivel para digitar e bipar.");
+        subtitle(read,"O Bridge clica no botao de teclado do MLOG antes de inserir. Gboard continua disponivel.");
         check(read,"Preparar campo ao abrir tela", "prearm_field",true);
         check(read,"Toque guiado (telas reconhecidas)","guided_taps",true);
         check(read,"Detectar teclado de produtos","layout_fallback",true);
@@ -264,7 +270,7 @@ public final class MainActivity extends Activity {
         button(help,"Abrir MLOG",true,this::openMlog);
     }
     private void about(){
-        title("Sobre","MLOG Scanner Bridge · v0.9");
+        title("Sobre","MLOG Scanner Bridge · v1.0");
         LinearLayout about=card();about.addView(label("Integração local",17,ink,true));
         subtitle(about,"Criado para o scanner físico CMX e o MLOG. Sem acesso à internet. Os códigos de leitura não são salvos em histórico.");
         space(about,10);
