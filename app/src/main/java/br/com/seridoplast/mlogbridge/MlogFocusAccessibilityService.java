@@ -42,6 +42,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private boolean receiverRegistered;
     // Confirmar uma vez POR LEITURA, nunca bloquear pelo valor do codigo.
     private long enterAttempt;
+    // Cada leitura possui a sua propria confirmacao. O CMX continua sendo a
+    // fonte principal do Enter; o Bridge apenas recupera se ele se perdeu.
     private String lastEnteredByBridge="";
     private String lastEnteredScreen="";
     private String pendingCode;
@@ -84,7 +86,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             receiverRegistered=true;
             // Versoes anteriores podiam deixar o teclado oculto pelo controlador.
             restoreKeyboard();
-            status("v1.1: Enter por leitura; atividades so abre no bipe; consulta reutilizavel.");
+            status("v1.2: confirma tecla de verificacao; foco renovado em consulta.");
             main.postDelayed(prearmRunnable,600);
         }catch(RuntimeException e){status("Falha ao registrar o broadcast do scanner.");}
     }
@@ -180,8 +182,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private void onBarcode(String code){
         lastAutoActionAt=SystemClock.elapsedRealtime();
         if(pendingCode!=null){status("Leitura pendente: aguarde o campo de codigo.");return;}
-        // Nova leitura cancela uma verificacao de Enter da leitura anterior.
-        ++enterAttempt;
+        // Nao cancelar a confirmacao anterior simplesmente porque chegou
+        // outro broadcast. A confirmacao nova sera identificada no queueEnter.
         AccessibilityNodeInfo root=mlogRoot();
         if(root==null){status("Ignorado: MLOG nao esta na tela ativa.");return;}
         ScreenInfo i=inspect(root);
@@ -202,9 +204,17 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         // clique no botao e somente fazia o Gboard aparecer.
         AccessibilityNodeInfo ready=safeEditor(i,true);
         if(ready!=null && nativeEntryReady(i,ready)){
-            int id=++serial;
+            if(("consulta".equals(i.screen) || "conferencia_venda".equals(i.screen))
+                    && !ready.isFocused()){
+                // Consulta apos resultado: Flutter deixa o campo visivel, mas
+                // sem foco. Focar, esperar a transicao e so entao preencher.
+                startPending(code,i.screen);
+                focusOrClick(ready);
+                retryFill(serial,i.screen);
+                return;
+            }
+            ++serial;
             focusAndSet(ready,code);
-            scheduleRestore(id);
             return;
         }
         // Quando ja acionamos o botao MLOG, aguardar o campo aparecer:
@@ -244,13 +254,19 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         // Portanto NAO se deve clicar no botao de teclado/teclar por cima.
         if("conferencia_venda".equals(i.screen) || "consulta".equals(i.screen)){
             AccessibilityNodeInfo editor=safeEditor(i,true);
-            if(editor!=null){
-                int id=++serial;
+            if(editor!=null && editor.isFocused()){
+                ++serial;
                 focusAndSet(editor,code);
-                scheduleRestore(id);
                 return;
             }
             startPending(code,i.screen);
+            if(editor!=null){
+                // Novo bipe = reabrir/selecionar busca, sem depender do toque
+                // manual apos o resultado da consulta anterior.
+                focusOrClick(editor);
+                retryFill(serial,i.screen);
+                return;
+            }
             // Não ocultar IME antes do campo existir. O Flutter pode nao abrir.
 
             if(i.searchField!=null){
@@ -283,13 +299,22 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         // Esta e a tela do print do usuario: o botao nativo de teclado e
         // clicado fisicamente (dispatchGesture), NAO usando SHOW_SOFT_INPUT.
         // A acao direta evita que ACTION_FOCUS abra apenas o Gboard.
+        // Primeiro o botao semantico do MLOG; isso evita acertar Quantidade
+        // caso o layout mude. Coordenadas ficam como ultimo recurso.
+        AccessibilityNodeInfo button=findKeyboardTarget(i);
+        if("separacao".equals(i.screen) && button!=null &&
+            focusOrClick(button)){
+            markNativeButton(i.screen,"botao identificado no MLOG");
+            retryFill(serial,i.screen);
+            scheduleNativeFallback(serial,i.screen);
+            return;
+        }
         if("separacao".equals(i.screen) && i.hasSeparationControls &&
            prefs().getBoolean("guided_taps",true) && supportedAspect(realScreenSize())){
-            status("Separacao: tocando o botao de teclado proprio do MLOG.");
+            status("Separacao: toque no icone proprio do MLOG (layout conhecido).");
             tapKnownSeparationKeyboard(serial,i);
             return;
         }
-        AccessibilityNodeInfo button=findKeyboardTarget(i);
         if(button!=null && focusOrClick(button)){
             markNativeButton(i.screen,"acessibilidade");
             retryFill(serial,i.screen);
@@ -327,17 +352,17 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         ScreenInfo info=inspect(root);
         if(info.login || info.dialog || "desconhecida".equals(info.screen))return;
         String screen=info.screen;
-        // Atividades: tocar o icone SOMENTE quando receber um codigo.
-        // Em teclados numericos um segundo toque por coordenada acerta a tecla 0.
-        if("atividades".equals(screen))return;
+        // Atividades so ao bipar. Consulta reabre a busca apenas quando
+        // receber um codigo; nao tapar os detalhes do ultimo produto.
+        if("atividades".equals(screen) || "consulta".equals(screen) ||
+                "conferencia_venda".equals(screen))return;
         if(!screen.equals(preparedScreen)){
             preparedScreen=screen;
             preparedAt=0;
             prearmFallbackUsed=false;
         }
-        // Nao repetir cliques na mesma tela apenas por passagem de tempo.
-        // Flutter pode alternar abrir/fechar o modal se tocarmos de novo.
-        // Liberar nova tentativa quando uma leitura conclui ou a tela muda.
+        // Evitar cliques repetidos no mesmo icone; se a proxima atividade
+        // mudou o produto, a leitura via broadcast reabrira o campo se preciso.
         if(preparedAt>0)return;
         if(!("consulta".equals(screen) || "conferencia_venda".equals(screen) ||
              "separacao".equals(screen) ||
@@ -371,6 +396,12 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         }else if("separacao".equals(screen) || "pedidos".equals(screen) || "notas".equals(screen)){
             // Ao entrar no item, preparar clicando diretamente no botao
             // de teclado do proprio MLOG, nao apenas focando outro editor.
+            AccessibilityNodeInfo n=findKeyboardTarget(info);
+            if("separacao".equals(screen) && n!=null && focusOrClick(n)){
+                markNativeButton(screen,"botao identificado no preparo");
+                main.postDelayed(()->postPrepareCheck(screen),400);
+                return;
+            }
             if("separacao".equals(screen) && info.hasSeparationControls &&
                supportedAspect(realScreenSize())){
                 preparedAt=SystemClock.elapsedRealtime();
@@ -378,7 +409,6 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 tapPrepare(screen,info.hasQuantity?0.44f:0.60f,0.603f);
                 return;
             }
-            AccessibilityNodeInfo n=findKeyboardTarget(info);
             if(n!=null && focusOrClick(n)){
                 markNativeButton(screen,"acessibilidade (preparo)");
                 main.postDelayed(()->postPrepareCheck(screen),520);
@@ -485,9 +515,13 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         }
         AccessibilityNodeInfo editor=safeEditor(i,true);
         if(editor==null || !nativeEntryReady(i,editor))return;
+        if(("consulta".equals(intendedScreen) || "conferencia_venda".equals(intendedScreen))
+                && !editor.isFocused()){
+            focusOrClick(editor);
+            return; // proxima tentativa agendada aguarda foco Flutter
+        }
         String code=pendingCode;
         cancelPending();
-        // O teclado deve permanecer disponivel; ele pode ser necessario ao Flutter.
         focusAndSet(editor,code);
     }
 
@@ -502,7 +536,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         if(existing!=null && existing.length()>0){
             if(code.equals(existing.toString().trim())){
                 status("Codigo no campo: verificando Enter desta leitura.");
-                if(prefs().getBoolean("send_enter",true)) queueEnter(code,300);
+                queueEnter(code,450);
                 return;
             }
             // Em Consulta/Conferencia, a caixa de busca conserva o ultimo codigo.
@@ -542,11 +576,10 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 preparedAt=0;
                 prearmFallbackUsed=false;
                 // Libera preparacao da nova consulta; na atividade nao pre-abrir.
-                if("consulta".equals(lastEnteredScreen) ||
-                   "conferencia_venda".equals(lastEnteredScreen))
-                    main.postDelayed(prearmRunnable,250);
+                // Consulta sera refocada SOMENTE na proxima leitura;
+                // sem fazer o teclado aparecer durante a visualizacao.
             },650);
-            if(prefs().getBoolean("send_enter",true)) queueEnter(code,260);
+            queueEnter(code,420);
 
         }catch(RuntimeException e){status("Falha de acessibilidade ao inserir o codigo.");}
     }
@@ -580,7 +613,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             int action=AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.getId();
             if(editor.performAction(action)){
                 status("Enter solicitado para esta leitura; verificando o retorno.");
-                main.postDelayed(()->verifyEnterOutcome(expected,attempt),420);
+                main.postDelayed(()->verifyEnterOutcome(expected,attempt),280);
                 return;
             }
         }catch(RuntimeException ignored){}
@@ -603,8 +636,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         if(editor==null || !editor.isFocused())return;
         CharSequence current=editor.getText();
         if(current==null || !expected.equals(current.toString().trim()))return;
-        if(pressVisibleImeEnter())status("Enter do Gboard acionado apos Flutter nao responder.");
-        else status("MLOG manteve o codigo: tecla Enter nao exposta pelo teclado.");
+        if(pressVisibleImeEnter())status("Confirmacao ✓ acionada apos campo manter o codigo.");
+        else status("Codigo no campo; Gboard nao expos tecla de confirmacao segura.");
     }
 
     /** Nunca usar toque por posicao no teclado numerico: o local onde era o
@@ -627,7 +660,10 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                          "pesquisar".equals(label) || "buscar".equals(label) ||
                          "concluido".equals(label) || "concluir".equals(label) ||
                          "done".equals(label) || "ir".equals(label) ||
-                         "go".equals(label) || "search".equals(label)))continue;
+                         "go".equals(label) || "search".equals(label) ||
+                         "check".equals(label) || "confirmar".equals(label) ||
+                         "ok".equals(label) || "✓".equals(label) ||
+                         "✔".equals(label)))continue;
                     if(!n.isVisibleToUser() || !n.isEnabled())continue;
                     Rect r=new Rect();n.getBoundsInScreen(r);
                     if(r.isEmpty() || r.centerX()<wr.left+wr.width()*.70f ||
@@ -642,9 +678,39 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                     chosen=target;
                 }
                 if(chosen!=null && chosen.performAction(AccessibilityNodeInfo.ACTION_CLICK))return true;
+                // Alguns Gboard nao anunciam o texto do icone ✓. So usar um
+                // unico controle inferior direito SE o teclado estiver no modo
+                // numerico e as teclas 0..9 estiverem identificaveis.
+                AccessibilityNodeInfo check= root.getPackageName()!=null &&
+                    "com.google.android.inputmethod.latin".contentEquals(root.getPackageName())
+                        ?numericImeCheck(nodes,wr):null;
+                if(check!=null && check.performAction(AccessibilityNodeInfo.ACTION_CLICK))return true;
             }
         }catch(RuntimeException ignored){}
         return false;
+    }
+    private AccessibilityNodeInfo numericImeCheck(List<AccessibilityNodeInfo> nodes,Rect wr){
+        java.util.HashSet<String> digits=new java.util.HashSet<>();
+        AccessibilityNodeInfo candidate=null;
+        for(AccessibilityNodeInfo n:nodes){
+            if(!n.isEnabled() || !n.isVisibleToUser())continue;
+            String t=norm(n.getText()).trim();
+            String d=norm(n.getContentDescription()).trim();
+            if(t.length()==1 && t.charAt(0)>='0' && t.charAt(0)<='9')digits.add(t);
+            if(d.length()==1 && d.charAt(0)>='0' && d.charAt(0)<='9')digits.add(d);
+            if(!(n.isClickable() && n.getChildCount()==0))continue;
+            Rect r=new Rect();n.getBoundsInScreen(r);
+            // Regiao da tecla de aceite do teclado NUMERICO: ultimo quadrante,
+            // completamente afastada da tecla 0, da busca e do formulario.
+            if(r.isEmpty() || r.width()>wr.width()*.30f ||
+               r.centerX() < wr.left+wr.width()*.77f ||
+               r.centerY() < wr.top+wr.height()*.68f ||
+               r.centerY() > wr.bottom)continue;
+            if(candidate!=null && !sameBounds(candidate,n))return null;
+            candidate=n;
+        }
+        if(digits.size()<8)return null;
+        return candidate;
     }
     private static boolean supports(AccessibilityNodeInfo n,int action){
         for(AccessibilityNodeInfo.AccessibilityAction a:n.getActionList())

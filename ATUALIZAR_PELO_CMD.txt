@@ -1,20 +1,24 @@
-MLOG Scanner Bridge v1.1 (ZIP do projeto)
 
-1. SALVAR O ZIP EM DOWNLOADS
-2. CMD - SUBIR PARA GITHUB:
 
+1. Baixar `MLOG_Scanner_Bridge_v12_Enter_Foco_Continuo.zip` para Downloads.
+2. Abrir CMD e executar:
+
+```bat
 cd /d "%USERPROFILE%\Downloads\MLOG-Scanner-Bridge"
-powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v11_Enter_Cada_Bipe.zip') -DestinationPath . -Force"
+powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v12_Enter_Foco_Continuo.zip') -DestinationPath . -Force"
 git add -A
-git commit -m "MLOG Bridge v11 Enter por leitura"
+git commit -m "MLOG Bridge v12 Enter e foco continuo"
 git push origin main
+```
 
-3. ACTIONS: https://github.com/seridoplast/MLOG-Scanner-Bridge/actions
-   Baixar o artefato MLOG-Scanner-Bridge-v11-APK; extrair app-debug.apk em Downloads.
+Na execução bem-sucedida do GitHub Actions, baixe o artefato `MLOG-Scanner-Bridge-v12-APK`. Extraia `app-debug.apk` para Downloads.
 
-4. INSTALAR ADB (DEPURACAO USB):
+## Instalar com depuração USB
 
+```bat
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" devices
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" install -r "%USERPROFILE%\Downloads\app-debug.apk"
+```
 
-Nao desinstalar o app antigo sem antes analisar erros de assinatura.
+O dispositivo deve constar como `device` e a instalação terminar em `Success`. Se receber `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, não desinstale automaticamente: veja se a assinatura de debug foi alterada, pois a desinstalação pode apagar configurações e exigir autorizações novamente.
+

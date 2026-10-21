@@ -28,7 +28,7 @@ import android.widget.Toast;
 
 
 /**
- * v1.1. Interface monocromatica, Gboard visivel e Enter assistido.
+ * v1.2. Interface monocromatica, teclado nativo e recuperacao de Enter.
  * O teste exibe leituras somente na tela; o codigo nao vai para preferências.
  */
 public final class MainActivity extends Activity {
@@ -90,17 +90,15 @@ public final class MainActivity extends Activity {
             themeChoice="auto";
         }
         if(!prefs.getBoolean("migrated_scan_v9",false)){
-            // Remover ocultacao antiga e ativar confirmacao se scanner permitir.
+            // Remover ocultacao antiga e manter comportamento do scanner original.
             prefs.edit().putBoolean("hide_keyboard_on_scan",false)
-                .putBoolean("send_enter",true)
                 .putBoolean("layout_fallback",true)
                 .putBoolean("migrated_scan_v9",true).apply();
         }
         if(!prefs.getBoolean("migrated_enter_v10",false)){
-            // Solicitado: ao concluir leitura o Bridge tenta Enter, apenas
-            // se codigo ainda estiver no campo para nao duplicar o CMX.
-            prefs.edit().putBoolean("send_enter",true)
-                .putBoolean("migrated_enter_v10",true).apply();
+            // Registro da migracao anterior; a confirmacao agora e automatica,
+            // sem preferencia visivel.
+            prefs.edit().putBoolean("migrated_enter_v10",true).apply();
         }
         boolean dark=darkNow();
         setTheme(dark?R.style.BridgeThemeDark:R.style.BridgeThemeLight);
@@ -240,8 +238,7 @@ public final class MainActivity extends Activity {
         check(read,"Preparar busca/produto ao abrir tela", "prearm_field",true);
         check(read,"Toque guiado (telas reconhecidas)","guided_taps",true);
         check(read,"Detectar teclado de produtos","layout_fallback",true);
-        check(read,"Confirmar leitura com Enter","send_enter",true);
-        subtitle(read,"Em Atividades, abre o campo apenas no bipe. Enter por leitura, sem toque automatico em numeros. Se CMX confirmar duas vezes, desligue o Enter de um dos apps.");
+        subtitle(read,"O CMX envia Enter primeiro. Se o codigo permanecer no campo, o Bridge tenta a tecla de confirmacao do Gboard. Sem ajuste duplicado.");
         LinearLayout appearance=card();appearance.addView(label("Aparência",17,ink,true));
         subtitle(appearance,"Seguir o sistema ou escolher manualmente.");
         LinearLayout bar=row();LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(-1,-2);bp.topMargin=dp(14);
@@ -266,11 +263,11 @@ public final class MainActivity extends Activity {
             toast("Diagnóstico copiado. Não inclui códigos.");
         });
         LinearLayout help=card();help.addView(label("O que testar",17,ink,true));
-        subtitle(help,"Atividades: so abre ao bipar. Consulta: novo codigo substitui busca anterior. Enter: uma tentativa para cada leitura. Teste fora de pedidos reais.");
+        subtitle(help,"Atividades: abre quando bipar. Consulta: selecao renovada a cada leitura. Enter: recuperacao somente quando nao foi processado. Teste com pedidos de teste.");
         button(help,"Abrir MLOG",true,this::openMlog);
     }
     private void about(){
-        title("Sobre","MLOG Scanner Bridge · v1.1");
+        title("Sobre","MLOG Scanner Bridge · v1.2");
         LinearLayout about=card();about.addView(label("Integração local",17,ink,true));
         subtitle(about,"Criado para o scanner físico CMX e o MLOG. Sem acesso à internet. Os códigos de leitura não são salvos em histórico.");
         space(about,10);
