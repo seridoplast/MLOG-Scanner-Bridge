@@ -1,68 +1,99 @@
-# MLOG Scanner Bridge v1.9 — teclado compacto experimental
+# MLOG Scanner Bridge v2.0 — Leitura Rapida (beta)
 
-## Novidade
+Esta versao **preserva o teclado compacto v1.9** e adiciona um modo de
+leitura rapida *desligado por padrao*. O teclado experimental Bridge deve estar
+selecionado no Android e a opcao **Usar teclado Bridge no Enter** deve estar
+ativa. O modo nao altera a configuracao do CMX Scanner original.
 
-Esta versao **nao altera o comportamento da v1.8 por padrao**. O modo novo fica desativado ate a selecao explicita no aplicativo e nas configuracoes Android.
+## Por que a v1.9 acumulava leituras
 
-O Bridge ganhou um `InputMethodService` proprio. Quando selecionado como teclado Android, mostra uma **barra compacta** no campo do MLOG (nao o teclado numerico gigante). Ele so envia Enter quando o servico de acessibilidade reconhece **um bipe valido no campo do MLOG** e o codigo ja foi inserido. O CMX permanece responsavel pela leitura.
+A v1.9 esperava 235 ms para tentar o Enter depois de inserir o codigo e
+poderia aguardar ate 440 ms pela verificacao de confirmacao. Durante esse
+intervalo, outros codigos permaneciam em fila. Esses intervalos fixos tornam
+visivel uma demora na separacao com bipagens continuas.
 
-Para digitacao manual no MLOG, toque em **Digitar** na pequena barra para exibir as teclas e em **Ocultar teclas** para recolher. Fora do MLOG, mostra teclas manuais por padrao. O botao **⇄** abre o seletor de teclado para voltar ao Gboard.
+## Mudancas desta beta
 
-### LIMITACAO REAL DO ANDROID
+1. Com `Leitura rapida (teste)` ativa **e teclado Bridge selecionado**, a
+   primeira tentativa de confirmacao comeca depois de cerca de **55 ms** (em
+   vez de 235 ms), **desde que o campo correto esteja focado e contenha o codigo**.
+2. Eventos de alteracao/foco do MLOG iniciam verificacoes de confirmacao sem
+   aguardar o proximo timer fixo. **Nao enviam Enter adicional**.
+3. Quando a tela confirma a saida do codigo, a proxima leitura da fila
+   comeca com intervalo menor (25 ms, antes 65 ms).
+4. Janela de notificacoes da acessibilidade reduzida de 180 ms para
+   50 ms **somente enquanto o modo rapido esta ativo**. A configuracao
+   volta ao valor anterior quando o teste e desativado.
+5. Repeticoes identicas sao aceitas apos 65 ms no modo rapido (140 ms no
+   modo normal), evitando descartar bipagens legitimamente rapidas, mantendo
+   protecao contra broadcasts duplicados quase simultaneos.
+6. Sem limite total de scans por sessao, mas permanecem **128 leituras
+   aguardando ao mesmo tempo**, por seguranca. Quando a fila encher, o
+   diagnostico informa `QUEUE_FULL`: nao existe fila infinita confiavel.
 
-O Android **nao permite** que um aplicativo comum troque automaticamente o teclado padrao Gboard → Bridge → Gboard apenas ao apertar o gatilho, sem uma autorizacao especial do sistema. Por isso, o modo experimental requer que o usuario **habilite e selecione o teclado Bridge uma vez**. Enquanto estiver selecionado, ele se torna o metodo de entrada padrao ate o usuario voltar a escolher Gboard. Isso NAO e uma alternancia secreta ou automatica.
+## Seguranca operacional
 
-O teclado Bridge pode acessar o texto do campo ativo, como qualquer outro teclado instalado. Este projeto nao usa internet, nao copia o texto para historico, nao armazena senhas e nao registra codigos em log. So use apos revisar e confiar no APK compilado por voce.
+- Enter enviado **apenas com editor MLOG validado**; nao tentar em campos de
+  quantidade ou senha. Aguardos de confirmacao e bloqueios de navegacao da
+  v1.9 foram preservados.
+- O retorno de `sendKeyEvent` nao prova que o MLOG processou a leitura. A
+  verificacao depende dos eventos e conteudo acessivel do Flutter.
+- O modo rapido e opcional e experimental. Teste fora de pedidos reais.
+- Nao usa internet, nao salva codigo em disco e nao altera configuracoes do
+  leitor CMX.
 
-## Como ativar o experimento
+## Como ativar e voltar
 
-1. Instale v1.9 usando ADB. Abra Bridge → **Ajustes**.
-2. Ative **Leitura assistida** e **Usar teclado Bridge no Enter**.
-3. Toque **1. Habilitar teclado no Android** e habilite o teclado experimental. O Android mostrara aviso de seguranca sobre teclados de terceiros; avalie antes de aceitar.
-4. Toque **2. Selecionar teclado / voltar ao Gboard** e escolha **MLOG Bridge - teclado experimental**.
-5. Abra o MLOG com acessibilidade do Bridge ligada e teste com um item de demonstracao. O Enter deve ser tentado via `InputConnection` do teclado Bridge sem tocar no Gboard.
-6. **Voltar ao modo v1.8:** desmarque `Usar teclado Bridge no Enter` e selecione Gboard pelo seletor. A v1.8 continua presente como fallback sem reinstalar.
+Abra Bridge > Ajustes: habilite `Leitura assistida`, `Usar teclado Bridge
+no Enter` e `Leitura rapida (teste)`. O teclado Bridge precisa ser escolhido
+como padrao no seletor do Android. Para voltar ao modo v1.9, **desmarque
+apenas `Leitura rapida (teste)`**; nao precisa reinstalar.
 
-## Fluxo
+## Publicar no GitHub (CMD do Windows)
 
-CMX transmite leitura por broadcast → Bridge acessibilidade abre/seleciona campo nativo do MLOG → `ACTION_SET_TEXT` insere codigo → quando o mesmo codigo ainda esta no campo, teclado Bridge tenta `KEYCODE_ENTER` usando `InputConnection` → aguarda mudanca do campo. Se teclado Bridge nao estiver ativo ou nao houver conexao, permanece a logica v1.8 Android 14/Gboard.
-
-O teclado do Bridge **nao substitui a captura fisica do scanner** e nao altera formatos/Enter/configuracoes do CMX. Para evitar duplo Enter, deixe apenas UM aplicativo responsavel por confirmar o codigo durante o teste.
-
-## GitHub pelo CMD
-
-Baixe `MLOG_Scanner_Bridge_v19_Teclado_Experimental.zip` para Downloads, depois:
+Coloque `MLOG_Scanner_Bridge_v20_Turbo_Beta.zip` em Downloads:
 
 ```bat
 cd /d "%USERPROFILE%\Downloads\MLOG-Scanner-Bridge"
-powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v19_Teclado_Experimental.zip') -DestinationPath . -Force"
+git branch backup-v19-antes-turbo
+powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v20_Turbo_Beta.zip') -DestinationPath . -Force"
 git add -A
-git commit -m "MLOG Bridge v19 teclado experimental"
+git commit -m "Bridge v20 leitura rapida opcional"
 git push origin main
 ```
 
-GitHub Actions: `MLOG-Scanner-Bridge-v19-APK` → extraia `app-debug.apk` para Downloads.
+Se `backup-v19-antes-turbo` ja existir, pule somente esse comando.
+O GitHub Actions gerara `MLOG-Scanner-Bridge-v20-APK` quando a compilacao
+passar. Extraia o `app-debug.apk` para Downloads.
 
-## Instalar via ADB (depuracao USB)
+## Instalar por USB (ADB)
 
 ```bat
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" devices
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" install -r "%USERPROFILE%\Downloads\app-debug.apk"
 ```
 
-Se `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, a chave de assinatura gerada no runner mudou. Nao desinstale cegamente: faça backup das configuracoes e confirme se deseja substituir o app de teste.
+Se a assinatura `debug` mudar entre compilacoes, `install -r` pode falhar.
+Nao desinstale as configuracoes de um coletor em operacao sem backup.
 
-## Diagnostico
+## Como avaliar a beta
+
+Teste 10 leituras espassadas, depois 20 ou mais em sequencia, inclusive
+repeticoes do mesmo produto. Confira no MLOG se todas foram **confirmadas uma
+vez cada**, e nao apenas exibidas no campo. Se houver uma leitura nao
+confirmada, pare e desative o modo rapido; envie `logcat`.
 
 ```bat
-"%USERPROFILE%\Downloads\platform-tools\adb.exe" logcat -d -v time -s MLOGBridge:I > "%USERPROFILE%\Downloads\Bridge_v19_Log.txt"
+"%USERPROFILE%\Downloads\platform-tools\adb.exe" logcat -d -v time -s MLOGBridge:I > "%USERPROFILE%\Downloads\Bridge_v20_Log.txt"
 ```
 
-Eventos `BRIDGE_IME_ENTER_SENT` e `BRIDGE_IME_ENTER_UNVERIFIED` indicam a tentativa pela nova via. `DIRECT_ENTER_SENT` indica retorno a v1.8. **Enviar Enter nao garante que o Flutter o processou**: validar leitura no MLOG.
+Eventos relevantes: `SCAN_RECEIVED`, `SCAN_QUEUED`, `SET_TEXT_OK`,
+`BRIDGE_IME_ENTER_SENT`, `CODE_CHANGED_AFTER_ENTER`, `SCAN_FINISH`,
+`SCAN_ELAPSED_MS_...`, `QUEUE_FULL`. O log **nao inclui codigos**.
 
-## Seguranca e validacao
+### Verificacao
 
-- APK nao foi compilado/testado neste ambiente. Java/XML passam por verificacao de sintaxe e formato; GitHub Actions compila e o CMX valida.
-- Nenhuma permissao de internet, clipboard de leitura ou log de conteudos digitados.
-- Ativar teclado do Android exige confirmacao do operador. Nunca conceder silenciosamente.
-- Testar com registros de demonstracao e manter a v1.8 funcional como plano B.
+Alteracoes revisadas, Java analisado sintaticamente, testes de fila/politica
+executados. Ainda precisa compilar pelo GitHub e validar no coletor; nenhum
+numero de desempenho real foi medido. A latencia final depende do MLOG e do
+scanner.

@@ -62,6 +62,10 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private long totalFinished;
     private int workGeneration;
     private long lastEventProbe;
+    private long lastEnterEventProbe;
+    private long currentScanStartedAt;
+    private boolean awaitingEnterConfirmation;
+    private boolean configuredFastEvents;
     private String pendingScreen="";
     private long lastDiagnostic;
     private boolean gestureInProgress;
@@ -84,13 +88,15 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             si.flags|=AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS |
                       AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS |
                       AccessibilityServiceInfo.FLAG_INPUT_METHOD_EDITOR;
+            configuredFastEvents=fastImeMode();
+            si.notificationTimeout=configuredFastEvents?50:180;
             setServiceInfo(si);
         }
         receiver=new BroadcastReceiver(){
             @Override public void onReceive(Context context,Intent intent){
                 String code=ScannerProtocol.barcode(intent);
                 if(!ScanCoordinator.isActive(MlogFocusAccessibilityService.this) ||
-                        !ScanCoordinator.accept(code))return;
+                        !ScanCoordinator.accept(code,fastImeMode()))return;
                 enqueueBarcode(code);
             }
         };
@@ -104,11 +110,28 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             prefs().edit().putBoolean("prearm_field",false).apply();
             // Versoes anteriores podiam deixar o teclado oculto pelo controlador.
             restoreKeyboard();
-            status("v1.8: Enter direto pelo Android 14, com fallback seguro; CMX somente leitura.");
+            status("v2.0: teclado Bridge com modo rapido opcional; CMX somente leitura.");
         }catch(RuntimeException e){status("Falha ao registrar o broadcast do scanner.");}
     }
 
     private SharedPreferences prefs(){return getSharedPreferences(ScanCoordinator.PREFS,MODE_PRIVATE);}
+    /** So acelera quando o operador optou pelo teclado proprio E pelo modo rapido. */
+    private boolean fastImeMode(){
+        return prefs().getBoolean("experimental_bridge_ime",false) &&
+               prefs().getBoolean("fast_ime_mode",false);
+    }
+    /** O usuario pode alternar sem reiniciar a acessibilidade. */
+    void refreshEventThrottle(){
+        boolean fast=fastImeMode();
+        if(fast==configuredFastEvents)return;
+        AccessibilityServiceInfo info=getServiceInfo();
+        if(info==null)return;
+        info.notificationTimeout=fast?50:180;
+        try{
+            setServiceInfo(info);
+            configuredFastEvents=fast;
+        }catch(RuntimeException ex){trace("EVENT_THROTTLE_UNAVAILABLE");}
+    }
     private void status(String s){ScanCoordinator.status(this,s);}
     // v0.9: teclado Gboard SEMPRE liberado. Nunca use SHOW_MODE_HIDDEN.
     private void restoreKeyboard(){
@@ -128,6 +151,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     /** Nao descartar o proximo gatilho enquanto o editor ainda abre. */
     private void enqueueBarcode(String code){
         if(!ScanCoordinator.isActive(this))return;
+        refreshEventThrottle();
         if(mlogRoot()==null){status("Leitura ignorada: MLOG nao esta ativo.");return;}
         long now=SystemClock.elapsedRealtime();
         if(now<navigationGuardUntil){
@@ -154,6 +178,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         String code=scanQueue.active();
         if(code==null)return;
         final int epoch=++workGeneration;
+        currentScanStartedAt=SystemClock.elapsedRealtime();
         trace("SCAN_START");
         onBarcode(code);
         // Fail-safe: nunca manter a fila bloqueada indefinidamente.
@@ -167,6 +192,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private void finishQueuedScan(String reason){
         if(scanQueue.isIdle())return;
         trace("SCAN_FINISH_"+reason);
+        awaitingEnterConfirmation=false;
+        directEnterSent=false;
+        trace("SCAN_ELAPSED_MS_"+(SystemClock.elapsedRealtime()-currentScanStartedAt));
         totalFinished++;
         // Contador acumulado sem armazenar historico/codigo no disco.
         if(totalFinished%50==0)trace("SCANS_COMPLETED_BATCH_50");
@@ -182,7 +210,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             // Breve intervalo para o Flutter recompor a arvore apos Enter.
             // O Flutter precisa reconstruir a arvore. Aguardar so um frame
             // curto; cada nova leitura voltara a verificar campo/foco.
-            main.postDelayed(this::startQueuedScan,65);
+            main.postDelayed(this::startQueuedScan,fastImeMode()?25:65);
         }
     }
 
@@ -197,6 +225,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         ++serial;
         ++enterAttempt;
         ++workGeneration;
+        awaitingEnterConfirmation=false;
+        directEnterSent=false;
         cancelPending();
         scanQueue.clear();
         preparedAt=0;
@@ -293,6 +323,22 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             final int token=serial;
             final String screen=pendingScreen;
             main.postDelayed(()->tryPending(token,screen),65);
+        }
+        // Depois do Enter, o Flutter pode limpar o campo em um evento anterior
+        // ao proximo timer. Verificar rapidamente para liberar a fila, sem
+        // enviar outro Enter. A confirmacao so acontece via estado validado.
+        if(awaitingEnterConfirmation && directEnterSent && pendingCode==null &&
+            !scanQueue.isIdle() &&
+            (event.getEventType()==AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
+             event.getEventType()==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+             event.getEventType()==AccessibilityEvent.TYPE_VIEW_FOCUSED)){
+            if(time-lastEnterEventProbe>35){
+                lastEnterEventProbe=time;
+                final long attempt=enterAttempt;
+                final String expected=lastEnteredByBridge;
+                if(!expected.isEmpty())
+                    main.postDelayed(()->confirmEnteredCode(expected,attempt),18);
+            }
         }
         if(pendingCode==null && preparedAt>0 &&
             event.getEventType()==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED){
@@ -658,7 +704,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             if(code.equals(existing.toString().trim())){
                 cancelPending();
                 status("Codigo ja no campo: confirmacao rapida desta leitura.");
-                queueEnter(code,EnterReadinessPolicy.INITIAL_DELAY_MS);
+                queueEnter(code,fastImeMode()?EnterReadinessPolicy.FAST_INITIAL_DELAY_MS:
+                    EnterReadinessPolicy.INITIAL_DELAY_MS);
                 return;
             }
             // Em Consulta/Conferencia, a caixa de busca conserva o ultimo codigo.
@@ -704,7 +751,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             status("Leitura inserida: aguardando confirmacao.");
             // O estado preparado sera limpo ao terminar ESTA leitura;
             // nao usar timer que possa apagar o estado da leitura seguinte.
-            queueEnter(code,EnterReadinessPolicy.INITIAL_DELAY_MS);
+            queueEnter(code,fastImeMode()?EnterReadinessPolicy.FAST_INITIAL_DELAY_MS:
+                    EnterReadinessPolicy.INITIAL_DELAY_MS);
 
         }catch(RuntimeException e){status("Falha de acessibilidade ao inserir o codigo.");finishQueuedScan("erro_set_text");}
     }
@@ -725,6 +773,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
 
     private void queueEnter(String expected,long delay){
         final long id=++enterAttempt;
+        awaitingEnterConfirmation=true;
         confirmStartedAt=SystemClock.elapsedRealtime();
         imeEnterRequested=false;
         imeCheckRequested=false;
@@ -760,6 +809,13 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         }
         CharSequence current=editor.getText();
         if(current==null || !expected.equals(current.toString().trim())){
+            // SET_TEXT pode responder antes da arvore Flutter refletir o texto.
+            // No modo rapido, aguardar brevemente antes de concluir sem Enter.
+            if(fastImeMode() && !directEnterSent &&
+                SystemClock.elapsedRealtime()-confirmStartedAt<180){
+                scheduleConfirm(expected,attempt,45);
+                return;
+            }
             trace("CODE_CHANGED_AFTER_ENTER");
             status("Codigo saiu do campo; confirmar resultado no MLOG.");
             finishQueuedScan("campo_mudou");return;
@@ -767,7 +823,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         long age=SystemClock.elapsedRealtime()-confirmStartedAt;
         // O diagnostico mostrou que o campo esta preenchido em ~120-300 ms.
         // Dar uma janela curta ao Enter do CMX, nao aguardar 600 ms.
-        if(age<90){scheduleConfirm(expected,attempt,90-age);return;}
+        long readiness=fastImeMode()?45:90;
+        if(age<readiness){scheduleConfirm(expected,attempt,readiness-age);return;}
         if(!editor.isFocused()){
             if(age<1150){
                 focusOrClick(editor);
@@ -787,8 +844,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             directEnterSent=true;
             customImeSent=true;
             directEnterSentAt=SystemClock.elapsedRealtime();
+            trace("FAST_IME_MODE_"+(fastImeMode()?"ON":"OFF"));
             trace("BRIDGE_IME_ENTER_SENT");
-            scheduleConfirm(expected,attempt,110);
+            scheduleConfirm(expected,attempt,fastImeMode()?55:110);
             return;
         }
         // Prioridade v1.8: InputConnection Android 13+, sem toque no Gboard.
@@ -798,7 +856,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             // alguns frames para limpar o campo e atualizar a tela.
             long since=SystemClock.elapsedRealtime()-directEnterSentAt;
             if(since<440){
-                scheduleConfirm(expected,attempt,Math.min(110,440-since));
+                scheduleConfirm(expected,attempt,Math.min(fastImeMode()?65:110,440-since));
                 return;
             }
             trace(customImeSent?"BRIDGE_IME_ENTER_UNVERIFIED":"DIRECT_ENTER_SENT_UNVERIFIED");

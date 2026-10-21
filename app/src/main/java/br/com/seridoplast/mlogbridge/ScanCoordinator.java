@@ -20,14 +20,17 @@ final class ScanCoordinator {
         return c.getSharedPreferences(PREFS,Context.MODE_PRIVATE)
             .getBoolean("enabled",false);
     }
-    static synchronized boolean accept(String code){
+    static synchronized boolean accept(String code){return accept(code,false);}
+    static synchronized boolean accept(String code,boolean fast){
         if(code==null || code.length()<1 || code.length()>128)return false;
         for(int i=0;i<code.length();i++){
             char ch=code.charAt(i);
             if(ch<32 || ch>126)return false;
         }
         long t=SystemClock.elapsedRealtime();
-        if(code.equals(lastCode) && t-lastAt<140)return false;
+        // Filtra broadcasts duplicados do mesmo gatilho sem limitar a sessao.
+        // Modo rapido aceita repeticao do mesmo produto apos 65 ms.
+        if(code.equals(lastCode) && t-lastAt<(fast?65:140))return false;
         lastAt=t;lastCode=code;return true;
     }
 }

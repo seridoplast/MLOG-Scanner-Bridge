@@ -1,31 +1,27 @@
+MLOG Scanner Bridge v2.0 beta — comandos Windows
 
+1) Baixe MLOG_Scanner_Bridge_v20_Turbo_Beta.zip na pasta Downloads.
+2) Abra CMD e execute:
 
-Baixe `MLOG_Scanner_Bridge_v19_Teclado_Experimental.zip` para Downloads, depois:
-
-```bat
 cd /d "%USERPROFILE%\Downloads\MLOG-Scanner-Bridge"
-powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v19_Teclado_Experimental.zip') -DestinationPath . -Force"
+git branch backup-v19-antes-turbo
+powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v20_Turbo_Beta.zip') -DestinationPath . -Force"
 git add -A
-git commit -m "MLOG Bridge v19 teclado experimental"
+git commit -m "Bridge v20 leitura rapida opcional"
 git push origin main
-```
 
-GitHub Actions: `MLOG-Scanner-Bridge-v19-APK` → extraia `app-debug.apk` para Downloads.
+Se a branch de backup ja existir, ignore o erro APENAS da etapa git branch.
 
-## Instalar via ADB (depuracao USB)
+GitHub Actions > MLOG-Scanner-Bridge-v20-APK > extrair app-debug.apk para Downloads.
 
-```bat
+INSTALAR VIA ADB (USB + DEPURACAO)
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" devices
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" install -r "%USERPROFILE%\Downloads\app-debug.apk"
-```
 
-Se `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, a chave de assinatura gerada no runner mudou. Nao desinstale cegamente: faça backup das configuracoes e confirme se deseja substituir o app de teste.
+TESTE: No Bridge > Ajustes, marque 'Usar teclado Bridge no Enter' e
+'Leitura rapida (teste)'; selecione o teclado Bridge como IME padrao.
 
-## Diagnostico
+VOLTAR AO MODO ANTERIOR: desmarcar 'Leitura rapida (teste)'.
 
-```bat
-"%USERPROFILE%\Downloads\platform-tools\adb.exe" logcat -d -v time -s MLOGBridge:I > "%USERPROFILE%\Downloads\Bridge_v19_Log.txt"
-```
-
-Eventos `BRIDGE_IME_ENTER_SENT` e `BRIDGE_IME_ENTER_UNVERIFIED` indicam a tentativa pela nova via. `DIRECT_ENTER_SENT` indica retorno a v1.8. **Enviar Enter nao garante que o Flutter o processou**: validar leitura no MLOG.
-
+DIAGNOSTICO
+"%USERPROFILE%\Downloads\platform-tools\adb.exe" logcat -d -v time -s MLOGBridge:I > "%USERPROFILE%\Downloads\Bridge_v20_Log.txt"
