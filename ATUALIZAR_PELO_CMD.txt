@@ -1,25 +1,20 @@
+MLOG Scanner Bridge v1.1 (ZIP do projeto)
 
+1. SALVAR O ZIP EM DOWNLOADS
+2. CMD - SUBIR PARA GITHUB:
 
-Baixe `MLOG_Scanner_Bridge_v10_Botao_Nativo.zip` para Downloads e execute:
-
-```cmd
 cd /d "%USERPROFILE%\Downloads\MLOG-Scanner-Bridge"
-powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v10_Botao_Nativo.zip') -DestinationPath . -Force"
+powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v11_Enter_Cada_Bipe.zip') -DestinationPath . -Force"
 git add -A
-git commit -m "MLOG Bridge v10 clicar botao nativo de leitura"
+git commit -m "MLOG Bridge v11 Enter por leitura"
 git push origin main
-```
 
-Abra `https://github.com/seridoplast/MLOG-Scanner-Bridge/actions`. Se a execução terminar com sucesso, baixe o artefato `MLOG-Scanner-Bridge-v10-APK`, extraia `app-debug.apk` e coloque-o em Downloads.
+3. ACTIONS: https://github.com/seridoplast/MLOG-Scanner-Bridge/actions
+   Baixar o artefato MLOG-Scanner-Bridge-v11-APK; extrair app-debug.apk em Downloads.
 
-## Instalar no coletor via ADB
+4. INSTALAR ADB (DEPURACAO USB):
 
-Conecte USB, ative depuração, autorize o PC no coletor e rode:
-
-```cmd
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" devices
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" install -r "%USERPROFILE%\Downloads\app-debug.apk"
-```
 
-O dispositivo precisa aparecer como `device` e a instalação mostrar `Success`. O `-r` mantém os dados apenas quando a assinatura é compatível. Não desinstale o antigo sem checar isso.
-
+Nao desinstalar o app antigo sem antes analisar erros de assinatura.

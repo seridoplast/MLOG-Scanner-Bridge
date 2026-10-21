@@ -28,7 +28,7 @@ import android.widget.Toast;
 
 
 /**
- * v1.0. Interface monocromatica, Gboard visivel e Enter assistido.
+ * v1.1. Interface monocromatica, Gboard visivel e Enter assistido.
  * O teste exibe leituras somente na tela; o codigo nao vai para preferências.
  */
 public final class MainActivity extends Activity {
@@ -237,11 +237,11 @@ public final class MainActivity extends Activity {
         LinearLayout read=card();read.addView(label("Leitura",17,ink,true));
         check(read,"Leitura assistida","enabled",false);
         subtitle(read,"O Bridge clica no botao de teclado do MLOG antes de inserir. Gboard continua disponivel.");
-        check(read,"Preparar campo ao abrir tela", "prearm_field",true);
+        check(read,"Preparar busca/produto ao abrir tela", "prearm_field",true);
         check(read,"Toque guiado (telas reconhecidas)","guided_taps",true);
         check(read,"Detectar teclado de produtos","layout_fallback",true);
         check(read,"Confirmar leitura com Enter","send_enter",true);
-        subtitle(read,"Se o CMX ja confirmar duas vezes, desligue o Enter do Bridge. O app so tenta confirmar o codigo ainda visivel no campo.");
+        subtitle(read,"Em Atividades, abre o campo apenas no bipe. Enter por leitura, sem toque automatico em numeros. Se CMX confirmar duas vezes, desligue o Enter de um dos apps.");
         LinearLayout appearance=card();appearance.addView(label("Aparência",17,ink,true));
         subtitle(appearance,"Seguir o sistema ou escolher manualmente.");
         LinearLayout bar=row();LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(-1,-2);bp.topMargin=dp(14);
@@ -266,11 +266,11 @@ public final class MainActivity extends Activity {
             toast("Diagnóstico copiado. Não inclui códigos.");
         });
         LinearLayout help=card();help.addView(label("O que testar",17,ink,true));
-        subtitle(help,"Teste atividades, pedidos, separacao e consulta. O Bridge abre o campo antes da leitura e tenta confirmar quando o codigo permanecer preenchido. Teste com pedido nao operacional.");
+        subtitle(help,"Atividades: so abre ao bipar. Consulta: novo codigo substitui busca anterior. Enter: uma tentativa para cada leitura. Teste fora de pedidos reais.");
         button(help,"Abrir MLOG",true,this::openMlog);
     }
     private void about(){
-        title("Sobre","MLOG Scanner Bridge · v1.0");
+        title("Sobre","MLOG Scanner Bridge · v1.1");
         LinearLayout about=card();about.addView(label("Integração local",17,ink,true));
         subtitle(about,"Criado para o scanner físico CMX e o MLOG. Sem acesso à internet. Os códigos de leitura não são salvos em histórico.");
         space(about,10);

@@ -40,8 +40,10 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private final Handler main=new Handler(Looper.getMainLooper());
     private BroadcastReceiver receiver;
     private boolean receiverRegistered;
-    private long lastEnterAt;
-    private String lastEnterCode="";
+    // Confirmar uma vez POR LEITURA, nunca bloquear pelo valor do codigo.
+    private long enterAttempt;
+    private String lastEnteredByBridge="";
+    private String lastEnteredScreen="";
     private String pendingCode;
     private long pendingDeadline;
     private int serial;
@@ -82,7 +84,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             receiverRegistered=true;
             // Versoes anteriores podiam deixar o teclado oculto pelo controlador.
             restoreKeyboard();
-            status("v1.0: toque no botao MLOG primeiro; Gboard preservado; Enter verificado.");
+            status("v1.1: Enter por leitura; atividades so abre no bipe; consulta reutilizavel.");
             main.postDelayed(prearmRunnable,600);
         }catch(RuntimeException e){status("Falha ao registrar o broadcast do scanner.");}
     }
@@ -178,6 +180,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private void onBarcode(String code){
         lastAutoActionAt=SystemClock.elapsedRealtime();
         if(pendingCode!=null){status("Leitura pendente: aguarde o campo de codigo.");return;}
+        // Nova leitura cancela uma verificacao de Enter da leitura anterior.
+        ++enterAttempt;
         AccessibilityNodeInfo root=mlogRoot();
         if(root==null){status("Ignorado: MLOG nao esta na tela ativa.");return;}
         ScreenInfo i=inspect(root);
@@ -217,6 +221,12 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         // PRIMEIRO abrimos o campo, depois preenchemos, sem ocultar o Gboard.
         if("atividades".equals(i.screen)){
             startPending(code,"atividades");
+            // Um teclado numerico ja aberto pode ter 0 no local do icone.
+            // Neste caso so tentar preencher o editor; jamais tocar posicao.
+            if(isImeVisible()){
+                retryFill(serial,"atividades");
+                status("Atividades: entrada ja aberta; aguardando campo editavel.");return;
+            }
             AccessibilityNodeInfo button=activityKeyboard(i);
             if(button!=null && focusOrClick(button)){
                 status("Atividades: botao de teclado acionado; aguardando editor.");
@@ -317,6 +327,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         ScreenInfo info=inspect(root);
         if(info.login || info.dialog || "desconhecida".equals(info.screen))return;
         String screen=info.screen;
+        // Atividades: tocar o icone SOMENTE quando receber um codigo.
+        // Em teclados numericos um segundo toque por coordenada acerta a tecla 0.
+        if("atividades".equals(screen))return;
         if(!screen.equals(preparedScreen)){
             preparedScreen=screen;
             preparedAt=0;
@@ -326,8 +339,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         // Flutter pode alternar abrir/fechar o modal se tocarmos de novo.
         // Liberar nova tentativa quando uma leitura conclui ou a tela muda.
         if(preparedAt>0)return;
-        if(!("atividades".equals(screen) || "consulta".equals(screen) ||
-             "conferencia_venda".equals(screen) || "separacao".equals(screen) ||
+        if(!("consulta".equals(screen) || "conferencia_venda".equals(screen) ||
+             "separacao".equals(screen) ||
              "pedidos".equals(screen) || "notas".equals(screen)))return;
         AccessibilityNodeInfo editor=safeEditor(info,false);
         if(editor!=null && nativeEntryReady(info,editor)){
@@ -343,16 +356,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         }
         // Só abrir por gesto nas telas cuja posição do ícone foi identificada.
         if(!prefs().getBoolean("guided_taps",true))return;
-        if("atividades".equals(screen) && info.hasActivitiesTitle){
-            preparedAt=SystemClock.elapsedRealtime();
-            AccessibilityNodeInfo button=activityKeyboard(info);
-            if(button!=null && focusOrClick(button)){
-                status("Atividades: botao de entrada aberto antes do bipe.");
-                main.postDelayed(()->postPrepareCheck("atividades"),320);
-            }else{
-                tapPrepare(screen,0.375f,0.888f);
-            }
-        }else if("consulta".equals(screen) && info.hasConsultation){
+        if("consulta".equals(screen) && info.hasConsultation){
             preparedAt=SystemClock.elapsedRealtime();
             AccessibilityNodeInfo field=info.searchField;
             if(field!=null && focusOrClick(clickable(field))){
@@ -400,10 +404,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             // Se ACTION_CLICK foi aceito mas o campo nao abriu, testar
             // UMA vez a posicao homologada. Nunca encadear toques infinitos.
             if(screen.equals(info.screen) && !prearmFallbackUsed &&
-               prefs().getBoolean("guided_taps",true)){
-                if("atividades".equals(screen) && info.hasActivitiesTitle){
-                    tapPrepare(screen,0.375f,0.888f);return;
-                }
+               !isImeVisible() && prefs().getBoolean("guided_taps",true)){
                 if("separacao".equals(screen) && info.hasSeparationControls){
                     tapPrepare(screen,info.hasQuantity?0.44f:0.60f,0.603f);return;
                 }
@@ -425,6 +426,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         }
         AccessibilityNodeInfo root=mlogRoot();
         if(root==null || !screen.equals(inspect(root).screen))return;
+        if(isImeVisible()){
+            status("IME aberto: nenhum novo toque na tela para evitar digitar 0.");return;
+        }
         Path path=new Path();path.moveTo(size.x*nx,size.y*ny);
         GestureDescription.Builder builder=new GestureDescription.Builder();
         builder.addStroke(new GestureDescription.StrokeDescription(path,0,75));
@@ -497,11 +501,24 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         CharSequence existing=editor.getText();
         if(existing!=null && existing.length()>0){
             if(code.equals(existing.toString().trim())){
-                status("CMX ja preencheu o codigo; aguardando confirmacao nativa.");
-                if(prefs().getBoolean("send_enter",true))
-                    main.postDelayed(()->confirmEnteredCode(code),300);
-            }else status("Campo ocupado: nao sobrescrevi texto existente.");
-            return;
+                status("Codigo no campo: verificando Enter desta leitura.");
+                if(prefs().getBoolean("send_enter",true)) queueEnter(code,300);
+                return;
+            }
+            // Em Consulta/Conferencia, a caixa de busca conserva o ultimo codigo.
+            // Uma NOVA bipagem pode substitui-lo, somente nessa tela reconhecida.
+            AccessibilityNodeInfo root=mlogRoot();
+            ScreenInfo info=root==null?null:inspect(root);
+            boolean newSearch=info!=null &&
+                ("consulta".equals(info.screen) || "conferencia_venda".equals(info.screen));
+            boolean previouslyInserted=info!=null &&
+                ("atividades".equals(info.screen) || "separacao".equals(info.screen)) &&
+                existing.toString().trim().equals(lastEnteredByBridge) &&
+                info.screen.equals(lastEnteredScreen);
+            if(!newSearch && !previouslyInserted){
+                status("Campo ja preenchido manualmente: nao sobrescrevi.");return;
+            }
+            // A proxima ACTION_SET_TEXT substitui o codigo anterior.
         }
         try{
             // O Flutter por vezes abre o teclado so com clique (foco isolado nao basta).
@@ -516,75 +533,83 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             data.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,code);
             boolean done=editor.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,data);
             if(!done){status("MLOG recusou preencher o campo de leitura.");return;}
-            status("Leitura inserida no campo do MLOG; codigo nao foi registrado.");
+            AccessibilityNodeInfo currentRoot=mlogRoot();
+            ScreenInfo currentInfo=currentRoot==null?null:inspect(currentRoot);
+            lastEnteredByBridge=code;
+            lastEnteredScreen=currentInfo==null?"":currentInfo.screen;
+            status("Leitura inserida: Enter individual agendado.");
             main.postDelayed(()->{
                 preparedAt=0;
                 prearmFallbackUsed=false;
-            },1800);
-            if(prefs().getBoolean("send_enter",true)){
-                // O CMX pode mandar Enter nativamente, porém ANTES de SET_TEXT.
-                // Aguardar para dar chance ao MLOG processar Enter sem duplicar.
-                final String expected=code;
-                main.postDelayed(()->confirmEnteredCode(expected),260);
-            }
+                // Libera preparacao da nova consulta; na atividade nao pre-abrir.
+                if("consulta".equals(lastEnteredScreen) ||
+                   "conferencia_venda".equals(lastEnteredScreen))
+                    main.postDelayed(prearmRunnable,250);
+            },650);
+            if(prefs().getBoolean("send_enter",true)) queueEnter(code,260);
 
         }catch(RuntimeException e){status("Falha de acessibilidade ao inserir o codigo.");}
     }
-    /** Confirma UMA vez e somente se o mesmo codigo continua no editor do MLOG.
-     * Se o CMX confirmou sozinho e o campo foi limpo/fechado, nao duplica Enter.
-     * Nao simula botoes de Iniciar/Quantidade/Cancelar. */
-    private void confirmEnteredCode(String expected){
-        if(!ScanCoordinator.isActive(this) || mlogRoot()==null)return;
+    /** A cada leitura aceita, cria um identificador novo de confirmacao.
+     *  Evita o erro da v1.1 que descartava Enter em leituras consecutivas do
+     *  mesmo codigo com menos de 1,1 segundo. */
+    private void queueEnter(String expected,long delay){
+        final long id=++enterAttempt;
+        main.postDelayed(()->confirmEnteredCode(expected,id),delay);
+    }
+
+    /** So confirma quando o campo do MLOG ainda contem exatamente o codigo.
+     *  Se o CMX ja enviou Enter, o campo normalmente desaparece ou e limpo. */
+    private void confirmEnteredCode(String expected,long attempt){
+        if(attempt!=enterAttempt || !ScanCoordinator.isActive(this))return;
         AccessibilityNodeInfo root=mlogRoot();
         if(root==null)return;
         ScreenInfo info=inspect(root);
         if(info.login || info.dialog)return;
         AccessibilityNodeInfo editor=safeEditor(info,true);
-        if(editor==null){
-            // Em modais Flutter o titulo pode sumir; unico campo editavel e focado.
-            if(info.editors.size()==1 && info.editors.get(0).isFocused() &&
-                !blockedLabel(tag(info.editors.get(0))))editor=info.editors.get(0);
-        }
+        if(editor==null && info.editors.size()==1 && info.editors.get(0).isFocused() &&
+           !blockedLabel(tag(info.editors.get(0))))editor=info.editors.get(0);
         if(editor==null || !editor.isVisibleToUser() || editor.isPassword()){
-            status("Campo mudou apos leitura: Enter nativo possivelmente processado.");return;
+            status("MLOG mudou o campo: nenhum Enter extra enviado.");return;
         }
         CharSequence current=editor.getText();
         if(current==null || !expected.equals(current.toString().trim())){
-            status("Campo ja mudou: Enter adicional dispensado.");return;
+            status("Codigo ja processado ou alterado: sem Enter duplicado.");return;
         }
-        long now=SystemClock.elapsedRealtime();
-        if(expected.equals(lastEnterCode) && now-lastEnterAt<1100)return;
-        lastEnterAt=now;lastEnterCode=expected;
-        int action=AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.getId();
         try{
+            int action=AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.getId();
             if(editor.performAction(action)){
-                status("Enter solicitado ao MLOG; verificando resultado.");
-                main.postDelayed(()->verifyEnterOutcome(expected),360);
+                status("Enter solicitado para esta leitura; verificando o retorno.");
+                main.postDelayed(()->verifyEnterOutcome(expected,attempt),420);
                 return;
             }
         }catch(RuntimeException ignored){}
-        // Fallback seguro: tecla Enter/Ir/Buscar do teclado Android visivel.
+        // Fallback APENAS em tecla explicita de Enter, jamais coordenadas.
         if(pressVisibleImeEnter()){
-            status("Codigo preenchido e Enter do teclado acionado.");return;
+            status("Enter identificado e acionado no teclado Android.");return;
         }
-        status("Codigo preenchido, mas MLOG/Gboard nao disponibilizaram Enter. Envie diagnostico.");
-    }
-    /** ACTION_IME_ENTER pode retornar true mesmo quando o Flutter ignora a
-     *  confirmacao. Se o codigo ainda for o mesmo apos o atraso, tentamos UMA
-     *  vez a tecla visivel do Gboard. Nunca repetimos Enter sem verificar. */
-    private void verifyEnterOutcome(String expected){
-        AccessibilityNodeInfo root=mlogRoot();
-        if(root==null)return;
-        ScreenInfo current=inspect(root);
-        if(current.login || current.dialog)return;
-        AccessibilityNodeInfo editor=safeEditor(current,true);
-        if(editor==null || !editor.isFocused())return;
-        CharSequence text=editor.getText();
-        if(text==null || !expected.equals(text.toString().trim()))return;
-        if(pressVisibleImeEnter())status("Enter do teclado acionado apos IME nao concluir.");
-        else status("MLOG manteve codigo; Enter nao exposto pelo Gboard.");
+        status("Codigo presente, mas MLOG nao expos Enter. Envie diagnostico.");
     }
 
+    private void verifyEnterOutcome(String expected,long attempt){
+        if(attempt!=enterAttempt)return;
+        AccessibilityNodeInfo root=mlogRoot();
+        if(root==null)return;
+        ScreenInfo info=inspect(root);
+        if(info.login || info.dialog)return;
+        AccessibilityNodeInfo editor=safeEditor(info,true);
+        if(editor==null && info.editors.size()==1 && info.editors.get(0).isFocused() &&
+           !blockedLabel(tag(info.editors.get(0))))editor=info.editors.get(0);
+        if(editor==null || !editor.isFocused())return;
+        CharSequence current=editor.getText();
+        if(current==null || !expected.equals(current.toString().trim()))return;
+        if(pressVisibleImeEnter())status("Enter do Gboard acionado apos Flutter nao responder.");
+        else status("MLOG manteve o codigo: tecla Enter nao exposta pelo teclado.");
+    }
+
+    /** Nunca usar toque por posicao no teclado numerico: o local onde era o
+     *  icone MLOG pode ser a tecla '0'. Aceitar so o nome EXPLICITO da tecla
+     *  de confirmacao, e apenas na extremidade inferior direita da janela IME. */
     private boolean pressVisibleImeEnter(){
         try{
             for(AccessibilityWindowInfo window:getWindows()){
@@ -595,21 +620,26 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 List<AccessibilityNodeInfo> nodes=new ArrayList<>();visit(root,nodes,0);
                 AccessibilityNodeInfo chosen=null;
                 for(AccessibilityNodeInfo n:nodes){
-                    String label=tag(n).trim();
-                    if(!has(label,"enter","retorno","pesquisar","buscar","concluido","concluir","done","ir para"))continue;
-                    if(has(label,"cancelar","limpar","apagar","excluir","voltar"))continue;
-                    Rect nr=new Rect();n.getBoundsInScreen(nr);
-                    if(nr.isEmpty() || nr.centerX() < wr.left+wr.width()*.70f ||
-                       nr.centerY() < wr.top+wr.height()*.50f || !n.isVisibleToUser())continue;
-                    AccessibilityNodeInfo clickableNode=clickable(n);
-                    if(clickableNode!=null && clickableNode.isClickable()){
-                        Rect targetBounds=new Rect();clickableNode.getBoundsInScreen(targetBounds);
-                        if(targetBounds.width()>wr.width()*.34f ||
-                           targetBounds.height()>wr.height()*.42f ||
-                           targetBounds.centerX() < wr.left+wr.width()*.70f)continue;
-                        if(chosen!=null && !sameBounds(chosen,clickableNode))return false;
-                        chosen=clickableNode;
-                    }
+                    String label=norm(n.getContentDescription()).trim();
+                    if(label.isEmpty())label=norm(n.getText()).trim();
+                    if(label.isEmpty())continue;
+                    if(!("enter".equals(label) || "retorno".equals(label) ||
+                         "pesquisar".equals(label) || "buscar".equals(label) ||
+                         "concluido".equals(label) || "concluir".equals(label) ||
+                         "done".equals(label) || "ir".equals(label) ||
+                         "go".equals(label) || "search".equals(label)))continue;
+                    if(!n.isVisibleToUser() || !n.isEnabled())continue;
+                    Rect r=new Rect();n.getBoundsInScreen(r);
+                    if(r.isEmpty() || r.centerX()<wr.left+wr.width()*.70f ||
+                       r.centerY()<wr.top+wr.height()*.50f)continue;
+                    AccessibilityNodeInfo target=clickable(n);
+                    if(target==null || !target.isClickable())continue;
+                    Rect tr=new Rect();target.getBoundsInScreen(tr);
+                    if(tr.isEmpty() || tr.width()>wr.width()*.25f ||
+                       tr.height()>wr.height()*.40f ||
+                       tr.centerX()<wr.left+wr.width()*.70f)continue;
+                    if(chosen!=null && !sameBounds(chosen,target))return false;
+                    chosen=target;
                 }
                 if(chosen!=null && chosen.performAction(AccessibilityNodeInfo.ACTION_CLICK))return true;
             }
@@ -795,6 +825,11 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     }
     private void tapAt(int id,float x,float y,String screen){
         if(gestureInProgress || pendingCode==null || id!=serial)return;
+        // Coordenadas de icones nao sao validas quando teclado virtual ocupa a tela.
+        if(isImeVisible()){
+            status("Teclado ja visivel; nao repetir toque no icone (evita tecla 0).");
+            retryFill(id,screen);return;
+        }
         AccessibilityNodeInfo root=mlogRoot();
         if(root==null)return;
         ScreenInfo before=inspect(root);
@@ -884,7 +919,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 }
             }
         }
-        v.hasConsultation=consultationHint && consultationTitle;
+        // O resultado da consulta pode esconder o titulo, mantendo a busca
+        // "Bipe ou digite enderecos..." disponivel para a proxima leitura.
+        v.hasConsultation=consultationHint && (consultationTitle || v.searchField!=null);
         v.hasSeparationControls=hasPular && hasEncerrar;
         if(v.hasConferenceTitle)v.screen="conferencia_venda";
         else if(v.hasConsultation)v.screen="consulta";
