@@ -28,7 +28,7 @@ import android.widget.Toast;
 
 
 /**
- * v0.8. Interface monocromatica por paginas, com Gboard intacto.
+ * v0.9. Interface monocromatica, Gboard visivel e Enter assistido.
  * O teste exibe leituras somente na tela; o codigo nao vai para preferências.
  */
 public final class MainActivity extends Activity {
@@ -88,6 +88,13 @@ public final class MainActivity extends Activity {
             prefs.edit().putString("theme_choice","auto")
                 .putBoolean("migrated_theme_v8",true).apply();
             themeChoice="auto";
+        }
+        if(!prefs.getBoolean("migrated_scan_v9",false)){
+            // Remover ocultacao antiga e ativar confirmacao se scanner permitir.
+            prefs.edit().putBoolean("hide_keyboard_on_scan",false)
+                .putBoolean("send_enter",true)
+                .putBoolean("layout_fallback",true)
+                .putBoolean("migrated_scan_v9",true).apply();
         }
         boolean dark=darkNow();
         setTheme(dark?R.style.BridgeThemeDark:R.style.BridgeThemeLight);
@@ -223,11 +230,12 @@ public final class MainActivity extends Activity {
         title("Ajustes","Preferências de leitura e aparência.");
         LinearLayout read=card();read.addView(label("Leitura",17,ink,true));
         check(read,"Leitura assistida","enabled",false);
-        check(read,"Ocultar teclado durante o bipe","hide_keyboard_on_scan",true);
+        subtitle(read,"Gboard permanece visivel para digitar e bipar.");
         check(read,"Preparar campo ao abrir tela", "prearm_field",true);
         check(read,"Toque guiado (telas reconhecidas)","guided_taps",true);
-        check(read,"Foco experimental em produtos","layout_fallback",false);
-        check(read,"Enviar Enter automático","send_enter",false);
+        check(read,"Detectar teclado de produtos","layout_fallback",true);
+        check(read,"Confirmar leitura com Enter","send_enter",true);
+        subtitle(read,"Se o CMX ja confirmar duas vezes, desligue o Enter do Bridge. O app so tenta confirmar o codigo ainda visivel no campo.");
         LinearLayout appearance=card();appearance.addView(label("Aparência",17,ink,true));
         subtitle(appearance,"Seguir o sistema ou escolher manualmente.");
         LinearLayout bar=row();LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(-1,-2);bp.topMargin=dp(14);
@@ -242,7 +250,7 @@ public final class MainActivity extends Activity {
         subtitle(cmx,"O Bridge agora apenas recebe leituras. Configure formatos, modo de saida e Enter no aplicativo CMX original.");
     }
     private void diagnostic(){
-        title("Diagnóstico","Status da comunicação com o MLOG.");
+        title("Diagnóstico","Se uma tela nao funcionar, copie este resultado.");
         LinearLayout card=card();card.addView(label("Último evento",17,ink,true));
         lastStatus=label(prefs.getString("last_status","Nenhum diagnóstico ainda."),14,muted,false);
         lastStatus.setTextIsSelectable(true);space(card,11);card.addView(lastStatus);
@@ -252,11 +260,11 @@ public final class MainActivity extends Activity {
             toast("Diagnóstico copiado. Não inclui códigos.");
         });
         LinearLayout help=card();help.addView(label("O que testar",17,ink,true));
-        subtitle(help,"Abra Atividades, Conferência ou Consulta. O campo deve ser preparado antes do bipe. Aperte o gatilho e confira o último evento. Teste sem confirmar pedidos reais.");
+        subtitle(help,"Teste atividades, pedidos, separacao e consulta. O Bridge abre o campo antes da leitura e tenta confirmar quando o codigo permanecer preenchido. Teste com pedido nao operacional.");
         button(help,"Abrir MLOG",true,this::openMlog);
     }
     private void about(){
-        title("Sobre","MLOG Scanner Bridge · v0.8");
+        title("Sobre","MLOG Scanner Bridge · v0.9");
         LinearLayout about=card();about.addView(label("Integração local",17,ink,true));
         subtitle(about,"Criado para o scanner físico CMX e o MLOG. Sem acesso à internet. Os códigos de leitura não são salvos em histórico.");
         space(about,10);

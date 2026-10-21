@@ -1,20 +1,22 @@
-MLOG SCANNER BRIDGE v0.8 — ATUALIZACAO E INSTALACAO
+MLOG Scanner Bridge v0.9 — Atualizacao via CMD
 
-1) Baixe MLOG_Scanner_Bridge_v8_Foco_Estavel.zip na pasta Downloads.
+1) Salve MLOG_Scanner_Bridge_v9_Teclado_Enter.zip em Downloads.
 2) Abra CMD e execute:
 
 cd /d "%USERPROFILE%\Downloads\MLOG-Scanner-Bridge"
-powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v8_Foco_Estavel.zip') -DestinationPath . -Force"
+powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v9_Teclado_Enter.zip') -DestinationPath . -Force"
 git add -A
-git commit -m "MLOG Bridge v8 foco estavel"
+git commit -m "MLOG Bridge v9 teclado visivel e enter"
 git push origin main
 
-3) Espere GitHub Actions ficar VERDE, baixe o artefato MLOG-Scanner-Bridge-v8-APK,
-   extraia app-debug.apk na pasta Downloads.
+3) GitHub Actions: baixar MLOG-Scanner-Bridge-v9-APK apos Success.
+4) Extraia app-debug.apk para Downloads.
 
-4) Conecte o CMX por USB, deixe Depuracao USB ativa e AUTORIZE o PC:
-
+INSTALAR PELO ADB:
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" devices
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" install -r "%USERPROFILE%\Downloads\app-debug.apk"
 
-Observacao: nao altere formatos/mode output no CMX pelo Bridge; o v0.8 nao envia comandos.
+Esperado: device, depois Success. Se aparecer unauthorized, confirme a depuracao no coletor.
+
+ATENCAO: teclado Gboard visivel, Enter assistido ligado como padrao na v9.
+Se o CMX ja emite Enter e duplicar a confirmacao, desative "Confirmar leitura com Enter" nos Ajustes do Bridge.
