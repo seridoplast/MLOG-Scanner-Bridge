@@ -176,9 +176,10 @@ public final class MainActivity extends Activity {
         setContentView(root);
         LinearLayout head=row();head.setPadding(dp(20),dp(19),dp(20),dp(13));
         LinearLayout left=row();
-        ImageView logo=new ImageView(this);logo.setImageResource(R.drawable.brand_monochrome);
+        ImageView logo=new ImageView(this);logo.setImageResource(R.drawable.brand_home_dark);
         logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        logo.setColorFilter(ink);
+        // A segunda marca acompanha o tema (texto escuro no claro e claro no escuro).
+        logo.setImageResource(darkNow()?R.drawable.brand_home_dark:R.drawable.brand_home_light);
         left.addView(logo,new LinearLayout.LayoutParams(dp(42),dp(42)));
         TextView name=label("mlog bridge",19,ink,true);
         LinearLayout.LayoutParams nl=new LinearLayout.LayoutParams(-2,-2);nl.leftMargin=dp(12);
@@ -260,7 +261,7 @@ public final class MainActivity extends Activity {
             prefs.edit().putBoolean("learn_trigger_armed",true).apply();
             toast("Abra o MLOG e pressione o gatilho uma vez para calibrar.");
         });
-        subtitle(ime,"Ativo por padrao: tenta selecionar o campo ao apertar o gatilho, antes da leitura ser decodificada. Se o CMX nao disponibilizar o evento, use Aprender botao e consulte o diagnostico. Pode desligar sem reinstalar.");
+        subtitle(ime,"Um clique por leitura. Novos gatilhos enquanto a operacao anterior nao terminou sao ignorados, sem toques pendentes.");
         subtitle(ime,"Ative a leitura rapida apenas com o teclado Bridge selecionado. Acelera a deteccao do campo; o CMX continua responsavel por enviar o Enter.");
         subtitle(ime,"Experimento opcional. O Android exige habilitar e escolher o teclado manualmente. No MLOG, ele mostra uma barra compacta. O Enter automatico fica exclusivamente no CMX. O botao Enter manual continua no teclado.");
         button(ime,"1. Habilitar teclado no Android",false,()->startActivity(new Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)));
@@ -296,11 +297,16 @@ public final class MainActivity extends Activity {
             toast("Diagnóstico copiado. Não inclui códigos.");
         });
         LinearLayout help=card();help.addView(label("O que testar",17,ink,true));
-        subtitle(help,"v2.5: foco automatico igual ao da v2.3, sem Enter automatico do Bridge. O CMX deve enviar Enter apos escrever o codigo.");
+        subtitle(help,"v2.7: um clique por ciclo, sem fila. Um novo toque so e liberado apos a confirmacao do CMX ser observada.");
+        button(help,"Rearmar apos falha (sem clicar)",false,()->{
+            MlogFocusAccessibilityService service=MlogFocusAccessibilityService.current();
+            if(service!=null){service.resetScanLock();toast("Ciclo liberado sem executar cliques pendentes.");}
+            else toast("Ative a acessibilidade do Bridge.");
+        });
         button(help,"Abrir MLOG",true,this::openMlog);
     }
     private void about(){
-        title("Sobre","MLOG Scanner Bridge · v2.3 beta");
+        title("Sobre","MLOG Scanner Bridge · v2.7 beta");
         LinearLayout about=card();about.addView(label("Integração local",17,ink,true));
         subtitle(about,"Criado para o scanner físico CMX e o MLOG. Sem acesso à internet. Os códigos de leitura não são salvos em histórico.");
         space(about,10);

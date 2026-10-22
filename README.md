@@ -1,55 +1,40 @@
-# MLOG Scanner Bridge v2.6 — Botao nativo a cada gatilho
+# MLOG Scanner Bridge v2.7 — 1 clique por leitura
 
-Esta versao parte **diretamente da v2.5**, sem reconstruir o processamento de codigos.
+Base: v2.6. Nova regra: **um gatilho não pode gerar dois cliques**, nem enfileirar cliques para execução tardia.
 
-## Alteracao principal
-- Ao pressionar o gatilho fisico, ANTES da decodificacao, o Bridge identifica a tela do MLOG e procura o botao nativo de teclado. Quando a entrada ainda nao estiver aberta, executa `ACTION_CLICK` (ou um gesto no proprio icone quando possivel).
-- O gatilho do coletor observado nos diagnosticos tem o codigo **353**; foi incluido explicitamente. Eventos de tecla desconhecidos continuam nao acionando gestos.
-- O clique nao depende de a fila anterior ter terminado, nem confunde teclado Android visivel com o campo Flutter preparado.
-- Se o campo correto **ja estiver aberto e focado**, nao clica outra vez porque o botao do MLOG pode ser um alternador e fechar o campo. A entrada fica aberta, como solicitado.
-- Para **separacao (com e sem quantidade)** e **atividades**, pode usar um toque relativo ao layout conhecido quando nao ha elemento clicavel identificado, desde que o ponto nao esteja coberto pelo teclado Android. Isso permite que a barra compacta do Bridge fique aberta sem impedir os toques.
-- Em **consulta e conferencia de venda**, a caixa de busca ja existe e o gatilho so recupera o foco.
-- Preservada a insercao de codigo do Bridge, fila e deduplicacao; **nao envia Enter automatico**. Enter automatico continua a cargo do CMX.
-- Nao envia comandos de configuracao ao CMX nem altera a escolha do teclado.
+## Diagnóstico analisado
 
-## Limite tecnico
-O CMX pode transmitir o Enter antes do campo Flutter aceitar a leitura. Esta versao antecipa o clique, mas nao consegue garantir que o Enter do CMX seja sincronizado com o preenchimento realizado depois. Se ainda for necessario bipar duas vezes, sera preciso ajustar a entrega/confirmacao e medir pelo log, nao clicar repetidamente.
+No log de 22/10 10:41, o mesmo ciclo recebeu um clique por gatilho (`TRIGGER_NATIVE_CLICK_OK`) e depois outro ao processar o broadcast (`WAIT_EDITOR` seguido de novo clique). Leituras subsequentes aguardaram até ~3 s em fila. Ambas as situações motivaram esta correção.
 
-## CMD — atualizar o projeto no GitHub
+## Comportamento
 
-Baixe o ZIP em Downloads e execute:
+- Primeiro gatilho com MLOG reconhecido bloqueia o ciclo e tenta abrir o campo **uma única vez**.
+- O primeiro broadcast do scanner preenche o campo. Retransmissões e bipes durante o processamento são **ignorados, nunca guardados**.
+- Após a confirmação ser observada como mudança/fechamento do campo, o bloqueio é liberado.
+- Se nenhuma leitura for decodificada, o gatilho é liberado após 1,35 s, sem toques atrasados.
+- Se não for possível confirmar, o ciclo permanece bloqueado para evitar confirmação duplicada; usar **Diagnóstico → Rearmar após falha** somente depois de verificar o MLOG.
+- O Bridge **não envia Enter**; o CMX continua responsável por isso.
+- LOGO 1.svg no ícone de instalação; LOGO 2.svg no cabeçalho em duas cores para os temas.
+
+⚠️ **Leituras acionadas enquanto ocupado serão descartadas**, não executadas mais tarde. O operador deve aguardar a conclusão antes de bipar novamente. Essa é uma escolha deliberada para evitar duplicações e cliques retardados; não representa suporte a bipagem ilimitada em alta frequência.
+
+## Atualizar no Windows
 
 ```bat
 cd /d "%USERPROFILE%\Downloads\MLOG-Scanner-Bridge"
-powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v26_Botao_A_Cada_Gatilho.zip') -DestinationPath . -Force"
+powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v27_Um_Clique_Por_Ciclo.zip') -DestinationPath . -Force"
 git add -A
-git commit -m "MLOG Bridge v26 botao nativo por gatilho"
+git commit -m "Bridge v27 trava de ciclo e logos"
 git push origin main
 ```
 
-Abra https://github.com/seridoplast/MLOG-Scanner-Bridge/actions e baixe `MLOG-Scanner-Bridge-v26-APK` quando a compilacao estiver verde.
-
-## CMD — instalar por depuracao USB
-
-Extrai o `app-debug.apk` para Downloads:
+## Instalar usando ADB
 
 ```bat
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" devices
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" install -r "%USERPROFILE%\Downloads\app-debug.apk"
 ```
 
-## Teste seguro
-1. Mantenha `Pre-foco pelo gatilho` e `Leitura assistida` ativados. Configure o Enter automatico no CMX.
-2. Teste primeiro em um pedido ficticio: um item comum, outro com quantidade e a tela de atividades.
-3. Com o campo fechado, aperte o gatilho uma vez: o Bridge deve clicar no botao nativo do MLOG. Com o campo ja aberto, nao deve fechar nem alternar o teclado.
-4. Teste bipagens consecutivas e cheque uma leitura por bipe; confirme que o MLOG processou cada Enter.
-5. Para comparar o momento do gatilho e do codigo:
+## Segurança dos testes
 
-```bat
-"%USERPROFILE%\Downloads\platform-tools\adb.exe" logcat -d -v time -s MLOGBridge:I > "%USERPROFILE%\Downloads\Bridge_v26_Log.txt"
-```
-
-Registros esperados: `PHYSICAL_TRIGGER_SEEN_353`, `TRIGGER_OPEN_ATTEMPT_...`, `TRIGGER_NATIVE_CLICK_OK_...` (ou `TRIGGER_GESTURE_SENT_...`), `TRIGGER_EDITOR_ALREADY_OPEN`, `TRIGGER_TO_DECODE_MS_...`.
-
-## Estado de verificacao
-Revisao estatica de Java/XML e testes das classes puras podem ser executados aqui. A compilacao Android e a validacao com o MLOG no coletor dependem do GitHub Actions e do hardware real.
+Testar num único coletor, fora de pedidos reais, para confirmar: 1) um clique por gatilho; 2) o próximo clique só após confirmação; 3) Enter somente pelo CMX; 4) recuperação manual sem executar cliques atrasados. O código foi validado sintaticamente, mas o APK e a integração dependem da compilação e teste físico.

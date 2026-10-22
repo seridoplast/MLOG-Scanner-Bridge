@@ -58,7 +58,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     // A fila vive apenas em memoria, sem persistir codigos.
     // Sem limite TOTAL de leituras durante a sessao. Limite apenas de
     // leituras SIMULTANEAMENTE pendentes para evitar OOM em erro prolongado.
-    private final ScanQueue scanQueue=new ScanQueue(128);
+    private final ScanQueue scanQueue=new ScanQueue(1);
+    private final ScanCycleGate cycleGate=new ScanCycleGate();
     private final java.util.ArrayDeque<Long> queuedAt=new java.util.ArrayDeque<>();
     private long totalFinished;
     private int workGeneration;
@@ -69,6 +70,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private boolean configuredFastEvents;
     private boolean configuredTriggerEvents;
     private long lastTriggerPrefocus;
+    private int ignoredTriggerDecodes;
+    private long ignoredTriggerAt;
     private long lastUnknownTriggerLogAt;
     private String pendingScreen="";
     private long lastDiagnostic;
@@ -120,6 +123,17 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                     return;
                 }
                 trace("BROADCAST_ACCEPTED_"+source);
+                long arrival=SystemClock.elapsedRealtime();
+                // A PRIMEIRA decodificacao pertence ao gatilho que iniciou
+                // o ciclo. Nao descarta-la por haver outros apertos bloqueados.
+                if(!cycleGate.isWaitingForDecode() && ignoredTriggerDecodes>0 &&
+                        arrival-ignoredTriggerAt>=0 &&
+                        arrival-ignoredTriggerAt<950){
+                    ignoredTriggerDecodes--;
+                    trace("BROADCAST_IGNORED_BLOCKED_TRIGGER_"+source);
+                    return;
+                }
+                if(arrival-ignoredTriggerAt>=950)ignoredTriggerDecodes=0;
                 if(lastTriggerPrefocus>0){
                     long delta=SystemClock.elapsedRealtime()-lastTriggerPrefocus;
                     if(delta>=0 && delta<1200)trace("TRIGGER_TO_DECODE_MS_"+delta);
@@ -179,32 +193,31 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 " seq="+workGeneration+" stage="+stage);
     }
 
-    /** Nao descartar o proximo gatilho enquanto o editor ainda abre. */
+    /** Sem fila de toques ou codigos. Enquanto a operacao anterior estiver
+     *  pendente, o proximo gatilho/broadcast e ignorado, nunca executado depois. */
     private void enqueueBarcode(String code){
         if(!ScanCoordinator.isActive(this))return;
         refreshEventThrottle();
-        if(mlogRoot()==null){status("Leitura ignorada: MLOG nao esta ativo.");return;}
-        long now=SystemClock.elapsedRealtime();
-        if(now<navigationGuardUntil){
-            trace("SCAN_DURING_NAVIGATION_IGNORED");
-            status("Janela de informacoes/cancelamento: leitura nao executada.");
-            return;
+        final long now=SystemClock.elapsedRealtime();
+        if(now<navigationGuardUntil || mlogRoot()==null){
+            trace("SCAN_BLOCKED_NAVIGATION");return;
         }
-        AccessibilityNodeInfo currentRoot=mlogRoot();
-        if(currentRoot==null || isBlockingOverlay(currentRoot)){
-            trace("SCAN_BLOCKED_BY_OVERLAY");
-            status("Feche informacoes/aviso antes da proxima leitura.");
-            return;
+        if(isBlockingOverlay(mlogRoot())){
+            trace("SCAN_BLOCKED_BY_OVERLAY");return;
         }
-        boolean idle=scanQueue.isIdle();
+        if(!cycleGate.beginBarcode(now)){
+            trace("SCAN_IGNORED_LOCKED_"+cycleGate.phase());return;
+        }
+        if(!scanQueue.isIdle()){
+            trace("SCAN_IGNORED_ACTIVE_NO_QUEUE");
+            cycleGate.needsAttention();return;
+        }
         if(!scanQueue.offer(code)){
-            status("Excesso de leituras simultaneas: confirme a tela antes de prosseguir.");
-            trace("QUEUE_FULL");return;
+            trace("SCAN_REJECTED");cycleGate.aborted(now);return;
         }
         queuedAt.addLast(now);
-        trace(idle?"SCAN_RECEIVED":"SCAN_QUEUED");
-        if(idle)startQueuedScan();
-        else status("Leitura recebida durante a anterior; aguardando na fila.");
+        trace("SCAN_RECEIVED");
+        startQueuedScan();
     }
     private void startQueuedScan(){
         String code=scanQueue.active();
@@ -225,35 +238,54 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     }
     private void finishQueuedScan(String reason){
         if(scanQueue.isIdle())return;
+        final long now=SystemClock.elapsedRealtime();
         trace("SCAN_FINISH_"+reason);
+        trace("SCAN_ELAPSED_MS_"+(now-currentScanStartedAt));
         awaitingEnterConfirmation=false;
         directEnterSent=false;
-        trace("SCAN_ELAPSED_MS_"+(SystemClock.elapsedRealtime()-currentScanStartedAt));
         totalFinished++;
-        // Contador acumulado sem armazenar historico/codigo no disco.
-        if(totalFinished%50==0)trace("SCANS_COMPLETED_BATCH_50");
         cancelPending();
-        preparedAt=0;
-        preparedScreen="";
-        prearmFallbackUsed=false;
-        ++serial; // cancelar tentativas de foco da leitura anterior
-        ++enterAttempt; // cancelar espera passiva da leitura anterior
-        if(!queuedAt.isEmpty())queuedAt.pollFirst();
-        boolean more=scanQueue.complete();
-        ++workGeneration; // invalida timeout antigo
-        if(more){
-            // Breve intervalo para o Flutter recompor a arvore apos Enter.
-            // O Flutter precisa reconstruir a arvore. Aguardar so um frame
-            // curto; cada nova leitura voltara a verificar campo/foco.
-            main.postDelayed(this::startQueuedScan,fastImeMode()?16:65);
+        preparedAt=0;preparedScreen="";prearmFallbackUsed=false;
+        ++serial;++enterAttempt;++workGeneration;
+        queuedAt.clear();
+        scanQueue.clear(); // NUNCA iniciar codigo antigo depois de outro bipe
+        if("campo_mudou".equals(reason) || "campo_saiu".equals(reason)){
+            cycleGate.completed(now);
+            trace("GATE_RELEASE_CONFIRMED");
+        }else if("fora_do_mlog".equals(reason) || "tela_bloqueada".equals(reason) ||
+                  "icone_ausente".equals(reason) || "icone_atividade_ausente".equals(reason) ||
+                  "editor_bloqueado".equals(reason) || "quantidade_protegida".equals(reason) ||
+                  "busca_nao_acessivel".equals(reason) || "gesto_cancelado".equals(reason) ||
+                  "gesto_indisponivel".equals(reason)){
+            cycleGate.aborted(now);
+            trace("GATE_RELEASE_NO_OPERATION");
+        }else{
+            // Se nao sabemos se o Enter do CMX ocorreu, nao clicamos de novo:
+            // exige cancelamento/navegacao ou rearmar manualmente.
+            cycleGate.needsAttention();
+            trace("GATE_LOCKED_UNCONFIRMED");
+            status("Leitura sem confirmacao verificavel; nao repetirei o clique. Confira o MLOG e, se preciso, use Rearmar no Bridge.");
         }
     }
 
+    /** Liberacao EXPLICITA, sem disparar qualquer toque armazenado. */
+    void resetScanLock(){
+        ++serial;++enterAttempt;++workGeneration;
+        cancelPending();
+        scanQueue.clear();queuedAt.clear();
+        preparedAt=0;preparedScreen="";prearmFallbackUsed=false;
+        awaitingEnterConfirmation=false;
+        cycleGate.aborted(SystemClock.elapsedRealtime());
+        ignoredTriggerDecodes=0;
+        navigationGuardUntil=SystemClock.elapsedRealtime()+200;
+        trace("GATE_MANUALLY_RESET");
+        status("Pronto para nova leitura. Nenhum toque pendente foi executado.");
+    }
 
     /** Cancela operacoes em andamento quando o operador abre detalhes,
      *  cancelamento ou um dialogo. Nunca retoma gestos pendentes sozinho. */
     private void suspendForNavigation(String reason){
-        boolean busy=!scanQueue.isIdle() || pendingCode!=null;
+        boolean busy=!scanQueue.isIdle() || pendingCode!=null || !cycleGate.isIdle();
         navigationGuardUntil=SystemClock.elapsedRealtime()+350;
         if(!busy)return;
         trace("NAVIGATION_CANCEL_"+reason);
@@ -265,6 +297,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         cancelPending();
         scanQueue.clear();
         queuedAt.clear();
+        cycleGate.aborted(SystemClock.elapsedRealtime());
+        ignoredTriggerDecodes=0;
         preparedAt=0;
         preparedScreen="";
         prearmFallbackUsed=false;
@@ -318,9 +352,12 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         if(pkg==null || !ScanCoordinator.TARGET.contentEquals(pkg)){
             // Eventos do Gboard nao indicam saida do MLOG: ainda pode estar
             // aberta a entrada de leitura por baixo do teclado virtual.
-            if(pendingCode==null && mlogRoot()==null){
+            if(mlogRoot()==null){
                 preparedAt=0;preparedScreen="";
                 prearmFallbackUsed=false;
+                // Ao sair do MLOG, nenhuma operacao permanece para execucao
+                // quando o usuario retornar depois.
+                if(!cycleGate.isIdle())suspendForNavigation("fora_do_mlog");
             }
             return;
         }
@@ -410,6 +447,15 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
            code==KeyEvent.KEYCODE_DEL)return false;
         final long now=SystemClock.elapsedRealtime();
         if(now<navigationGuardUntil)return false;
+        final int savedLearned=prefs().getInt("learned_trigger_key",-1);
+        if((isScannerTriggerKey(code) || code==savedLearned) && !cycleGate.isIdle()){
+            trace("TRIGGER_IGNORED_LOCKED_"+cycleGate.phase());
+            // O proximo broadcast desse gatilho nao deve reaparecer como
+            // uma nova leitura depois da confirmacao anterior.
+            ignoredTriggerDecodes=Math.min(8,ignoredTriggerDecodes+1);
+            ignoredTriggerAt=now;
+            return false;
+        }
         AccessibilityNodeInfo root=mlogRoot();
         if(root==null)return false;
         ScreenInfo info=inspect(root);
@@ -431,10 +477,20 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             return false;
         }
         trace("PHYSICAL_TRIGGER_SEEN_"+code);
-        // Descarta apenas o ressalto do mesmo botao. Nao aplica o filtro de
-        // 140 ms dos broadcasts fisicos ao gatilho.
-        if(now-lastTriggerPrefocus<70){trace("TRIGGER_KEY_BOUNCE");return false;}
+        if(!cycleGate.beginTrigger(now)){
+            trace("TRIGGER_IGNORED_LOCKED_"+cycleGate.phase());
+            return false;
+        }
         lastTriggerPrefocus=now;
+        final long triggerToken=now;
+        // Nao produzir clique atrasado se o leitor falhar em decodificar.
+        main.postDelayed(()->{
+            if(lastTriggerPrefocus==triggerToken &&
+               cycleGate.isWaitingForDecode() && scanQueue.isIdle()){
+                cycleGate.aborted(SystemClock.elapsedRealtime());
+                trace("TRIGGER_NO_DECODE_RELEASE");
+            }
+        },1350);
         trace("TRIGGER_OPEN_ATTEMPT_"+info.screen);
 
         // O Flutter ainda esta abrindo um campo a partir desse mesmo gatilho.
@@ -454,6 +510,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         // Na busca, o campo JA existe. Selecionar a caixa, nao um controle
         // generico nem o Gboard. Inclusive apos resultado de consulta.
         if("consulta".equals(info.screen) || "conferencia_venda".equals(info.screen)){
+            if(!cycleGate.claimClick())return false;
             boolean ok=editor!=null ? focusOrClick(editor) :
                 info.searchField!=null && focusOrClick(clickable(info.searchField));
             trace(ok?"TRIGGER_SEARCH_FOCUS_OK":"TRIGGER_SEARCH_FOCUS_UNAVAILABLE");
@@ -493,6 +550,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         Point p=realScreenSize();
         if(r.isEmpty() || r.width()>p.x*.34f || r.height()>p.y*.18f ||
            isPointCoveredByIme(r.centerX(),r.centerY()))return false;
+        if(!cycleGate.claimClick()){
+            trace("CLICK_SUPPRESSED_SAME_CYCLE");return true;
+        }
         try{
             if(target.isClickable() && target.performAction(AccessibilityNodeInfo.ACTION_CLICK)){
                 markNativeButton(screen,"gatilho fisico");
@@ -500,9 +560,10 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 return true;
             }
         }catch(RuntimeException ignored){}
-        // O Flutter pode anunciar o botao, mas rejeitar ACTION_CLICK.
-        // Tentar UM gesto no centro do proprio icone (nao no teclado Android).
-        return triggerGesture(screen,r.centerX(),r.centerY());
+        // Nao enviar um segundo gesto no mesmo ciclo: ACTION_CLICK pode ter
+        // acionado um redraw Flutter mesmo quando retorna false.
+        trace("NATIVE_CLICK_NOT_CONFIRMED_NO_RETRY");
+        return false;
     }
 
     /** Um toque por gatilho em coordenada validada. Nunca em caixas de
@@ -525,6 +586,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
 
     private boolean triggerGesture(String screen,float x,float y){
         if(gestureInProgress || isPointCoveredByIme(x,y))return false;
+        if(!cycleGate.claimClick()){
+            trace("GESTURE_SUPPRESSED_SAME_CYCLE");return false;
+        }
         AccessibilityNodeInfo root=mlogRoot();
         if(root==null)return false;
         ScreenInfo i=inspect(root);
@@ -621,7 +685,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 // Consulta apos resultado: Flutter deixa o campo visivel, mas
                 // sem foco. Focar, esperar a transicao e so entao preencher.
                 startPending(code,i.screen);
-                focusOrClick(ready);
+                if(cycleGate.claimClick())focusOrClick(ready);
                 retryFill(serial,i.screen);
                 return;
             }
@@ -629,8 +693,15 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             focusAndSet(ready,code);
             return;
         }
-        // Quando ja acionamos o botao MLOG nesta tela, evitar um segundo
-        // clique que poderia alternar o modal ou atingir a tecla zero.
+        // O gatilho ja tentou o clique no botao nativo: nenhum outro clique,
+        // mesmo que o Flutter demore ou preparedAt tenha expirado.
+        if(cycleGate.hasClicked()){
+            startPending(code,i.screen);
+            trace("EDITOR_WAIT_NO_SECOND_CLICK");
+            retryFill(serial,i.screen);
+            return;
+        }
+        // Preparacao sem toque do ciclo: foco pode estar transicionando.
         if(preparedAt>0 && i.screen.equals(preparedScreen) &&
            SystemClock.elapsedRealtime()-preparedAt<1100){
             startPending(code,i.screen);
@@ -639,116 +710,38 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             return;
         }
 
-        // Na tela de atividades, o botao de teclado e o portao de entrada.
-        // PRIMEIRO abrimos o campo, depois preenchemos, sem ocultar o Gboard.
-        if("atividades".equals(i.screen)){
-            startPending(code,"atividades");
-            // Um teclado numerico ja aberto pode ter 0 no local do icone.
-            // Neste caso so tentar preencher o editor; jamais tocar posicao.
-            if(isImeVisible()){
-                retryFill(serial,"atividades");
-                status("Atividades: entrada ja aberta; aguardando campo editavel.");return;
-            }
-            AccessibilityNodeInfo button=activityKeyboard(i);
-            if(button!=null && focusOrClick(button)){
-                status("Atividades: botao de teclado acionado; aguardando editor.");
-                retryFill(serial,"atividades");return;
-            }
-            if(i.hasActivitiesTitle && prefs().getBoolean("guided_taps",true)){
-                tapKnownActivitiesKeyboard(serial);return;
-            }
-            finishQueuedScan("icone_atividade_ausente");
-            status("Atividades: icone nao exposto; ative toque guiado no Bridge.");
-            return;
-        }
-
-        // A busca de conferencia possui uma caixa visivel na parte superior.
-        // Portanto NAO se deve clicar no botao de teclado/teclar por cima.
-        if("conferencia_venda".equals(i.screen) || "consulta".equals(i.screen)){
-            AccessibilityNodeInfo editor=safeEditor(i,true);
-            if(editor!=null && editor.isFocused()){
-                ++serial;
-                focusAndSet(editor,code);
-                return;
-            }
-            startPending(code,i.screen);
-            if(editor!=null){
-                // Novo bipe = reabrir/selecionar busca, sem depender do toque
-                // manual apos o resultado da consulta anterior.
-                focusOrClick(editor);
-                retryFill(serial,i.screen);
-                return;
-            }
-            // Não ocultar IME antes do campo existir. O Flutter pode nao abrir.
-
-            if(i.searchField!=null){
-                AccessibilityNodeInfo target=clickable(i.searchField);
-                boolean ok=focusOrClick(target);
-                if(ok){status("Busca de conferencia selecionada; aguardando campo editavel.");
-                    retryFill(serial,i.screen);return;}
-            }
-            if(prefs().getBoolean("guided_taps",true) &&
-                (i.hasConferenceTitle || i.hasConsultation)){
-                tapKnownSearchField(serial,i.screen);
-            }else{
-                finishQueuedScan("busca_nao_acessivel");
-                status("Busca: campo nao acessivel. Ative toque assistido ou envie diagnostico.");
-            }
-            return;
-        }
-
-        AccessibilityNodeInfo editor=safeEditor(i,false);
-        if(editor!=null && nativeEntryReady(i,editor)){
-            int id=++serial;
-            focusAndSet(editor,code);
-            scheduleRestore(id);
-            return;
-        }
-
-        // Separacao, pedidos e notas: acionar o botao DO MLOG primeiro,
-        // jamais simplesmente mandar mostrar teclado do sistema.
+        // Caso raro: nao houve evento de gatilho (firmware). O broadcast
+        // abre o campo uma unica vez; nao agenda outros cliques para depois.
         startPending(code,i.screen);
-        // Esta e a tela do print do usuario: o botao nativo de teclado e
-        // clicado fisicamente (dispatchGesture), NAO usando SHOW_SOFT_INPUT.
-        // A acao direta evita que ACTION_FOCUS abra apenas o Gboard.
-        // Primeiro o botao semantico do MLOG; isso evita acertar Quantidade
-        // caso o layout mude. Coordenadas ficam como ultimo recurso.
-        AccessibilityNodeInfo button=findKeyboardTarget(i);
-        if("separacao".equals(i.screen) && button!=null &&
-            focusOrClick(button)){
-            markNativeButton(i.screen,"botao identificado no MLOG");
+        if("consulta".equals(i.screen) || "conferencia_venda".equals(i.screen)){
+            AccessibilityNodeInfo editor=safeEditor(i,true);
+            AccessibilityNodeInfo field=editor!=null?editor:i.searchField;
+            if(field!=null && cycleGate.claimClick()){
+                focusOrClick(field);
+                trace("BROADCAST_SEARCH_FOCUSED_ONCE");
+            }
             retryFill(serial,i.screen);
-            scheduleNativeFallback(serial,i.screen);
             return;
         }
-        if("separacao".equals(i.screen) && i.hasSeparationControls &&
-           prefs().getBoolean("guided_taps",true) && supportedAspect(realScreenSize())){
-            status("Separacao: toque no icone proprio do MLOG (layout conhecido).");
-            tapKnownSeparationKeyboard(serial,i);
-            return;
-        }
-        if(button!=null && focusOrClick(button)){
-            markNativeButton(i.screen,"acessibilidade");
+        AccessibilityNodeInfo button="atividades".equals(i.screen)?
+            activityKeyboard(i):findKeyboardTarget(i);
+        if(button!=null){
+            // O metodo ja faz claimClick e impede qualquer segunda tentativa.
+            clickNativeKeyboardOnTrigger(button,i.screen);
             retryFill(serial,i.screen);
-            scheduleNativeFallback(serial,i.screen);
             return;
         }
-        if("separacao".equals(i.screen) &&
-                prefs().getBoolean("layout_fallback",true)){
-            AccessibilityNodeInfo n=relativeKeyboard(i);
-            if(n!=null && focusOrClick(n)){
-                markNativeButton(i.screen,"par camera/teclado");
-                retryFill(serial,i.screen);
-                scheduleNativeFallback(serial,i.screen);return;
+        if(prefs().getBoolean("guided_taps",true) &&
+           supportedAspect(realScreenSize())){
+            Point p=realScreenSize();
+            if("separacao".equals(i.screen) && i.hasSeparationControls){
+                triggerGesture(i.screen,p.x*(i.hasQuantity?0.44f:0.60f),p.y*.603f);
+            }else if("atividades".equals(i.screen) && i.hasActivitiesTitle){
+                triggerGesture(i.screen,p.x*.375f,p.y*.888f);
             }
         }
-        if("separacao".equals(i.screen) && prefs().getBoolean("guided_taps",true)
-                && i.hasSeparationControls){
-            startPendingIfNeeded(code,i.screen);
-            tapKnownSeparationKeyboard(serial,i);return;
-        }
-        finishQueuedScan("icone_ausente");
-        status("Icone de teclado nao identificado. Nenhuma acao arriscada executada.");
+        trace("NO_FURTHER_CLICKS_THIS_CYCLE");
+        retryFill(serial,i.screen);
     }
 
     /** Prepara a entrada antes do gatilho, sem alterar o CMX.
@@ -863,8 +856,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         if(editor==null || !nativeEntryReady(i,editor))return;
         if(("consulta".equals(intendedScreen) || "conferencia_venda".equals(intendedScreen))
                 && !editor.isFocused()){
-            focusOrClick(editor);
-            return; // proxima tentativa agendada aguarda foco Flutter
+            if(cycleGate.claimClick())focusOrClick(editor);
+            return; // aguardar Flutter, sem segundo clique
         }
         String code=pendingCode;
         // Nao descartar o codigo antes de ACTION_SET_TEXT ter sido aceito.
@@ -929,7 +922,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             // Foco e disponibilidade da acao podem mudar em frames distintos
             // no Flutter. Aguardar em vez de perder a primeira leitura.
             if(!editor.isFocused()){
-                focusOrClick(editor);
+                if(cycleGate.claimClick())focusOrClick(editor);
                 deferEditorAction(code,"WAIT_EDITOR_FOCUS");
                 return;
             }
@@ -966,6 +959,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         final long token=++enterAttempt;
         awaitingEnterConfirmation=true;
         directEnterSent=false;
+        cycleGate.waitingConfirmation();
         confirmStartedAt=SystemClock.elapsedRealtime();
         trace("CMX_ENTER_PASSIVE_WAIT");
         main.postDelayed(()->observeCmxConfirmation(expected,token),40);
@@ -1361,12 +1355,13 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         if(Math.abs(a.rect.centerY()-b.rect.centerY())>18*density)return null;
         return b.node;
     }
-    @Override public void onInterrupt(){cancelPending();scanQueue.clear();++workGeneration;restoreKeyboard();status("Acessibilidade interrompida.");}
+    @Override public void onInterrupt(){cancelPending();scanQueue.clear();cycleGate.aborted(SystemClock.elapsedRealtime());++workGeneration;restoreKeyboard();status("Acessibilidade interrompida.");}
     @Override public void onDestroy(){
         if(receiverRegistered)try{unregisterReceiver(receiver);}catch(RuntimeException ignored){}
         main.removeCallbacksAndMessages(null);
         cancelPending();
         scanQueue.clear();
+        cycleGate.aborted(SystemClock.elapsedRealtime());
         if(instance==this)instance=null;
         super.onDestroy();
     }
