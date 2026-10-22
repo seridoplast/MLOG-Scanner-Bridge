@@ -1,7 +1,9 @@
-# Diagnóstico e diferenças da v3.0.0
+# Diferenças 3.0.0 → 3.0.1
 
-- Na v2.9.9, os bipes automáticos podiam não iniciar porque a primeira confirmação precisava de uma mudança de texto no editor e o Enter virtual exigia IME Bridge ativo.
-- Na v3.0.0, o primeiro bipe ainda exige conclusão observável no MLOG. Foram acrescentados Enter virtual por conexão do serviço de acessibilidade (Android 13+, testado em API de documentação) e ACTION_IME_ENTER disponível no próprio nó editável. **Não garante** que o Flutter exponha um campo compatível; interrupções continuam apresentando motivo no painel flutuante.
-- O broadcast pode expor conteúdo decodificado sem o tipo real de código. Se não houver metadado de simbologia, não é possível deduzir de forma confiável Code 39, EAN-13, Code 128 ou QR Code apenas pelo valor textual.
-- Na tela de teste, além do formato, são exibidos os nomes dos campos recebidos quando o tipo está ausente, sem registrar o conteúdo em log.
-- Validar 3 bipes e comparar com registros salvos no MLOG; não avançar para 100 sem comprovar em todas as telas.
+- Bug relatado: após 1º físico e 1º virtual, o contador mostrava 'Enter sem confirmação visível, parei em 2/N'.
+- Causa: `observeAutoCountEnter()` exigia mudança visível no Flutter dentro de 2500 ms.
+- Ajuste: remover essa exigência para repetições virtuais; após `SET_TEXT` com sucesso e um Enter enviado, incrementa `autoCountDone` e agenda próximo envio respeitando 155 ms mínimos.
+- Campo que fica com o mesmo código: limpa antes de reinserir para forçar mudança de texto.
+- Não ocorre envio de Enter automático nas leituras normais; o CMX continua responsável.
+- Acompanhamento: `AUTO_COUNT_ENTER_DISPATCHED_N` representa envio, não registro confirmado. Nenhum código é incluído nos logs.
+- Teste de aceitação obrigatório: 3, depois 10 envios em ambiente de teste; comparar resultado real no MLOG. Em caso de erro, enviar diagnóstico para identificar falha do Flutter.

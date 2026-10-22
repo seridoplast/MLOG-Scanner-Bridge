@@ -261,7 +261,7 @@ public final class FloatingToolsService extends Service {
                 });
                 LinearLayout.LayoutParams slp=new LinearLayout.LayoutParams(-1,-2);
                 slp.topMargin=dp(8);drawer.addView(stop,slp);
-                TextView foot=muted("A partir de 155 ms por repetição. Só avança após confirmação observável no MLOG.",11);
+                TextView foot=muted("A partir de 155 ms entre envios. Modo contínuo sem confirmação visual: confira a quantidade no MLOG.",11);
                 LinearLayout.LayoutParams fl=new LinearLayout.LayoutParams(-1,-2);
                 fl.topMargin=dp(10);drawer.addView(foot,fl);
             }

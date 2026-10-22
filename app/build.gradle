@@ -6,8 +6,8 @@ android {
         applicationId 'br.com.seridoplast.mlogbridge'
         minSdk 26
         targetSdk 35
-        versionCode 37
-        versionName '3.0.0-ferramentas-bipes-automaticos'
+        versionCode 38
+        versionName '3.0.1-bipes-continuos'
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17

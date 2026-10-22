@@ -353,11 +353,11 @@ public final class MainActivity extends Activity {
             toast("Diagnóstico copiado. Não inclui códigos.");
         });
         LinearLayout help=card();help.addView(label("O que testar",17,ink,true));
-        subtitle(help,"v3.0.0: bloqueio de 150 ms na leitura física. Contador N−1 usa Enter assistido e exige confirmação visível a cada repetição. Veja o motivo da interrupção na bolha.");
+        subtitle(help,"v3.0.1: bloqueio de 150 ms na leitura física. Bipes N−1 em modo contínuo: após enviar o Enter virtual, avança sem esperar confirmação visual. Confira no MLOG os registros realmente gravados.");
         button(help,"Abrir MLOG",true,this::openMlog);
     }
     private void about(){
-        title("Sobre","MLOG Scanner Bridge · v3.0.0 beta");
+        title("Sobre","MLOG Scanner Bridge · v3.0.1 beta");
         LinearLayout about=card();about.addView(label("Integração local",17,ink,true));
         subtitle(about,"Criado para o scanner físico CMX e o MLOG. Sem acesso à internet. Os códigos de leitura não são salvos em histórico.");
         space(about,10);

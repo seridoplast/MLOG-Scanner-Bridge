@@ -75,7 +75,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private String autoCountScreen;
     private long autoCountLastActionAt;
     private long autoCountDeadline;
-    private long autoCountSubmittedAt;
+    
     private long totalFinished;
     private int workGeneration;
     private long lastEventProbe;
@@ -191,7 +191,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             prefs().edit().putBoolean("prearm_field",false).apply();
             // Versoes anteriores podiam deixar o teclado oculto pelo controlador.
             restoreKeyboard();
-            status("v3.0.0: bipes N-1 por IME/acessibilidade, menu enxuto; 150 ms.");
+            status("v3.0.1: bipes continuos N-1, Enter do CMX no modo normal; 150 ms.");
         }catch(RuntimeException e){status("Falha ao registrar o broadcast do scanner.");}
     }
 
@@ -300,8 +300,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         ++enterAttempt; // cancelar espera passiva da leitura anterior
         if(!queuedAt.isEmpty())queuedAt.pollFirst();
         boolean more=scanQueue.complete();
-        // Um Enter nao observado nao e sucesso. Nunca continuar o contador
-        // com base apenas num timeout ou apenas no fato de SET_TEXT funcionar.
+        // O primeiro bipe segue confirmado pelo processamento normal do CMX.
+        // Repeticoes posteriores sao opt-in e contam envios, nao registros gravados.
         if(autoCountRunning && autoCountFirst){
             autoCountFirst=false;
             if(AutoRepeatPolicy.firstConfirmed(reason)){
@@ -1531,11 +1531,12 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         if(message!=null)ScanAssistState.report(message);
     }
 
-    /** 155 ms e piso, nunca promessa de confirmacao do Flutter em 155 ms. */
+    /** Intervalo mínimo entre Enters virtuais, não confirmação de gravação pelo Flutter. */
     private void scheduleAutoRepeat(){
         if(!autoCountRunning || autoCountFirst)return;
         if(autoCountDone>=autoCountTarget){
-            ScanAssistState.report("Bipes concluídos: 1 físico + "+(autoCountTarget-1)+" virtuais ("+autoCountDone+"/"+autoCountTarget+").");
+            ScanAssistState.report("Bipes enviados: "+autoCountDone+"/"+autoCountTarget+
+                " (1 físico + "+(autoCountTarget-1)+" virtuais). Confira a quantidade no MLOG.");
             trace("AUTO_COUNT_FINISHED");
             cancelAutoCount(null);
             return;
@@ -1574,6 +1575,22 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 focusOrClick(editor);
                 main.postDelayed(()->pollAutoRepeatEditor(token),45);return;
             }
+            // O Flutter pode conservar o texto da bipagem anterior mesmo apos Enter.
+            // Forcar uma transicao texto antigo -> vazio -> mesmo codigo para a nova
+            // repeticao ter um evento de alteracao real; nunca tocar outro campo.
+            CharSequence previous=editor.getText();
+            if(AutoRepeatPolicy.refreshSameCode(previous,autoCountCode,autoCountDone)){
+                Bundle empty=new Bundle();
+                empty.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,"");
+                boolean cleared=false;
+                try{cleared=editor.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,empty);}
+                catch(RuntimeException ignored){}
+                if(!cleared){
+                    trace("AUTO_COUNT_CLEAR_FAILED_RETRY");
+                    main.postDelayed(()->pollAutoRepeatEditor(token),45);return;
+                }
+                trace("AUTO_COUNT_STALE_FIELD_CLEARED");
+            }
             Bundle bundle=new Bundle();
             bundle.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
                     autoCountCode);
@@ -1608,9 +1625,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         main.postDelayed(()->pollAutoRepeatEditor(token),55);
     }
 
-    /** Fallback para Android 13+: envia Enter somente ao campo editavel
-     *  reconhecido no MLOG. O envio nao prova que o Flutter registrou o item:
-     *  observeAutoCountEnter continua exigindo alteracao visual depois disso.
+    /** Fallback Android 13+: Enter apenas no editor reconhecido do MLOG.
+     *  O envio nao comprova que o Flutter gravou a operacao.
      */
     private boolean sendAutoEnterByAccessibility(){
         if(Build.VERSION.SDK_INT<33)return false;
@@ -1669,36 +1685,14 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 "Abra o teclado nativo do MLOG e selecione o teclado Bridge; tente de novo.");return;
         }
         autoCountLastActionAt=SystemClock.elapsedRealtime();
-        autoCountSubmittedAt=autoCountLastActionAt;
-        trace("AUTO_COUNT_ENTER_SENT");
-        main.postDelayed(()->observeAutoCountEnter(token),60);
-    }
-
-    private void observeAutoCountEnter(int token){
-        if(token!=autoCountToken || !autoCountRunning || autoCountFirst)return;
-        AccessibilityNodeInfo root=mlogRoot();
-        if(root==null){cancelAutoCount("MLOG saiu da tela; contador interrompido.");return;}
-        ScreenInfo info=inspect(root);
-        if(info.login || info.dialog || isBlockingOverlay(root)){
-            cancelAutoCount("Aviso do MLOG: contador interrompido.");return;
-        }
-        AccessibilityNodeInfo editor=safeEditor(info,true);
-        boolean changed=!autoCountScreen.equals(info.screen) || editor==null ||
-             !editor.isVisibleToUser() || editor.getText()==null ||
-             !autoCountCode.equals(editor.getText().toString().trim());
-        if(changed){
-            autoCountDone++;
-            trace("AUTO_COUNT_UI_CONFIRMED_"+autoCountDone);
-            ScanAssistState.report("Bipes: "+autoCountDone+"/"+autoCountTarget+" observados ("+(autoCountDone-1)+" virtuais).");
-            // Em telas de consulta que trocam resultado, a tela pode continuar;
-            // se o layout mudar, abortar na proxima tentativa com seguranca.
-            scheduleAutoRepeat();return;
-        }
-        if(SystemClock.elapsedRealtime()-autoCountSubmittedAt>2500){
-            cancelAutoCount("Enter sem confirmacao visivel; parei em "+autoCountDone+
-                    "/"+autoCountTarget+". Confira o pedido.");return;
-        }
-        main.postDelayed(()->observeAutoCountEnter(token),70);
+        autoCountDone=AutoRepeatPolicy.afterEnterDispatched(autoCountDone,autoCountTarget);
+        // Modo continuo solicitado: nao exigir mudanca visual do Flutter.
+        // Cada repeticao conta somente quando SET_TEXT e o envio de Enter deram
+        // retorno de sucesso. Isso e tentativas ENVIADAS, nao itens gravados.
+        trace("AUTO_COUNT_ENTER_DISPATCHED_"+autoCountDone);
+        ScanAssistState.report("Enviados: "+autoCountDone+"/"+autoCountTarget+
+            " (1 físico + "+(autoCountDone-1)+" virtuais). Confira no MLOG.");
+        scheduleAutoRepeat();
     }
 
     @Override public void onInterrupt(){cancelAutoCount("Acessibilidade interrompida; contador cancelado.");cancelPending();scanQueue.clear();++workGeneration;restoreKeyboard();status("Acessibilidade interrompida.");}
