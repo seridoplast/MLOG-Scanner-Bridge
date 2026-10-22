@@ -39,6 +39,27 @@ public final class BridgeScanInputMethodService extends InputMethodService {
     // O teclado Bridge continua com Enter MANUAL. Nenhum metodo externo
     // consegue acionar Enter automaticamente nesta versao.
 
+    /** Somente para repeticoes solicitadas expressamente na janela flutuante.
+     *  No modo normal o CMX permanece como unico emissor de Enter. */
+    static boolean sendEnterForAutoCount(){
+        BridgeScanInputMethodService ime=active;
+        if(ime==null || !ime.targetMlog)return false;
+        InputConnection connection=ime.getCurrentInputConnection();
+        EditorInfo info=ime.getCurrentInputEditorInfo();
+        if(connection==null || info==null ||
+           !ScanCoordinator.TARGET.equals(info.packageName) ||
+           isPassword(info.inputType))return false;
+        long now=SystemClock.uptimeMillis();
+        boolean down=connection.sendKeyEvent(new KeyEvent(now,now,KeyEvent.ACTION_DOWN,
+                KeyEvent.KEYCODE_ENTER,0));
+        boolean up=connection.sendKeyEvent(new KeyEvent(now,now+1,KeyEvent.ACTION_UP,
+                KeyEvent.KEYCODE_ENTER,0));
+        if(down || up)return true;
+        int action=info.imeOptions & EditorInfo.IME_MASK_ACTION;
+        return action!=EditorInfo.IME_ACTION_UNSPECIFIED &&
+               action!=EditorInfo.IME_ACTION_NONE && connection.performEditorAction(action);
+    }
+
     private static boolean isLoginHint(CharSequence hint){
         if(hint==null)return false;
         String s=hint.toString().toLowerCase(java.util.Locale.ROOT);

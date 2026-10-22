@@ -1,0 +1,18 @@
+package br.com.seridoplast.mlogbridge;
+public final class AutoRepeatPolicyTest {
+    private static int assertions;
+    private static void check(boolean ok,String message){assertions++;if(!ok)throw new AssertionError(message);}
+    public static void main(String[] args){
+        check(AutoRepeatPolicy.MIN_INTERVAL_MS==155L,"155 ms min");
+        check(AutoRepeatPolicy.delayMs(1000,1000)==155,"back-to-back wait");
+        check(AutoRepeatPolicy.delayMs(1000,1154)==1,"1ms still waiting");
+        check(AutoRepeatPolicy.delayMs(1000,1155)==0,"unlocked at 155");
+        check(AutoRepeatPolicy.delayMs(1000,1600)==0,"wait for Flutter beyond min");
+        check(AutoRepeatPolicy.delayMs(1000,900)==155,"clock can't go backwards");
+        check(AutoRepeatPolicy.firstConfirmed("campo_saiu"),"field disappeared");
+        check(AutoRepeatPolicy.firstConfirmed("campo_mudou"),"field changed");
+        check(!AutoRepeatPolicy.firstConfirmed("timeout"),"timeout not success");
+        check(!AutoRepeatPolicy.firstConfirmed("sem_confirmacao_cmx"),"unconfirmed not success");
+        System.out.println("AutoRepeatPolicyTest OK: "+assertions+" checks");
+    }
+}

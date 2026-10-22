@@ -62,6 +62,19 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private final java.util.ArrayDeque<Long> queuedAt=new java.util.ArrayDeque<>();
     // v2.9.7: trava APENAS o novo toque, por 150 ms, sem esperar Enter.
     private final TimedClickGate timedClickGate=new TimedClickGate();
+    // Contador sob comando explicito do operador, nunca ativo por padrao.
+    // Primeira leitura: CMX normal. Repeticoes: codigo e Enter locais (Bridge IME).
+    private boolean autoCountRunning;
+    private boolean autoCountFirst;
+    private int autoCountToken;
+    private int autoCountTarget;
+    private int autoCountDone;
+    private boolean autoCountClicked;
+    private String autoCountCode;
+    private String autoCountScreen;
+    private long autoCountLastActionAt;
+    private long autoCountDeadline;
+    private long autoCountSubmittedAt;
     private long totalFinished;
     private int workGeneration;
     private long lastEventProbe;
@@ -113,6 +126,21 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         receiver=new BroadcastReceiver(){
             @Override public void onReceive(Context context,Intent intent){
                 String code=ScannerProtocol.barcode(intent);
+                if(ScanAssistState.isClean(MlogFocusAccessibilityService.this)){
+                    String cleaned=BarcodeCleaner.clean(code);
+                    if(code!=null && cleaned!=null && !code.equals(cleaned)){
+                        trace("SCAN_CLEANED_REMOVED_CHARS_"+
+                                (code.length()-cleaned.length()));
+                        ScanAssistState.report("Tratador: removidos "+
+                                (code.length()-cleaned.length())+" caracteres invisíveis.");
+                    }
+                    code=cleaned;
+                }
+                // Nao misturar leitura fisica com repeticoes automatizadas.
+                if(autoCountRunning){
+                    trace("AUTO_COUNT_HARDWARE_IGNORED_RUNNING");
+                    return;
+                }
                 if(!ScanCoordinator.isActive(MlogFocusAccessibilityService.this))return;
                 // Logar apenas a ORIGEM do broadcast, nunca o codigo lido.
                 final String action=intent==null?null:intent.getAction();
@@ -155,7 +183,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             prefs().edit().putBoolean("prearm_field",false).apply();
             // Versoes anteriores podiam deixar o teclado oculto pelo controlador.
             restoreKeyboard();
-            status("v2.9.7: um toque a cada 150 ms; sem fila de cliques; Enter pelo CMX.");
+            status("v2.9.8: scanner assistido opcional; cooldown 150 ms.");
         }catch(RuntimeException e){status("Falha ao registrar o broadcast do scanner.");}
     }
 
@@ -220,6 +248,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             trace("SCAN_DISCARDED_BUSY_NO_QUEUE");
             return;
         }
+        if(ScanAssistState.isArmed(this) && !autoCountRunning)armAutoCount(code);
         boolean idle=true;
         if(!scanQueue.offer(code)){
             status("Excesso de leituras simultaneas: confirme a tela antes de prosseguir.");
@@ -263,6 +292,16 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         ++enterAttempt; // cancelar espera passiva da leitura anterior
         if(!queuedAt.isEmpty())queuedAt.pollFirst();
         boolean more=scanQueue.complete();
+        // Um Enter nao observado nao e sucesso. Nunca continuar o contador
+        // com base apenas num timeout ou apenas no fato de SET_TEXT funcionar.
+        if(autoCountRunning && autoCountFirst){
+            autoCountFirst=false;
+            if(AutoRepeatPolicy.firstConfirmed(reason)){
+                autoCountDone=1;
+                ScanAssistState.report("Contador: 1/"+autoCountTarget+" confirmado.");
+                scheduleAutoRepeat();
+            }else cancelAutoCount("Primeira leitura nao confirmada ("+reason+"). Contador parado.");
+        }
         ++workGeneration; // invalida timeout antigo
         if(more){
             // Breve intervalo para o Flutter recompor a arvore apos Enter.
@@ -476,6 +515,10 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             return false;
         }
         trace("PHYSICAL_TRIGGER_SEEN_"+code);
+        if(autoCountRunning){
+            trace("AUTO_COUNT_TRIGGER_IGNORED");
+            return false; // CMX hardware permanece livre; Bridge nao toca MLOG
+        }
         // A media das confirmacoes visiveis na v2.6 foi 576 ms (12 amostras).
         // Cooldown experimental de 150 ms: nao esperamos Enter.
         if(!timedClickGate.admitTrigger(now)){
@@ -975,7 +1018,12 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 ("atividades".equals(info.screen) || "separacao".equals(info.screen)) &&
                 existing.toString().trim().equals(lastEnteredByBridge) &&
                 info.screen.equals(lastEnteredScreen);
-            if(!newSearch && !previouslyInserted){
+            // Se o wedge digitou a versao com artefatos, podemos substitui-la
+            // SOMENTE quando sua limpeza resulta exatamente no mesmo codigo
+            // recebido pelo broadcast. Nao alterar textos manuais diferentes.
+            boolean wedgeEquivalent=ScanAssistState.isClean(this) &&
+                code.equals(BarcodeCleaner.clean(existing.toString()));
+            if(!newSearch && !previouslyInserted && !wedgeEquivalent){
                 status("Campo ja preenchido manualmente: nao sobrescrevi.");finishQueuedScan("campo_ocupado");return;
             }
             // A proxima ACTION_SET_TEXT substitui o codigo anterior.
@@ -1407,8 +1455,186 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         if(Math.abs(a.rect.centerY()-b.rect.centerY())>18*density)return null;
         return b.node;
     }
-    @Override public void onInterrupt(){cancelPending();scanQueue.clear();++workGeneration;restoreKeyboard();status("Acessibilidade interrompida.");}
+    /** Interface do contador: apenas um bipe original; os seguintes sao
+     *  simulacoes no campo do MLOG, e NAO comandos enviados ao CMX. */
+    private void armAutoCount(String code){
+        if(code==null || code.isEmpty())return;
+        android.content.SharedPreferences p=prefs();
+        int quantity=ScanAssistState.clamp(p.getInt(ScanAssistState.COUNT,1));
+        p.edit().putBoolean(ScanAssistState.ARMED,false).apply();
+        if(quantity<=1){ScanAssistState.report("Quantidade 1: leitura normal pelo CMX.");return;}
+        String selected=android.provider.Settings.Secure.getString(
+                getContentResolver(),android.provider.Settings.Secure.DEFAULT_INPUT_METHOD);
+        if(selected==null || !selected.startsWith(getPackageName()+"/")){
+            ScanAssistState.report("Selecione o teclado MLOG Bridge para repetir com Enter.");
+            trace("AUTO_COUNT_REJECTED_IME_NOT_SELECTED");return;
+        }
+        AccessibilityNodeInfo root=mlogRoot();
+        if(root==null || isBlockingOverlay(root)){
+            ScanAssistState.report("Contador nao iniciado: volte a uma tela de leitura.");return;
+        }
+        ScreenInfo info=inspect(root);
+        if(info.login || info.dialog || "desconhecida".equals(info.screen)){
+            ScanAssistState.report("Contador exige tela de leitura reconhecida.");return;
+        }
+        ++autoCountToken;
+        autoCountRunning=true;
+        autoCountFirst=true;
+        autoCountCode=code;
+        autoCountScreen=info.screen;
+        autoCountTarget=quantity;
+        autoCountDone=0;
+        autoCountClicked=false;
+        autoCountLastActionAt=SystemClock.elapsedRealtime();
+        trace("AUTO_COUNT_ARMED_TOTAL_"+quantity);
+        ScanAssistState.report("Contador: aguardando Enter do primeiro bipe (1/"+quantity+").");
+    }
+
+    /** Botao cancelar acessivel a partir da janela flutuante. */
+    void cancelAutoCount(String message){
+        boolean wasRunning=autoCountRunning;
+        ++autoCountToken;
+        autoCountRunning=false;
+        autoCountFirst=false;
+        autoCountCode=null;
+        autoCountScreen=null;
+        autoCountClicked=false;
+        prefs().edit().putBoolean(ScanAssistState.ARMED,false).apply();
+        if(wasRunning)trace("AUTO_COUNT_CANCELLED_AT_"+autoCountDone);
+        if(message!=null)ScanAssistState.report(message);
+    }
+
+    /** 155 ms e piso, nunca promessa de confirmacao do Flutter em 155 ms. */
+    private void scheduleAutoRepeat(){
+        if(!autoCountRunning || autoCountFirst)return;
+        if(autoCountDone>=autoCountTarget){
+            ScanAssistState.report("Contador concluido: "+autoCountDone+"/"+autoCountTarget+" confirmados.");
+            trace("AUTO_COUNT_FINISHED");
+            cancelAutoCount(null);
+            return;
+        }
+        final int token=autoCountToken;
+        long delay=AutoRepeatPolicy.delayMs(autoCountLastActionAt,
+                SystemClock.elapsedRealtime());
+        main.postDelayed(()->beginAutoRepeat(token),delay);
+    }
+
+    private void beginAutoRepeat(int token){
+        if(token!=autoCountToken || !autoCountRunning || autoCountFirst)return;
+        autoCountClicked=false;
+        autoCountDeadline=SystemClock.elapsedRealtime()+1600;
+        trace("AUTO_COUNT_NEXT_"+(autoCountDone+1));
+        pollAutoRepeatEditor(token);
+    }
+
+    private void pollAutoRepeatEditor(int token){
+        if(token!=autoCountToken || !autoCountRunning || autoCountFirst)return;
+        if(SystemClock.elapsedRealtime()>autoCountDeadline){
+            cancelAutoCount("Nao foi possivel abrir campo para item "+(autoCountDone+1)+". Parei sem reenviar.");return;
+        }
+        AccessibilityNodeInfo root=mlogRoot();
+        if(root==null || isBlockingOverlay(root)){
+            cancelAutoCount("MLOG saiu da tela ou mostrou aviso; contador interrompido.");return;
+        }
+        ScreenInfo info=inspect(root);
+        if(info.login || info.dialog || !autoCountScreen.equals(info.screen)){
+            cancelAutoCount("Tela mudou durante o contador; interrompido.");return;
+        }
+        AccessibilityNodeInfo editor=safeEditor(info,true);
+        if(editor!=null && nativeEntryReady(info,editor) &&
+           editor.isEditable() && !editor.isPassword() && !blockedLabel(tag(editor))){
+            if(!editor.isFocused()){
+                focusOrClick(editor);
+                main.postDelayed(()->pollAutoRepeatEditor(token),45);return;
+            }
+            Bundle bundle=new Bundle();
+            bundle.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                    autoCountCode);
+            boolean inserted=false;
+            try{inserted=editor.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,bundle);}
+            catch(RuntimeException ignored){}
+            if(!inserted){
+                main.postDelayed(()->pollAutoRepeatEditor(token),45);return;
+            }
+            trace("AUTO_COUNT_SET_TEXT_OK");
+            main.postDelayed(()->submitAutoRepeatEnter(token),50);
+            return;
+        }
+        if(!autoCountClicked){
+            AccessibilityNodeInfo button="atividades".equals(info.screen)?
+                activityKeyboard(info):findKeyboardTarget(info);
+            if(button!=null && button.isEnabled() && button.isVisibleToUser()){
+                AccessibilityNodeInfo target=clickable(button);
+                Rect bounds=new Rect();target.getBoundsInScreen(bounds);
+                if(!bounds.isEmpty() && !isPointCoveredByIme(bounds.centerX(),bounds.centerY())){
+                    try{
+                        if(target.performAction(AccessibilityNodeInfo.ACTION_CLICK)){
+                            autoCountClicked=true;
+                            markNativeButton(info.screen,"contador_assistido");
+                            trace("AUTO_COUNT_NATIVE_CLICK_OK");
+                        }
+                    }catch(RuntimeException ignored){}
+                }
+            }
+        }
+        // Nunca repetir o clique se o Flutter estiver demorando para expor o editor.
+        main.postDelayed(()->pollAutoRepeatEditor(token),55);
+    }
+
+    private void submitAutoRepeatEnter(int token){
+        if(token!=autoCountToken || !autoCountRunning || autoCountFirst)return;
+        AccessibilityNodeInfo root=mlogRoot();
+        if(root==null || isBlockingOverlay(root)){
+            cancelAutoCount("Janela mudou antes do Enter; contador interrompido.");return;
+        }
+        ScreenInfo info=inspect(root);
+        if(!autoCountScreen.equals(info.screen)){
+            cancelAutoCount("Tela mudou antes do Enter; contador interrompido.");return;
+        }
+        AccessibilityNodeInfo editor=safeEditor(info,true);
+        if(editor==null || !editor.isFocused() || editor.isPassword() ||
+           editor.getText()==null || !autoCountCode.equals(editor.getText().toString().trim())){
+            cancelAutoCount("Nao confirmei que o codigo estava no campo. Parei sem Enter.");return;
+        }
+        if(!BridgeScanInputMethodService.sendEnterForAutoCount()){
+            cancelAutoCount("Teclado Bridge nao conseguiu enviar Enter; contador interrompido.");return;
+        }
+        autoCountLastActionAt=SystemClock.elapsedRealtime();
+        autoCountSubmittedAt=autoCountLastActionAt;
+        trace("AUTO_COUNT_ENTER_SENT");
+        main.postDelayed(()->observeAutoCountEnter(token),60);
+    }
+
+    private void observeAutoCountEnter(int token){
+        if(token!=autoCountToken || !autoCountRunning || autoCountFirst)return;
+        AccessibilityNodeInfo root=mlogRoot();
+        if(root==null){cancelAutoCount("MLOG saiu da tela; contador interrompido.");return;}
+        ScreenInfo info=inspect(root);
+        if(info.login || info.dialog || isBlockingOverlay(root)){
+            cancelAutoCount("Aviso do MLOG: contador interrompido.");return;
+        }
+        AccessibilityNodeInfo editor=safeEditor(info,true);
+        boolean changed=!autoCountScreen.equals(info.screen) || editor==null ||
+             !editor.isVisibleToUser() || editor.getText()==null ||
+             !autoCountCode.equals(editor.getText().toString().trim());
+        if(changed){
+            autoCountDone++;
+            trace("AUTO_COUNT_UI_CONFIRMED_"+autoCountDone);
+            ScanAssistState.report("Contador: "+autoCountDone+"/"+autoCountTarget+" confirmados.");
+            // Em telas de consulta que trocam resultado, a tela pode continuar;
+            // se o layout mudar, abortar na proxima tentativa com seguranca.
+            scheduleAutoRepeat();return;
+        }
+        if(SystemClock.elapsedRealtime()-autoCountSubmittedAt>2000){
+            cancelAutoCount("Enter sem confirmacao visivel; parei em "+autoCountDone+
+                    "/"+autoCountTarget+". Confira o pedido.");return;
+        }
+        main.postDelayed(()->observeAutoCountEnter(token),70);
+    }
+
+    @Override public void onInterrupt(){cancelAutoCount("Acessibilidade interrompida; contador cancelado.");cancelPending();scanQueue.clear();++workGeneration;restoreKeyboard();status("Acessibilidade interrompida.");}
     @Override public void onDestroy(){
+        cancelAutoCount("Acessibilidade encerrada; contador cancelado.");
         if(receiverRegistered)try{unregisterReceiver(receiver);}catch(RuntimeException ignored){}
         main.removeCallbacksAndMessages(null);
         cancelPending();

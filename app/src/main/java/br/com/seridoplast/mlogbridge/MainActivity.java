@@ -246,6 +246,17 @@ public final class MainActivity extends Activity {
         service.addView(label("Serviço",17,ink,true));
         serviceState=label("Verificando acessibilidade...",14,muted,false);
         space(service,8);service.addView(serviceState);
+        LinearLayout tools=card();
+        tools.addView(label("Ferramentas flutuantes",17,ink,true));
+        subtitle(tools,"Tratador de caracteres invisíveis e contador por um único bipe. Ambos desligados inicialmente.");
+        button(tools,"Ativar / abrir botão flutuante",true,this::openFloatingTools);
+        button(tools,"Desativar botão flutuante",false,()->{
+            stopService(new Intent(this,FloatingToolsService.class));
+            prefs.edit().putBoolean(ScanAssistState.CLEAN,false)
+                .putBoolean(ScanAssistState.BATCH,false)
+                .putBoolean(ScanAssistState.ARMED,false).apply();
+            toast("Ferramentas desligadas.");
+        });
         button(service,"Abrir MLOG",true,this::openMlog);
         button(service,"Acessibilidade do Android",false,()->startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
     }
@@ -289,7 +300,7 @@ public final class MainActivity extends Activity {
         }
         appearance.addView(bar,bp);
         LinearLayout cmx=card();cmx.addView(label("CMX Scanner",17,ink,true));
-        subtitle(cmx,"O Bridge agora apenas recebe leituras. Configure formatos, modo de saida e Enter no aplicativo CMX original.");
+        subtitle(cmx,"No modo normal, CMX continua responsável pelo Enter. No contador, as repetições são inseridas e confirmadas pelo teclado Bridge.");
     }
     private void diagnostic(){
         title("Diagnóstico","Se uma tela nao funcionar, copie este resultado.");
@@ -306,7 +317,7 @@ public final class MainActivity extends Activity {
         button(help,"Abrir MLOG",true,this::openMlog);
     }
     private void about(){
-        title("Sobre","MLOG Scanner Bridge · v2.9.7 beta");
+        title("Sobre","MLOG Scanner Bridge · v2.9.8 beta");
         LinearLayout about=card();about.addView(label("Integração local",17,ink,true));
         subtitle(about,"Criado para o scanner físico CMX e o MLOG. Sem acesso à internet. Os códigos de leitura não são salvos em histórico.");
         space(about,10);
@@ -329,6 +340,17 @@ public final class MainActivity extends Activity {
         });
         dest.addView(b);
     }
+    private void openFloatingTools(){
+        if(android.os.Build.VERSION.SDK_INT>=23 && !Settings.canDrawOverlays(this)){
+            toast("Autorize Exibir sobre outros apps e volte para ativar a bolha.");
+            startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:"+getPackageName())));
+            return;
+        }
+        startService(new Intent(this,FloatingToolsService.class));
+        toast("Bolha SP ativada; toque para expandir.");
+    }
+
     private void openMlog(){
         Intent i=getPackageManager().getLaunchIntentForPackage(ScanCoordinator.TARGET);
         if(i==null){toast("MLOG não encontrado.");return;}
