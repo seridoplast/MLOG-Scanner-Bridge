@@ -1,38 +1,30 @@
-# MLOG Scanner Bridge v3.0.1 — Bipes automáticos contínuos
+# MLOG Scanner Bridge v3.0.2 — Diagnóstico e sincronização
 
-Base: v3.0.0. Mantidos: botão flutuante, gaveta de ajustes, interruptores verde/vermelho, tratador de código, identificação de formatos, teclado compacto, 150 ms no clique normal, Enter do CMX no primeiro bipe físico.
+Base: v3.0.1. Preservados: 150 ms de bloqueio do gatilho físico, leitura normal com Enter do CMX, tratador de códigos, formato do CMX, painel com interruptores e gaveta N−1.
 
-## Ajuste solicitado
+## Evidência do diagnóstico 2026-10-22 20:06:27
 
-Na v3.0.0 o contador aguardava por até 2500 ms que o Flutter limpasse/alterasse o campo após **cada Enter virtual**. Se a atualização visual não aparecesse, encerrava no item 2/N.
+O log do Bridge registrou `AUTO_COUNT_ENTER_DISPATCHED_2` até `_10` e `AUTO_COUNT_FINISHED`; isso comprova chamadas de envio, mas não a execução no MLOG. O vídeo mostra atualização de unidades `SEPARADO` em alguns momentos, evidenciando processamento parcial/assíncrono. O histórico não comprova que o pedido gravou as dez unidades. O teclado aparecia/ocultava durante o lote.
 
-Nesta versão, depois de cada inserção do código, o Bridge confirma que o campo contém o código, envia UM Enter por uma das conexões já existentes e **avança para a próxima repetição sem exigir atualização visual**. O intervalo mínimo entre Enters virtuais permanece 155 ms. Não há fila de gatilhos nem repetição de Enter em falhas.
+## Correções
 
-Se o Flutter mantiver o código no campo após Enter, o Bridge tenta limpar o campo **antes de reinserir o mesmo código** para gerar uma alteração real e evitar que a repetição seguinte seja ignorada por texto idêntico.
+- Repetições: passa a preferir `InputConnection.performEditorAction(imeAction)` quando o editor do MLOG oferecer uma ação válida; fallback para par KEYCODE_ENTER. Mantém 1 tentativa por repetição; não reenvia Enter às cegas.
+- Na tela `Separação`, o Bridge lê o total `PC/UN SEPARADO` exibido no cartão do mesmo produto e só passa à próxima repetição quando a contagem subir exatamente uma unidade. Limiar de observação: 1.800 ms. Caso a contagem não mude, interrompe e informa quantos Enters foram enviados e quantos incrementos foram observados. Troca antecipada de produto ou salto maior que 1 interrompe para conferir o pedido.
+- Nas outras telas, onde não existe o contador visível `SEPARADO`, as tentativas usam cadência mínima de 650 ms e permanecem explicitamente marcadas como **sem confirmação**. O Bridge não tem acesso ao backend do MLOG e não consegue comprovar gravação.
+- Engrenagem: memoriza coordenadas da bolha em preferências ao arrastar e restaura ao recolher o painel, reabri-lo e reiniciar o serviço. A posição do painel expandido nunca substitui a posição armazenada da bolha.
+- Primeira execução: apresenta diálogo guiado com acessibilidade, teclado Bridge habilitado/selecionado e permissão de sobreposição. Mostra um aviso vermelho na tela inicial até os três requisitos estarem autorizados. O Android precisa receber a autorização do usuário; nenhum serviço é ativado silenciosamente.
 
-**Critério de parada:** tela MLOG ausente, diálogo/bloqueio ou navegação, editor sem foco ou texto divergente, falha persistente de abertura/inserção de código, ausência de interface disponível para enviar Enter, cancelamento manual ou o total de bipes enviado.
+## Teste recomendado
 
-**Aviso de integridade:** a mensagem 'N/N enviados' significa que o Bridge enviou N tentativas (1 física e N-1 virtuais), **não que o MLOG gravou N itens**. Mesmo uma chamada bem-sucedida ao editor/Enter não garante gravação pelo Flutter ou servidor. Use primeiro uma sequência de 3, depois 10 em um pedido de teste e confira a quantidade efetiva. Não use esse modo sem conferência em operações reais.
+1. Fazer backup/conferir pedido de teste. Usar 3 no contador (1 físico + 2 virtuais).
+2. Verificar se o número `SEPARADO` aumenta três vezes no produto correto.
+3. Se o lote parar, copiar o diagnóstico; eventos `AUTO_COUNT_SEPARADO_CONFIRMED_N`, `AUTO_COUNT_ENTER_UNCONFIRMED_N`, `AUTO_COUNT_ENTER_BRIDGE_IME` e `AUTO_ENTER_METHOD_EDITOR_ACTION_*` ajudarão a identificar a falha.
+4. Validar novamente o total gravado no MLOG. Atualização visual não prova persistência no servidor.
 
-## Atualização pelo CMD (remove ZIP somente após push com sucesso)
+## Atualização
 
-```bat
-cd /d "%USERPROFILE%\Downloads\MLOG-Scanner-Bridge"
-powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v301_Bipes_Continuos.zip') -DestinationPath . -Force"
-git add -A
-git commit -m "Bridge v301 bipes automaticos continuos sem bloqueio visual"
-git push origin main && del /q "%USERPROFILE%\Downloads\MLOG_Scanner_Bridge_v301_Bipes_Continuos.zip"
-```
+Veja `ATUALIZAR_PELO_CMD.txt` (inclui remoção automática do ZIP após push confirmado).
 
-GitHub Actions: artefato **MLOG-Scanner-Bridge-v301-APK**.
+## Compilação
 
-## ADB
-
-```bat
-"%USERPROFILE%\Downloads\platform-tools\adb.exe" devices
-"%USERPROFILE%\Downloads\platform-tools\adb.exe" install -r "%USERPROFILE%\Downloads\app-debug.apk"
-```
-
-## Testes e limitações
-
-Os testes locais validam a política de 155 ms, o cálculo de N−1 e a lógica de progressão sem confirmação visual. Não há um Android SDK completo nem coletor CMX conectado neste ambiente para compilação e ensaio de integração com Flutter.
+O Android SDK/Gradle não está disponível neste ambiente. Foram executados testes Java locais das políticas, identificação de incremento e controle de fila; a compilação final e a integração com Flutter exigem GitHub Actions e o coletor.

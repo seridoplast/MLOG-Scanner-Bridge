@@ -49,15 +49,21 @@ public final class BridgeScanInputMethodService extends InputMethodService {
         if(connection==null || info==null ||
            !ScanCoordinator.TARGET.equals(info.packageName) ||
            isPassword(info.inputType))return false;
+        // Flutter TextField costuma confirmar em performEditorAction.
+        // sendKeyEvent() retornar true não garante que o Flutter processou.
+        int action=info.imeOptions & EditorInfo.IME_MASK_ACTION;
+        if(action!=EditorInfo.IME_ACTION_UNSPECIFIED &&
+           action!=EditorInfo.IME_ACTION_NONE){
+            boolean handled=connection.performEditorAction(action);
+            if(handled){android.util.Log.i("MLOGBridge","AUTO_ENTER_METHOD_EDITOR_ACTION_"+action);return true;}
+        }
         long now=SystemClock.uptimeMillis();
         boolean down=connection.sendKeyEvent(new KeyEvent(now,now,KeyEvent.ACTION_DOWN,
                 KeyEvent.KEYCODE_ENTER,0));
         boolean up=connection.sendKeyEvent(new KeyEvent(now,now+1,KeyEvent.ACTION_UP,
                 KeyEvent.KEYCODE_ENTER,0));
-        if(down || up)return true;
-        int action=info.imeOptions & EditorInfo.IME_MASK_ACTION;
-        return action!=EditorInfo.IME_ACTION_UNSPECIFIED &&
-               action!=EditorInfo.IME_ACTION_NONE && connection.performEditorAction(action);
+        android.util.Log.i("MLOGBridge",(down && up)?"AUTO_ENTER_METHOD_KEYPAIR_SENT":"AUTO_ENTER_METHOD_KEYPAIR_FAILED");
+        return down && up;
     }
 
     private static boolean isLoginHint(CharSequence hint){

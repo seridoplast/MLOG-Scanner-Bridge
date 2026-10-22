@@ -75,6 +75,13 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private String autoCountScreen;
     private long autoCountLastActionAt;
     private long autoCountDeadline;
+    // v3.0.2: distinguir Enters enviados de incrementos realmente visíveis no MLOG.
+    private SeparatedQuantityProbe.Result autoCountObservedProduct;
+    private int autoCountUiVerified;
+    private int autoCountBeforeEnter;
+    private long autoCountEnterAt;
+    private int autoCountUnverified;
+
     
     private long totalFinished;
     private int workGeneration;
@@ -191,7 +198,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             prefs().edit().putBoolean("prearm_field",false).apply();
             // Versoes anteriores podiam deixar o teclado oculto pelo controlador.
             restoreKeyboard();
-            status("v3.0.1: bipes continuos N-1, Enter do CMX no modo normal; 150 ms.");
+            status("v3.0.2: N-1 com confirmação por SEPARADO; modo normal 150 ms.");
         }catch(RuntimeException e){status("Falha ao registrar o broadcast do scanner.");}
     }
 
@@ -306,8 +313,16 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             autoCountFirst=false;
             if(AutoRepeatPolicy.firstConfirmed(reason)){
                 autoCountDone=1;
-                ScanAssistState.report("Primeiro bipe confirmado; iniciando "+(autoCountTarget-1)+" bipes virtuais.");
-                scheduleAutoRepeat();
+                // campo_mudou confirma a transição do editor, mas não a gravação.
+                // Quando o cartão 'SEPARADO' estiver disponível, exija incremento.
+                if(autoCountObservedProduct!=null){
+                    trace("AUTO_FIRST_WAITING_SEPARADO");
+                    awaitFirstSeparated(autoCountToken,SystemClock.elapsedRealtime());
+                }else{
+                    ScanAssistState.report("Primeiro bipe tratado pelo MLOG; contador visual indisponível. " +
+                        "Repetições sem confirmação de quantidade.");
+                    scheduleAutoRepeat();
+                }
             }else cancelAutoCount("O MLOG nao confirmou visualmente a 1ª leitura ("+reason+"). " +
                 (autoCountFirstEnterAt>0?"Enter fisico observado, mas sem atualizacao do campo. ":"") +
                 "Confira o MLOG antes de tentar novamente.");
@@ -1477,6 +1492,20 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     }
     /** Interface do contador: apenas um bipe original; os seguintes sao
      *  simulacoes no campo do MLOG, e NAO comandos enviados ao CMX. */
+    /** Extrai só o contador visual do cartão de separação, nunca o campo editável. */
+    private SeparatedQuantityProbe.Result separatedOnScreen(){
+        AccessibilityNodeInfo root=mlogRoot();
+        if(root==null)return null;
+        java.util.ArrayList<AccessibilityNodeInfo> nodes=new java.util.ArrayList<>();
+        visit(root,nodes,0);
+        for(AccessibilityNodeInfo node:nodes){
+            if(node==null || !node.isVisibleToUser())continue;
+            SeparatedQuantityProbe.Result result=SeparatedQuantityProbe.parse(node.getContentDescription());
+            if(result!=null)return result;
+        }
+        return null;
+    }
+
     private void armAutoCount(String code){
         if(code==null || code.isEmpty())return;
         android.content.SharedPreferences p=prefs();
@@ -1503,6 +1532,10 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         autoCountScreen=info.screen;
         autoCountTarget=quantity;
         autoCountDone=0;
+        autoCountUiVerified=0;
+        autoCountUnverified=0;
+        autoCountObservedProduct=separatedOnScreen();
+        autoCountBeforeEnter=autoCountObservedProduct==null?-1:autoCountObservedProduct.count;
         autoCountClicked=false;
         autoCountLastActionAt=SystemClock.elapsedRealtime();
         trace("AUTO_COUNT_ARMED_TOTAL_"+quantity);
@@ -1525,18 +1558,49 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         autoCountFirstEnterAt=0L;
         autoCountCode=null;
         autoCountScreen=null;
+        autoCountObservedProduct=null;
         autoCountClicked=false;
         prefs().edit().putBoolean(ScanAssistState.ARMED,false).apply();
         if(wasRunning)trace("AUTO_COUNT_CANCELLED_AT_"+autoCountDone);
         if(message!=null)ScanAssistState.report(message);
     }
 
+    /** Evita considerar a primeira digitação como produto confirmado antes
+     * de o cartão 'SEPARADO' realmente mudar. */
+    private void awaitFirstSeparated(int token,long startedAt){
+        if(token!=autoCountToken || !autoCountRunning || autoCountFirst)return;
+        SeparatedQuantityProbe.Result now=separatedOnScreen();
+        if(now!=null && autoCountObservedProduct!=null){
+            if(!autoCountObservedProduct.sameProduct(now)){
+                cancelAutoCount("Produto mudou antes da confirmação do primeiro bipe. Confira o pedido.");return;
+            }
+            int delta=now.count-autoCountObservedProduct.count;
+            if(delta==1){
+                autoCountUiVerified=1;
+                autoCountObservedProduct=now;
+                trace("AUTO_FIRST_SEPARADO_CONFIRMED");
+                ScanAssistState.report("Primeiro bipe visto em SEPARADO; iniciando "+
+                    (autoCountTarget-1)+" repetições.");
+                scheduleAutoRepeat();return;
+            }
+            if(delta>1){
+                cancelAutoCount("SEPARADO subiu mais de 1 unidade no primeiro bipe. Confira o pedido.");return;
+            }
+        }
+        if(SystemClock.elapsedRealtime()-startedAt>=1800L){
+            trace("AUTO_FIRST_SEPARADO_NOT_CONFIRMED");
+            cancelAutoCount("Campo reagiu ao primeiro bipe, mas SEPARADO não aumentou em 1,8 s. " +
+                "Confira o MLOG; não iniciei as repetições.");return;
+        }
+        main.postDelayed(()->awaitFirstSeparated(token,startedAt),90);
+    }
+
     /** Intervalo mínimo entre Enters virtuais, não confirmação de gravação pelo Flutter. */
     private void scheduleAutoRepeat(){
         if(!autoCountRunning || autoCountFirst)return;
         if(autoCountDone>=autoCountTarget){
-            ScanAssistState.report("Bipes enviados: "+autoCountDone+"/"+autoCountTarget+
-                " (1 físico + "+(autoCountTarget-1)+" virtuais). Confira a quantidade no MLOG.");
+            ScanAssistState.report("Lote finalizado: "+autoCountDone+" envios, "+
+                autoCountUiVerified+" com resposta visual observada. Confira o pedido no MLOG.");
             trace("AUTO_COUNT_FINISHED");
             cancelAutoCount(null);
             return;
@@ -1667,8 +1731,12 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
            editor.getText()==null || !autoCountCode.equals(editor.getText().toString().trim())){
             cancelAutoCount("Nao confirmei que o codigo estava no campo. Parei sem Enter.");return;
         }
-        // Preferir teclado Bridge. Se ele nao estiver conectado ao editor,
-        // usar a conexao IME da acessibilidade (API 33+, Android 14).
+        // Capturar o contador ANTES do Enter para verificar se o Flutter
+        // realmente incrementou 'SEPARADO' depois da operação.
+        SeparatedQuantityProbe.Result before=separatedOnScreen();
+        autoCountBeforeEnter=(before!=null && autoCountObservedProduct!=null &&
+            autoCountObservedProduct.sameProduct(before))?before.count:-1;
+        // Preferir ação de editor (Flutter onSubmitted) no teclado Bridge.
         boolean sent=BridgeScanInputMethodService.sendEnterForAutoCount();
         if(sent){trace("AUTO_COUNT_ENTER_BRIDGE_IME");}
         else sent=sendAutoEnterByAccessibility();
@@ -1685,13 +1753,68 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 "Abra o teclado nativo do MLOG e selecione o teclado Bridge; tente de novo.");return;
         }
         autoCountLastActionAt=SystemClock.elapsedRealtime();
+        autoCountEnterAt=autoCountLastActionAt;
         autoCountDone=AutoRepeatPolicy.afterEnterDispatched(autoCountDone,autoCountTarget);
-        // Modo continuo solicitado: nao exigir mudanca visual do Flutter.
-        // Cada repeticao conta somente quando SET_TEXT e o envio de Enter deram
-        // retorno de sucesso. Isso e tentativas ENVIADAS, nao itens gravados.
         trace("AUTO_COUNT_ENTER_DISPATCHED_"+autoCountDone);
-        ScanAssistState.report("Enviados: "+autoCountDone+"/"+autoCountTarget+
-            " (1 físico + "+(autoCountDone-1)+" virtuais). Confira no MLOG.");
+        ScanAssistState.report("Enters enviados: "+autoCountDone+"/"+autoCountTarget+
+            "; confirmações observadas: "+autoCountUiVerified+". Aguardando MLOG.");
+        // O retorno sendKeyEvent=true NAO comprova processamento pelo Flutter.
+        // Esperar a contagem SEPARADO aumentar, sem re-enviar o mesmo Enter.
+        main.postDelayed(()->observeAutoRepeatResult(token),90);
+    }
+
+    /** Confirmação por contador de separação quando disponível.
+     * Se não houver contador exposto, aplicar uma cadência conservadora,
+     * mas não classificar a leitura como confirmada.
+     */
+    private void observeAutoRepeatResult(int token){
+        if(token!=autoCountToken || !autoCountRunning || autoCountFirst)return;
+        SeparatedQuantityProbe.Result now=separatedOnScreen();
+        if(autoCountBeforeEnter>=0 && autoCountObservedProduct!=null){
+            if(now!=null && autoCountObservedProduct.sameProduct(now)){
+                if(now.count>autoCountBeforeEnter){
+                    int delta=now.count-autoCountBeforeEnter;
+                    if(delta>1){
+                        trace("AUTO_COUNT_UNEXPECTED_UI_JUMP_"+delta);
+                        cancelAutoCount("MLOG aumentou "+delta+" unidades de uma vez. " +
+                            "Parei para evitar quantidade duplicada. Confira o pedido.");return;
+                    }
+                    autoCountUiVerified++;
+                    autoCountObservedProduct=now;
+                    trace("AUTO_COUNT_SEPARADO_CONFIRMED_"+autoCountUiVerified);
+                    ScanAssistState.report("Confirmados na tela: "+autoCountUiVerified+
+                        "/"+autoCountTarget+"; Enters enviados: "+autoCountDone+".");
+                    scheduleAutoRepeat();return;
+                }
+            }else if(now!=null && !autoCountObservedProduct.sameProduct(now)){
+                // O MLOG pode avançar para o próximo item quando a última
+                // unidade foi efetivamente recebida.
+                if(autoCountDone>=autoCountTarget){
+                    autoCountUiVerified++;
+                    trace("AUTO_COUNT_PRODUCT_ADVANCED_FINAL");
+                    scheduleAutoRepeat();
+                }else cancelAutoCount("MLOG mudou de produto antes de completar o lote. " +
+                    "Confira quantos registros foram lançados.");
+                return;
+            }
+            if(SystemClock.elapsedRealtime()-autoCountEnterAt<1800L){
+                main.postDelayed(()->observeAutoRepeatResult(token),90);return;
+            }
+            trace("AUTO_COUNT_ENTER_UNCONFIRMED_"+autoCountDone);
+            cancelAutoCount("Enter enviado no bipe "+autoCountDone+
+                ", mas o contador SEPARADO não aumentou em 1,8 s. " +
+                "Não somei esse bipe como confirmado. Confira o MLOG.");
+            return;
+        }
+        // Consultas/atividades podem não expor quantidade separada.
+        // Nelas mantemos tentativas com cadência maior e aviso explícito.
+        if(SystemClock.elapsedRealtime()-autoCountEnterAt<650L){
+            main.postDelayed(()->observeAutoRepeatResult(token),100);return;
+        }
+        autoCountUnverified++;
+        trace("AUTO_COUNT_NO_VISIBLE_METER_"+autoCountDone);
+        ScanAssistState.report("Enviados "+autoCountDone+"/"+autoCountTarget+
+            "; sem contador visível nesta tela ("+autoCountUnverified+" sem confirmação).");
         scheduleAutoRepeat();
     }
 

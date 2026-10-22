@@ -1,6 +1,7 @@
 package br.com.seridoplast.mlogbridge;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -25,6 +26,9 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.view.inputmethod.InputMethodManager;
+import android.view.inputmethod.InputMethodInfo;
+import java.util.List;
 
 
 /**
@@ -39,6 +43,8 @@ public final class MainActivity extends Activity {
     private int bg, card, line, ink, muted, inverse, inkSurface;
     private LinearLayout root, content, footer;
     private TextView preview, lastStatus, barcodeFormatStatus, barcodeArtifactStatus, barcodeFieldsStatus, serviceState;
+    private LinearLayout setupWarningCard;
+    private TextView setupWarningLabel;
     private boolean receiving;
     private int scanCount;
     private String lastSample;
@@ -97,6 +103,7 @@ public final class MainActivity extends Activity {
                 boolean active=MlogFocusAccessibilityService.current()!=null;
                 serviceState.setText(active?"Acessibilidade ativa":"Acessibilidade desativada");
             }
+            refreshSetupWarning();
             if(page==2 && lastStatus!=null){
                 lastStatus.setText(prefs.getString("last_status","Nenhum diagnostico ainda."));
             }
@@ -240,7 +247,7 @@ public final class MainActivity extends Activity {
         }
         root.addView(footer);
         preview=null;lastStatus=null;barcodeFormatStatus=null;barcodeArtifactStatus=null;
-        barcodeFieldsStatus=null;serviceState=null;
+        barcodeFieldsStatus=null;serviceState=null;setupWarningCard=null;setupWarningLabel=null;
         if(page==0)home();else if(page==1)settings();else if(page==2)diagnostic();else about();
     }
     private void show(int p){page=p;displayPage();}
@@ -252,7 +259,91 @@ public final class MainActivity extends Activity {
             content.addView(e,lp);
         }else space(content,22);
     }
+    // Android sempre exige que o operador autorize acessibilidade, IME e overlay.
+    // Nunca tentar ativar permissões protegidas silenciosamente.
+    private boolean accessibilityReady(){
+        return MlogFocusAccessibilityService.current()!=null;
+    }
+    private boolean keyboardReady(){
+        InputMethodManager manager=(InputMethodManager)getSystemService(Context.INPUT_METHOD_SERVICE);
+        boolean enabled=false;
+        if(manager!=null){
+            for(InputMethodInfo ime:manager.getEnabledInputMethodList()){
+                if(getPackageName().equals(ime.getPackageName())){enabled=true;break;}
+            }
+        }
+        String selected=Settings.Secure.getString(getContentResolver(),Settings.Secure.DEFAULT_INPUT_METHOD);
+        return enabled && selected!=null && selected.startsWith(getPackageName()+"/");
+    }
+    private boolean floatingReady(){
+        boolean allowed=Build.VERSION.SDK_INT<23 || Settings.canDrawOverlays(this);
+        return allowed && FloatingToolsService.isRunning();
+    }
+    private String missingRequiredSetup(){
+        StringBuilder missing=new StringBuilder();
+        if(!accessibilityReady())missing.append("• Acessibilidade desativada\n");
+        if(!keyboardReady())missing.append("• Teclado Bridge não habilitado/selecionado\n");
+        if(!floatingReady())missing.append("• Botão flutuante não autorizado/ativado\n");
+        return missing.toString().trim();
+    }
+    private void openAccessibilitySettings(){
+        startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
+    }
+    private void openKeyboardSettings(){
+        startActivity(new Intent(Settings.ACTION_INPUT_METHOD_SETTINGS));
+    }
+    private void openOverlaySettings(){
+        prefs.edit().putBoolean("floating_auto_start_v302",true).apply();
+        if(Build.VERSION.SDK_INT<23 || Settings.canDrawOverlays(this)){
+            startService(new Intent(this,FloatingToolsService.class));
+            return;
+        }
+        if(Build.VERSION.SDK_INT>=23){
+            startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:"+getPackageName())));
+        }
+    }
+    private void showSetupWarning(){
+        setupWarningCard=column();
+        setupWarningCard.setPadding(dp(17),dp(15),dp(17),dp(17));
+        setupWarningCard.setBackground(shape(0xff641e25,0xffd85762,16));
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
+        lp.bottomMargin=dp(14);content.addView(setupWarningCard,lp);
+        setupWarningCard.addView(label("⚠ Configuração necessária",17,0xffffffff,true));
+        setupWarningLabel=label("",13,0xffffffff,false);
+        space(setupWarningCard,7);setupWarningCard.addView(setupWarningLabel);
+        button(setupWarningCard,"1. Ativar acessibilidade",false,this::openAccessibilitySettings);
+        button(setupWarningCard,"2. Habilitar teclado Bridge",false,this::openKeyboardSettings);
+        button(setupWarningCard,"Selecionar teclado Bridge",false,()->{
+            InputMethodManager imm=(InputMethodManager)getSystemService(Context.INPUT_METHOD_SERVICE);
+            if(imm!=null)imm.showInputMethodPicker();
+        });
+        button(setupWarningCard,"3. Autorizar botão flutuante",false,this::openOverlaySettings);
+        refreshSetupWarning();
+    }
+    private void refreshSetupWarning(){
+        if(setupWarningCard==null || setupWarningLabel==null)return;
+        String missing=missingRequiredSetup();
+        setupWarningCard.setVisibility(missing.isEmpty()?View.GONE:View.VISIBLE);
+        setupWarningLabel.setText("Sem essas autorizações, o Bridge pode falhar.\n"+missing);
+    }
+    private void maybeShowFirstSetupDialog(){
+        if(prefs.getBoolean("first_setup_prompt_v302",false))return;
+        prefs.edit().putBoolean("first_setup_prompt_v302",true).apply();
+        if(missingRequiredSetup().isEmpty())return;
+        new AlertDialog.Builder(this)
+            .setTitle("Configurar MLOG Scanner Bridge")
+            .setMessage("Para funcionar corretamente, o Bridge precisa de três autorizações: " +
+                "acessibilidade, teclado Bridge habilitado/selecionado e exibição do botão flutuante. " +
+                "O Android precisa da sua confirmação em cada etapa. " +
+                "Um aviso vermelho continuará visível enquanto faltar alguma autorização.")
+            .setPositiveButton("Começar",(dialog,which)->openAccessibilitySettings())
+            .setNegativeButton("Depois",(dialog,which)->{})
+            .show();
+    }
+
     private void home(){
+        showSetupWarning();
         title("Leitura de códigos","Aperte o gatilho físico para ver o valor decodificado, o formato e possíveis caracteres invisíveis.");
         LinearLayout sample=card();
         TextView statusLabel=label("TESTE DO SCANNER",11,muted,true);sample.addView(statusLabel);
@@ -292,7 +383,8 @@ public final class MainActivity extends Activity {
         button(tools,"Ativar / abrir botão flutuante",true,this::openFloatingTools);
         button(tools,"Desativar botão flutuante",false,()->{
             stopService(new Intent(this,FloatingToolsService.class));
-            prefs.edit().putBoolean(ScanAssistState.CLEAN,false)
+            prefs.edit().putBoolean("floating_auto_start_v302",false)
+                .putBoolean(ScanAssistState.CLEAN,false)
                 .putBoolean(ScanAssistState.BATCH,false)
                 .putBoolean(ScanAssistState.ARMED,false).apply();
             toast("Ferramentas desligadas.");
@@ -353,11 +445,11 @@ public final class MainActivity extends Activity {
             toast("Diagnóstico copiado. Não inclui códigos.");
         });
         LinearLayout help=card();help.addView(label("O que testar",17,ink,true));
-        subtitle(help,"v3.0.1: bloqueio de 150 ms na leitura física. Bipes N−1 em modo contínuo: após enviar o Enter virtual, avança sem esperar confirmação visual. Confira no MLOG os registros realmente gravados.");
+        subtitle(help,"v3.0.2: separação acompanha contador SEPARADO. Apenas Enter enviado não conta como produto. Na ausência de contador, a operação fica marcada como não confirmada.");
         button(help,"Abrir MLOG",true,this::openMlog);
     }
     private void about(){
-        title("Sobre","MLOG Scanner Bridge · v3.0.1 beta");
+        title("Sobre","MLOG Scanner Bridge · v3.0.2 beta");
         LinearLayout about=card();about.addView(label("Integração local",17,ink,true));
         subtitle(about,"Criado para o scanner físico CMX e o MLOG. Sem acesso à internet. Os códigos de leitura não são salvos em histórico.");
         space(about,10);
@@ -387,8 +479,9 @@ public final class MainActivity extends Activity {
                 Uri.parse("package:"+getPackageName())));
             return;
         }
+        prefs.edit().putBoolean("floating_auto_start_v302",true).apply();
         startService(new Intent(this,FloatingToolsService.class));
-        toast("Bolha SP ativada; toque para expandir.");
+        toast("Engrenagem flutuante ativada; toque para abrir.");
     }
 
     private void openMlog(){
@@ -423,7 +516,14 @@ public final class MainActivity extends Activity {
             else registerReceiver(scannerTest,f);
             receiving=true;
         }catch(RuntimeException ignored){}
+        if((Build.VERSION.SDK_INT<23 || Settings.canDrawOverlays(this)) &&
+            prefs.getBoolean("floating_auto_start_v302",true) &&
+            !FloatingToolsService.isRunning()){
+            startService(new Intent(this,FloatingToolsService.class));
+        }
         handler.post(ticker);
+        refreshSetupWarning();
+        handler.post(this::maybeShowFirstSetupDialog);
     }
     @Override protected void onPause(){
         handler.removeCallbacks(ticker);

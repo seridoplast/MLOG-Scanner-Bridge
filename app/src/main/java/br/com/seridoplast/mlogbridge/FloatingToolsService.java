@@ -29,12 +29,15 @@ import android.widget.TextView;
 /** Optional user-controlled overlay. Never captures screen contents. */
 public final class FloatingToolsService extends Service {
     private static FloatingToolsService visible;
+    static boolean isRunning(){return visible!=null && visible.view!=null;}
     private final Handler main = new Handler(Looper.getMainLooper());
     private WindowManager wm;
     private WindowManager.LayoutParams params;
     private View view;
     private TextView status;
     private boolean expanded;
+    // Persistir posição da BOLHA, não a coordenada do painel expandido.
+    private int bubbleX=-1, bubbleY=-1;
     private boolean batchDrawerOpen;
     private String statusText="Pronto. Ative a função desejada.";
     private final int background=0xff161616;
@@ -59,7 +62,10 @@ public final class FloatingToolsService extends Service {
         if(wm==null)wm=(WindowManager)getSystemService(Context.WINDOW_SERVICE);
         // Never preserve an armed batch across process/service restarts.
         if(view==null){
-            ScanAssistState.prefs(this).edit().putBoolean(ScanAssistState.ARMED,false).apply();
+            android.content.SharedPreferences p=ScanAssistState.prefs(this);
+            bubbleX=p.getInt("floating_gear_x",dp(12));
+            bubbleY=p.getInt("floating_gear_y",dp(160));
+            p.edit().putBoolean(ScanAssistState.ARMED,false).apply();
             draw(false);
         }
         return START_NOT_STICKY;
@@ -132,8 +138,11 @@ public final class FloatingToolsService extends Service {
     }
     private void draw(boolean open){
         if(wm==null)return;
-        int oldX=params==null?dp(12):params.x;
-        int oldY=params==null?dp(160):params.y;
+        if(bubbleX<0)bubbleX=dp(12);
+        if(bubbleY<0)bubbleY=dp(160);
+        // Abrir painel pode deslocá-lo para caber na tela; não deslocar a engrenagem.
+        int oldX=bubbleX;
+        int oldY=bubbleY;
         if(view!=null){try{wm.removeView(view);}catch(RuntimeException ignored){} view=null;}
         expanded=open;
         LinearLayout layout=new LinearLayout(this);layout.setOrientation(LinearLayout.VERTICAL);
@@ -153,7 +162,7 @@ public final class FloatingToolsService extends Service {
         params.gravity=Gravity.TOP|Gravity.START;
         int width=getResources().getDisplayMetrics().widthPixels;
         params.x=Math.max(0,Math.min(oldX,Math.max(0,width-(open?dp(310):dp(40)))));
-        params.y=Math.max(0,oldY);
+        params.y=Math.max(0,Math.min(oldY,Math.max(0,getResources().getDisplayMetrics().heightPixels-dp(72))));
         params.softInputMode=WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;
         if(!open){
             FrameLayout bubble=new FrameLayout(this);
@@ -174,11 +183,23 @@ public final class FloatingToolsService extends Service {
                     if(e.getActionMasked()==MotionEvent.ACTION_MOVE){
                         int dx=(int)(e.getRawX()-downX),dy=(int)(e.getRawY()-downY);
                         if(Math.abs(dx)>dp(5)||Math.abs(dy)>dp(5))moved=true;
-                        if(moved){params.x=Math.max(0,startX+dx);params.y=Math.max(0,startY+dy);
-                            try{wm.updateViewLayout(view,params);}catch(RuntimeException ignored){}}
+                        if(moved){
+                            int width=getResources().getDisplayMetrics().widthPixels;
+                            int height=getResources().getDisplayMetrics().heightPixels;
+                            params.x=Math.max(0,Math.min(width-dp(40),startX+dx));
+                            params.y=Math.max(0,Math.min(height-dp(72),startY+dy));
+                            bubbleX=params.x;bubbleY=params.y;
+                            try{wm.updateViewLayout(view,params);}catch(RuntimeException ignored){}
+                        }
                         return true;
                     }
-                    if(e.getActionMasked()==MotionEvent.ACTION_UP){if(!moved)draw(true);return true;}
+                    if(e.getActionMasked()==MotionEvent.ACTION_UP){
+                        if(moved)ScanAssistState.prefs(FloatingToolsService.this).edit()
+                            .putInt("floating_gear_x",bubbleX)
+                            .putInt("floating_gear_y",bubbleY).apply();
+                        else draw(true);
+                        return true;
+                    }
                     return true;
                 }
             });
@@ -261,7 +282,7 @@ public final class FloatingToolsService extends Service {
                 });
                 LinearLayout.LayoutParams slp=new LinearLayout.LayoutParams(-1,-2);
                 slp.topMargin=dp(8);drawer.addView(stop,slp);
-                TextView foot=muted("A partir de 155 ms entre envios. Modo contínuo sem confirmação visual: confira a quantidade no MLOG.",11);
+                TextView foot=muted("A partir de 155 ms; na separação, aguarda SEPARADO aumentar antes de continuar. Não soma apenas pelo Enter enviado.",11);
                 LinearLayout.LayoutParams fl=new LinearLayout.LayoutParams(-1,-2);
                 fl.topMargin=dp(10);drawer.addView(foot,fl);
             }

@@ -1,9 +1,8 @@
-# Diferenças 3.0.0 → 3.0.1
+# Diagnóstico 20:06:27 de 22/10/2026
 
-- Bug relatado: após 1º físico e 1º virtual, o contador mostrava 'Enter sem confirmação visível, parei em 2/N'.
-- Causa: `observeAutoCountEnter()` exigia mudança visível no Flutter dentro de 2500 ms.
-- Ajuste: remover essa exigência para repetições virtuais; após `SET_TEXT` com sucesso e um Enter enviado, incrementa `autoCountDone` e agenda próximo envio respeitando 155 ms mínimos.
-- Campo que fica com o mesmo código: limpa antes de reinserir para forçar mudança de texto.
-- Não ocorre envio de Enter automático nas leituras normais; o CMX continua responsável.
-- Acompanhamento: `AUTO_COUNT_ENTER_DISPATCHED_N` representa envio, não registro confirmado. Nenhum código é incluído nos logs.
-- Teste de aceitação obrigatório: 3, depois 10 envios em ambiente de teste; comparar resultado real no MLOG. Em caso de erro, enviar diagnóstico para identificar falha do Flutter.
+- Primeiro bipe do lote armado às 20:07:06.617.
+- `SCAN_FINISH_campo_mudou` às 20:07:06.981, 364 ms após o início.
+- Repetições `_2` a `_10` registradas como `AUTO_COUNT_ENTER_DISPATCHED` entre 20:07:07.109 e 20:07:09.295.
+- Muitos envios foram classificados como `AUTO_COUNT_ENTER_BRIDGE_IME`. Não há comprovação no log de que cada chamada tenha causado `onSubmitted` no Flutter ou registro persistido.
+- Capturas do vídeo mostram variações da contagem `SEPARADO` durante a operação, o que aponta para processamento parcial/assíncrono.
+- Correção v3.0.2: distinguir tentativas de incrementos reais; aguardar aumento visível `SEPARADO` quando disponível, usar ação do editor como prioridade, interromper em vez de declarar 10/10 se a contagem não corresponder.
