@@ -60,7 +60,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     // leituras SIMULTANEAMENTE pendentes para evitar OOM em erro prolongado.
     private final ScanQueue scanQueue=new ScanQueue(128);
     private final java.util.ArrayDeque<Long> queuedAt=new java.util.ArrayDeque<>();
-    // v2.9: trava APENAS o novo toque, por 750 ms, sem esperar Enter.
+    // v2.9.1: trava APENAS o novo toque, por 585 ms, sem esperar Enter.
     private final TimedClickGate timedClickGate=new TimedClickGate();
     private long totalFinished;
     private int workGeneration;
@@ -154,7 +154,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             prefs().edit().putBoolean("prearm_field",false).apply();
             // Versoes anteriores podiam deixar o teclado oculto pelo controlador.
             restoreKeyboard();
-            status("v2.9: um toque a cada 750 ms; sem fila de cliques; Enter pelo CMX.");
+            status("v2.9.1: um toque a cada 585 ms; sem fila de cliques; Enter pelo CMX.");
         }catch(RuntimeException e){status("Falha ao registrar o broadcast do scanner.");}
     }
 
@@ -273,7 +273,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
 
 
     /** O bloqueio de clique e SOMENTE temporal. Ao chegar um novo gatilho
-     *  APOS os 750 ms, descartamos qualquer tentativa antiga ainda aberta.
+     *  APOS os 585 ms, descartamos qualquer tentativa antiga ainda aberta.
      *  Nenhuma leitura nem gesto antigo e reexecutado depois. */
     private void discardOldCycleOnNewTrigger(){
         // O prazo temporal deve destravar mesmo se algum callback de gesto
@@ -416,7 +416,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         }
         // v1.4: nenhum clique por simples mudanca de tela. Cada gesto do MLOG
         // deve estar vinculado a uma leitura efetivamente recebida do CMX.
-        if(pendingCode==null && time-lastDiagnostic>1750 && time-lastAutoActionAt>30000){
+        if(pendingCode==null && time-lastDiagnostic>1585 && time-lastAutoActionAt>30000){
             lastDiagnostic=time;
             AccessibilityNodeInfo root=mlogRoot();
             if(root!=null){
@@ -476,14 +476,14 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         }
         trace("PHYSICAL_TRIGGER_SEEN_"+code);
         // A media das confirmacoes visiveis na v2.6 foi 576 ms (12 amostras).
-        // Uma margem de 174 ms => cooldown fixo de 750 ms. Nao esperamos Enter.
+        // Uma margem de 9 ms => cooldown fixo de 585 ms. Nao esperamos Enter.
         if(!timedClickGate.admitTrigger(now)){
             trace("CLICK_COOLDOWN_IGNORED_REMAINING_MS_"+timedClickGate.remainingMs(now));
             return false; // nunca consumir o gatilho do CMX
         }
         discardOldCycleOnNewTrigger();
         lastTriggerPrefocus=now;
-        trace("CLICK_COOLDOWN_STARTED_750_MS");
+        trace("CLICK_COOLDOWN_STARTED_585_MS");
         trace("TRIGGER_OPEN_ATTEMPT_"+info.screen);
 
         // O Flutter ainda esta abrindo um campo a partir desse mesmo gatilho.
@@ -1109,7 +1109,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
      * Se o Gboard ja abriu, nao fazer segundo toque (poderia fechar o campo).
      * Se nao abriu, apenas UM gesto no botao conhecido da tela de separacao. */
     private void scheduleNativeFallback(int token,String screen){
-        // v2.9: nenhum segundo clique agendado. Falhas so geram diagnostico.
+        // v2.9.1: nenhum segundo clique agendado. Falhas so geram diagnostico.
         // Nunca guardar um gesto para executar apos o cooldown.
     }
 
