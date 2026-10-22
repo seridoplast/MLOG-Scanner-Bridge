@@ -1,75 +1,59 @@
-# MLOG Scanner Bridge v2.9.5 — Bloqueio temporizado (400 ms)
+# MLOG Scanner Bridge v2.9.6 — 200 ms + teclado compacto
 
-## Base e diagnóstico
+Base preservada: **v2.9.5**. O Enter automático continua sendo responsabilidade do **CMX**, não do Bridge.
 
-Esta edição parte da **v2.6** (fluxo que abria o campo do MLOG corretamente) e mantém as logos incorporadas nas versões posteriores. O arquivo `Diagnostico_MLOG_20261022_104146.zip` foi usado para a medição.
+## Mudanças
 
-Entre 16 ciclos registrados, **12 terminaram com `SCAN_FINISH_campo_mudou` ou `SCAN_FINISH_campo_saiu`**. Os tempos `SCAN_ELAPSED_MS` destes 12 ciclos foram (em milissegundos):
+- `TimedClickGate.COOLDOWN_MS = 200L`: desbloqueio pelo relógio após 200 ms. Nenhum clique recusado deve ser guardado para executar depois.
+- Teclado Bridge dentro do MLOG: inicia em **barra compacta**. Se o usuário abrir o QWERTY com `Digitar`, ele volta a ficar compacto ao fechar a entrada, mudar de campo ou utilizar o Enter manual; se o Enter físico chegar à IME, também recolhe. Um `restartInput` do mesmo campo não interrompe a digitação.
+- Fora do MLOG: teclado expandido permanece disponível normalmente.
+- Barra compacta no MLOG: `Digitar` | `⌫ Apagar` | `⇄`. O botão Apagar remove a seleção ou um caractere à esquerda do cursor, diretamente pela `InputConnection`. É necessário haver um campo editável ativo; não executa cliques na tela do MLOG.
+- Todos os seis ajustes exibidos começam ligados: Leitura assistida, Toque guiado, Detectar teclado de produtos, Usar teclado Bridge, Leitura rápida, Pré-foco físico. Migração única na v2.9.6; alterações posteriores do usuário são preservadas. **Selecionar o Bridge como teclado padrão ainda depende do Android.**
+- Logos introduzidas anteriormente preservadas.
 
-`764, 507, 207, 707, 900, 148, 717, 380, 361, 1051, 997, 178`
+## Cuidado com o intervalo de 200 ms
 
-- **Média: 576,4 ms**; mediana: **607 ms**.
-- Bloqueio fixo definido: **400 ms**, cerca de 176 ms abaixo da média de 576 ms (e abaixo da mediana de 607 ms).
-- Estes são tempos de processamento observados pelo Bridge, **não** uma prova do tempo do servidor nem da confirmação física do Enter. Há ciclos acima de 400 ms.
+A média de processamento observada na v2.6 foi de **576 ms**. O prazo de 200 ms desbloqueia *cliques*, não comprova que o Flutter concluiu a leitura. Cliques duplicados ou leituras perdidas podem reaparecer em rajadas. Teste primeiro com pedido de teste.
 
-## Funcionamento
+## Gboard e primeiro bipe
 
-1. O primeiro gatilho aceito inicia a janela de 400 ms e tenta abrir/focar o campo do MLOG **uma única vez**.
-2. Durante os 400 ms, novos gatilhos **não geram nenhum clique e não ficam em fila**. Leituras recebidas nesse intervalo são ignoradas pelo Bridge; o CMX continuará operando conforme sua própria configuração.
-3. Decorridos 400 ms, o **próximo gatilho** inicia um ciclo novo, mesmo que o MLOG não tenha exposto a confirmação anterior ao Android. Não é necessário rearmar manualmente.
-4. Se o código chegar por broadcast sem evento físico do gatilho, o próprio broadcast pode abrir um ciclo temporizado, respeitando o mesmo prazo. Retransmissões desse mesmo bipe são descartadas.
-5. Um mesmo ciclo nunca envia um segundo clique atrasado no botão nativo do MLOG.
-6. **O Bridge não envia Enter automático.** O Enter permanece sob responsabilidade do CMX Scanner, como na v2.6. A digitação manual do teclado Bridge permanece disponível.
-7. A versão mantém o pré-foco pelo gatilho, o reconhecimento dos layouts de produtos (inclusive quantidade), consulta, atividades, o tema claro/escuro e as logos.
+Não há no código do Bridge uma ordem para abrir Gboard na primeira leitura, e o Bridge não altera o teclado padrão do sistema automaticamente. Se aparecer uma mensagem de erro do Gboard, verifique em **Ajustes > Teclado Bridge > Selecionar teclado** se o Bridge está selecionado ou se o Gboard está ativo. Trocar o teclado padrão durante a bipagem pode provocar uma transição de IME, mas isso **não está comprovado como causa** do erro relatado.
 
-**Importante:** a proteção de 400 ms não espera a confirmação, então uma operação mais lenta que 400 ms pode ainda estar em processamento quando o próximo gatilho for aceito. Teste fora de pedidos reais e confira se não há duplicação/perda de itens.
+Se o erro persistir com o Bridge selecionado, capture o log próximo ao erro:
 
-## Atualização pelo CMD do Windows
+```bat
+"%USERPROFILE%\Downloads\platform-tools\adb.exe" logcat -c
+REM Reproduza o erro do primeiro bipe no MLOG.
+"%USERPROFILE%\Downloads\platform-tools\adb.exe" logcat -d -v time > "%USERPROFILE%\Downloads\Bridge_v296_Primeiro_Bipe.txt"
+```
 
-Baixe `MLOG_Scanner_Bridge_v295_Bloqueio_400ms.zip` para Downloads e execute:
+Não envie o log completo sem revisar informações sensíveis (o Android pode registrar dados de outros apps).
+
+## Atualizar e gerar o APK
+
+Salve `MLOG_Scanner_Bridge_v296_200ms_Teclado_Oculto_Apagar.zip` em Downloads. No CMD:
 
 ```bat
 cd /d "%USERPROFILE%\Downloads\MLOG-Scanner-Bridge"
-powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v295_Bloqueio_400ms.zip') -DestinationPath . -Force"
+powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v296_200ms_Teclado_Oculto_Apagar.zip') -DestinationPath . -Force"
 git add -A
-git commit -m "Bridge v295 bloqueio temporal de 400 ms"
+git commit -m "Bridge v296 200ms teclado compacto e apagar"
 git push origin main
 ```
 
-Em https://github.com/seridoplast/MLOG-Scanner-Bridge/actions, abra a execução bem-sucedida e baixe o artefato `MLOG-Scanner-Bridge-v295-APK`. Extraia `app-debug.apk` para Downloads.
-
-## Instalação pelo ADB
-
-Conecte o coletor por USB, autorize a depuração e rode:
+No GitHub Actions, baixe `MLOG-Scanner-Bridge-v296-APK` da execução bem-sucedida e extraia `app-debug.apk` para Downloads:
 
 ```bat
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" devices
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" install -r "%USERPROFILE%\Downloads\app-debug.apk"
 ```
 
-Precisa aparecer `device` no primeiro comando e `Success` no segundo. A opção de Enter automático deve estar habilitada no CMX. O próprio Bridge não deve tentar enviar outro Enter.
+## Testes de aceitação
 
-## Diagnóstico da versão
+1. No MLOG, com Bridge selecionado, tocar em `Digitar` mostra QWERTY; ao fechar e abrir o mesmo campo novamente, a barra deve mostrar somente os botões compactos.
+2. Em MLOG, `⌫ Apagar` deve apagar seleção ou um caractere de um campo ativo; fora do MLOG, o QWERTY inicia expandido.
+3. Depois do Enter manual do teclado Bridge, o QWERTY deve recolher. O Enter enviado pelo CMX não deve ser duplicado pelo Bridge.
+4. Em Ajustes, os seis controles devem iniciar marcados depois da atualização; desmarcar manualmente deve persistir nas próximas aberturas.
+5. Ler 10 itens lentamente, depois sequências rápidas em um pedido de teste, conferindo duplicações e leituras perdidas.
 
-```bat
-"%USERPROFILE%\Downloads\platform-tools\adb.exe" logcat -d -v time -s MLOGBridge:I > "%USERPROFILE%\Downloads\Bridge_v295_Log.txt"
-```
-
-Eventos relevantes:
-- `CLICK_COOLDOWN_STARTED_400_MS`: novo ciclo aceito.
-- `CLICK_COOLDOWN_IGNORED_REMAINING_MS_...`: gatilho ignorado durante a janela.
-- `SECOND_NATIVE_CLICK_PREVENTED_...`: clique repetido não executado.
-- `BROADCAST_IGNORED_COOLDOWN_OR_ECHO_...`: transmissão repetida/bloqueada.
-- `BROADCAST_REARM_NEW_CYCLE`: novo ciclo admitido sem evento físico de gatilho.
-- `OLD_CYCLE_CANCELLED_ON_REARM`: tarefas antigas canceladas ao começar ciclo novo.
-
-## Validação e limitações
-
-- Código-fonte Java analisado sintaticamente com parser Java 17.
-- Testes locais de janela de tempo, deduplicação, fila e políticas de Enter executados.
-- Não há Android SDK e Gradle neste ambiente: **a compilação APK não foi executada aqui**.
-- A versão precisa ser compilada no GitHub e validada em **um coletor de testes** antes de instalar em escala.
-
-### Atenção ao intervalo reduzido
-
-O novo prazo de 400 ms fica 176,4 ms abaixo da média observada (576,4 ms) e abaixo da mediana (607 ms). Algumas leituras no diagnóstico chegaram a superar 1 segundo; portanto, o desbloqueio pelo relógio não garante que o MLOG já tenha concluído o processamento. Não utilize a versão em pedidos reais antes de confirmar ausência de perdas e duplicações.
+**Status de validação:** testes locais de temporização, fila e deduplicação; validação do ZIP. Compilação Android e comportamento físico no coletor precisam ser validados por GitHub Actions e teste no aparelho.

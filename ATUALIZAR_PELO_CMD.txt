@@ -1,25 +1,20 @@
-MLOG Scanner Bridge v2.9.5 — COMANDOS NO CMD
+MLOG Scanner Bridge v2.9.6 — 200 ms e barra compacta com Apagar
 
-1) Salve MLOG_Scanner_Bridge_v295_Bloqueio_400ms.zip em Downloads.
+1. Baixar MLOG_Scanner_Bridge_v296_200ms_Teclado_Oculto_Apagar.zip para Downloads
 
+2. Abrir CMD:
 cd /d "%USERPROFILE%\Downloads\MLOG-Scanner-Bridge"
-powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v295_Bloqueio_400ms.zip') -DestinationPath . -Force"
+powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v296_200ms_Teclado_Oculto_Apagar.zip') -DestinationPath . -Force"
 git add -A
-git commit -m "Bridge v295 bloqueio temporal de 400 ms"
+git commit -m "Bridge v296 200ms teclado compacto e apagar"
 git push origin main
 
-2) GitHub Actions: https://github.com/seridoplast/MLOG-Scanner-Bridge/actions
-   Baixe o artefato MLOG-Scanner-Bridge-v295-APK quando a execucao ficar verde.
-   Extraia o arquivo app-debug.apk para Downloads.
+3. Acessar https://github.com/seridoplast/MLOG-Scanner-Bridge/actions
+   Baixar MLOG-Scanner-Bridge-v296-APK depois que a compilacao ficar verde.
 
-3) Conecte o coletor e instale:
-
+4. Extrair app-debug.apk em Downloads e instalar:
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" devices
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" install -r "%USERPROFILE%\Downloads\app-debug.apk"
 
-4) Diagnostico:
-
-"%USERPROFILE%\Downloads\platform-tools\adb.exe" logcat -d -v time -s MLOGBridge:I > "%USERPROFILE%\Downloads\Bridge_v295_Log.txt"
-
-Entrada e Enter: CMX como antes; Bridge so controla foco/toque e injecao de codigo, sem enviar Enter automatico.
-Intervalo fixo de clique 400 ms; gatilhos durante o bloqueio nao sao enfileirados.
+Atencao: 200 ms pode permitir um novo clique antes que o MLOG finalize o anterior.
+O Enter continua vindo do CMX. Para usar o teclado Bridge, selecione-o no Android.

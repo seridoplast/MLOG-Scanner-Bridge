@@ -81,6 +81,7 @@ public final class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle saved){
         prefs=getSharedPreferences(ScanCoordinator.PREFS,MODE_PRIVATE);
+        BridgePreferences.enableOnUpgrade(prefs);
         themeChoice=prefs.getString("theme_choice","auto");
         // Corrige preferencia que podia ter sido alterada por Enter do scanner
         // em versoes antigas. A partir de agora, apenas toque real alterna tema.
@@ -247,23 +248,23 @@ public final class MainActivity extends Activity {
     private void settings(){
         title("Ajustes","Preferências de leitura e aparência.");
         LinearLayout read=card();read.addView(label("Leitura",17,ink,true));
-        check(read,"Leitura assistida","enabled",false);
+        check(read,"Leitura assistida","enabled",true);
         subtitle(read,"O Bridge abre e preenche o campo do MLOG. O CMX faz o Enter.");
         // Preparacao antecipada removida: era a causa de campo abrindo antes do bipe.
         check(read,"Toque guiado (telas reconhecidas)","guided_taps",true);
         check(read,"Detectar teclado de produtos","layout_fallback",true);
         subtitle(read,"Foco automatico da v2.3 preservado. Confirmacao automatica do Bridge removida.");
         LinearLayout ime=card(); ime.addView(label("Teclado Bridge (experimental)",17,ink,true));
-        check(ime,"Usar teclado Bridge (compacto)","experimental_bridge_ime",false);
-        check(ime,"Leitura rápida (teste)","fast_ime_mode",false);
+        check(ime,"Usar teclado Bridge (compacto)","experimental_bridge_ime",true);
+        check(ime,"Leitura rápida (teste)","fast_ime_mode",true);
         check(ime,"Pré-foco pelo gatilho físico","trigger_prefocus",true);
         button(ime,"Aprender botão do coletor",false,()->{
             prefs.edit().putBoolean("learn_trigger_armed",true).apply();
             toast("Abra o MLOG e pressione o gatilho uma vez para calibrar.");
         });
-        subtitle(ime,"Abre o campo ao apertar o gatilho. Aguarda apenas 400 ms entre toques e destrava pelo relogio, sem exigir verificacao do Enter.");
-        subtitle(ime,"Ative a leitura rapida apenas com o teclado Bridge selecionado. Acelera a deteccao do campo; o CMX continua responsavel por enviar o Enter.");
-        subtitle(ime,"Experimento opcional. O Android exige habilitar e escolher o teclado manualmente. No MLOG, ele mostra uma barra compacta. O Enter automatico fica exclusivamente no CMX. O botao Enter manual continua no teclado.");
+        subtitle(ime,"Abre o campo ao apertar o gatilho. Aguarda apenas 200 ms entre toques e destrava pelo relogio, sem exigir verificacao do Enter.");
+        subtitle(ime,"As opcoes comecam ativadas. Para usar o teclado Bridge, selecione-o tambem nas configuracoes de teclado do Android. O CMX continua responsavel pelo Enter.");
+        subtitle(ime,"Experimento opcional. O Android exige habilitar e escolher o teclado manualmente. No MLOG, o teclado completo se recolhe apos o Enter ou ao fechar a entrada. Fora do MLOG permanece expandido. Enter automatico exclusivo do CMX.");
         button(ime,"1. Habilitar teclado no Android",false,()->startActivity(new Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)));
         button(ime,"2. Selecionar teclado / voltar ao Gboard",true,()->{
             android.view.inputmethod.InputMethodManager imm=(android.view.inputmethod.InputMethodManager)getSystemService(Context.INPUT_METHOD_SERVICE);
@@ -297,11 +298,11 @@ public final class MainActivity extends Activity {
             toast("Diagnóstico copiado. Não inclui códigos.");
         });
         LinearLayout help=card();help.addView(label("O que testar",17,ink,true));
-        subtitle(help,"v2.9.5: bloqueio de 400 ms por toque, liberado automaticamente. O CMX envia Enter. Leituras feitas durante o intervalo nao geram cliques futuros.");
+        subtitle(help,"v2.9.6: bloqueio de 200 ms por toque, liberado automaticamente. O CMX envia Enter. Leituras feitas durante o intervalo nao geram cliques futuros.");
         button(help,"Abrir MLOG",true,this::openMlog);
     }
     private void about(){
-        title("Sobre","MLOG Scanner Bridge · v2.9.5 beta");
+        title("Sobre","MLOG Scanner Bridge · v2.9.6 beta");
         LinearLayout about=card();about.addView(label("Integração local",17,ink,true));
         subtitle(about,"Criado para o scanner físico CMX e o MLOG. Sem acesso à internet. Os códigos de leitura não são salvos em histórico.");
         space(about,10);

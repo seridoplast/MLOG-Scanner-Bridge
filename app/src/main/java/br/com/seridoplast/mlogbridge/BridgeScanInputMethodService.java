@@ -71,9 +71,10 @@ public final class BridgeScanInputMethodService extends InputMethodService {
         super.onStartInput(info,restarting);
         boolean wasTargetMlog=targetMlog;
         targetMlog=info!=null && ScanCoordinator.TARGET.equals(info.packageName);
-        // Em login/senha abrir teclado manual. Nao carregar manual de outros apps.
-        boolean loginField=info!=null && (isPassword(info.inputType) || isLoginHint(info.hintText));
-        manual=!targetMlog || loginField || (targetMlog && wasTargetMlog && manual);
+        // Campo novo / nova app => compacto no MLOG. Se o Flutter reiniciar
+        // o input do MESMO campo durante digitacao, manter QWERTY aberto.
+        if(!targetMlog)manual=true;
+        else if(!restarting || !wasTargetMlog)manual=false;
         numeric=info!=null && ((info.inputType&InputType.TYPE_MASK_CLASS)==InputType.TYPE_CLASS_NUMBER);
         upper=false;
         if(panel!=null)render();
@@ -82,8 +83,36 @@ public final class BridgeScanInputMethodService extends InputMethodService {
     @Override public void onStartInputView(EditorInfo info,boolean restarting){
         super.onStartInputView(info,restarting);
         targetMlog=info!=null && ScanCoordinator.TARGET.equals(info.packageName);
+        // onFinishInputView ja recolheu quando a janela foi escondida.
+        // Nao interromper digitacao por um restartInput do mesmo campo.
         if(!targetMlog)manual=true;
+        else if(!restarting)manual=false;
         if(panel!=null)render();
+    }
+
+    @Override public void onFinishInputView(boolean finishingInput){
+        if(targetMlog){manual=false;if(panel!=null)render();}
+        super.onFinishInputView(finishingInput);
+    }
+
+    @Override public void onFinishInput(){
+        if(targetMlog){manual=false;if(panel!=null)render();}
+        super.onFinishInput();
+    }
+
+    @Override public boolean onKeyUp(int keyCode,KeyEvent event){
+        boolean handled=super.onKeyUp(keyCode,event);
+        // Nao interceptar nem emitir Enter: o CMX continua responsavel.
+        // Se o hardware entregar a tecla a esta IME, so recolher as teclas.
+        if(targetMlog && manual &&
+            (keyCode==KeyEvent.KEYCODE_ENTER || keyCode==KeyEvent.KEYCODE_NUMPAD_ENTER)){
+            main.post(()->collapseInMlog());
+        }
+        return handled;
+    }
+
+    private void collapseInMlog(){
+        if(targetMlog && manual){manual=false;if(panel!=null)render();}
     }
 
     private int dp(int n){return (int)(getResources().getDisplayMetrics().density*n+0.5f);}
@@ -122,6 +151,12 @@ public final class BridgeScanInputMethodService extends InputMethodService {
         top.addView(label,new LinearLayout.LayoutParams(0,dp(31),1));
         TextView toggle=key(manual?"Ocultar teclas":"Digitar",()->{manual=!manual;render();},1);
         top.addView(toggle,new LinearLayout.LayoutParams(dp(100),dp(32)));
+        if(targetMlog && !manual){
+            TextView erase=key("⌫ Apagar",()->type("⌫"),1);
+            LinearLayout.LayoutParams ep=new LinearLayout.LayoutParams(dp(86),dp(32));
+            ep.leftMargin=dp(5);
+            top.addView(erase,ep);
+        }
         TextView switcher=key("⇄",()->{
             InputMethodManager imm=(InputMethodManager)getSystemService(Context.INPUT_METHOD_SERVICE);
             if(imm!=null)imm.showInputMethodPicker();
@@ -174,7 +209,19 @@ public final class BridgeScanInputMethodService extends InputMethodService {
     private void type(String value){
         InputConnection ic=getCurrentInputConnection();
         if(ic==null)return;
-        if("⌫".equals(value)){ic.deleteSurroundingText(1,0);return;}
+        if("⌫".equals(value)){
+            // Primeiro apagar selecao; se nao houver, apagar o caractere
+            // anterior ao cursor (sem precisar expandir QWERTY).
+            CharSequence selected=ic.getSelectedText(0);
+            if(selected!=null && selected.length()>0){
+                ic.commitText("",1);
+            }else if(!ic.deleteSurroundingText(1,0)){
+                long when=SystemClock.uptimeMillis();
+                ic.sendKeyEvent(new KeyEvent(when,when,KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_DEL,0));
+                ic.sendKeyEvent(new KeyEvent(when,when+1,KeyEvent.ACTION_UP,KeyEvent.KEYCODE_DEL,0));
+            }
+            return;
+        }
         if("⇧".equals(value)){upper=!upper;render();return;}
         if("?123".equals(value) || "ABC".equals(value)){numeric=!numeric;render();return;}
         if("Enter ↵".equals(value)){
@@ -194,6 +241,8 @@ public final class BridgeScanInputMethodService extends InputMethodService {
                    action!=EditorInfo.IME_ACTION_NONE)
                     ic.performEditorAction(action);
             }
+            // Recolher apenas o QWERTY do Bridge; nao esconder a barra de leitura.
+            collapseInMlog();
             return;
         }
         if("Espaço".equals(value))value=" ";

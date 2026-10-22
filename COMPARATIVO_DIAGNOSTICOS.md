@@ -1,17 +1,7 @@
-# Medição baseada na v2.6
+# Ajuste da v2.9.6
 
-Fonte: `Diagnostico_MLOG_20261022_104146.zip`, arquivo `eventos_android.txt`.
+A v2.6 registrou 12 ciclos com mudança/fechamento de campo, com média de aproximadamente 576 ms e mediana de 607 ms. Após experimentar 750, 585, 550, 500, 450 e 400 ms, o usuário solicitou **200 ms**.
 
-Foram registrados 16 `SCAN_FINISH` com os seguintes desfechos:
-- 11 `campo_mudou`;
-- 1 `campo_saiu`;
-- 3 `sem_confirmacao_cmx`;
-- 1 `tela_bloqueada`.
+O tempo agora define exclusivamente o bloqueio fixo entre tentativas de clique no botão nativo do MLOG (`TimedClickGate.COOLDOWN_MS`), e **não** o momento em que o CMX envia o Enter nem uma confirmação do processamento do Flutter.
 
-Para os **12** ciclos com mudança ou desaparecimento do campo, os valores `SCAN_ELAPSED_MS` foram: **764, 507, 207, 707, 900, 148, 717, 380, 361, 1051, 997, 178**.
-
-**Média aritmética = 576,4 ms; mediana = 607 ms; máximo = 1051 ms.**
-
-Adotamos um intervalo fixo de **400 ms**, ~176 ms abaixo da média, entre tentativas de clique no botão nativo do MLOG. Este intervalo é uma decisão de configuração, não uma garantia de que toda operação já terá sido confirmada. O usuário optou por desbloqueio temporizado em vez de uma trava indefinida condicionada ao Enter.
-
-**Trade-off:** até ~1,82 tentativas de clique por segundo podem ser aceitas por essa janela. Gatilhos mais rápidos são ignorados pelo Bridge, não guardados. Isso prioriza evitar cliques duplos e travamentos, mas não alcança ainda a meta de ritmo obtida com Key Mapper.
+A versão preserva as rotinas de leitura/broadcast e os diagnósticos existentes. Acrescenta recolhimento automático do QWERTY Bridge somente no MLOG, botão Apagar na barra compacta e seis ajustes ligados por padrão. A falha do Gboard na primeira leitura ainda carece de um log com exceção específica para atribuir causa com segurança.

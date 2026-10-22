@@ -7,7 +7,7 @@ android {
         minSdk 26
         targetSdk 35
         versionCode 34
-        versionName '2.9.5-tempo-fixo-400ms'
+        versionName '2.9.6-tempo-fixo-200ms'
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
