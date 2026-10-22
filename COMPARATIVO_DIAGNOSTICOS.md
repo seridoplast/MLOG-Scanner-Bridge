@@ -12,6 +12,6 @@ Para os **12** ciclos com mudança ou desaparecimento do campo, os valores `SCAN
 
 **Média aritmética = 576,4 ms; mediana = 607 ms; máximo = 1051 ms.**
 
-Adotamos um intervalo fixo de **585 ms**, ~9 ms acima da média, entre tentativas de clique no botão nativo do MLOG. Este intervalo é uma decisão de configuração, não uma garantia de que toda operação já terá sido confirmada. O usuário optou por desbloqueio temporizado em vez de uma trava indefinida condicionada ao Enter.
+Adotamos um intervalo fixo de **550 ms**, ~26 ms abaixo da média, entre tentativas de clique no botão nativo do MLOG. Este intervalo é uma decisão de configuração, não uma garantia de que toda operação já terá sido confirmada. O usuário optou por desbloqueio temporizado em vez de uma trava indefinida condicionada ao Enter.
 
-**Trade-off:** até ~1,33 tentativas de clique por segundo podem ser aceitas por essa janela. Gatilhos mais rápidos são ignorados pelo Bridge, não guardados. Isso prioriza evitar cliques duplos e travamentos, mas não alcança ainda a meta de ritmo obtida com Key Mapper.
+**Trade-off:** até ~1,82 tentativas de clique por segundo podem ser aceitas por essa janela. Gatilhos mais rápidos são ignorados pelo Bridge, não guardados. Isso prioriza evitar cliques duplos e travamentos, mas não alcança ainda a meta de ritmo obtida com Key Mapper.
