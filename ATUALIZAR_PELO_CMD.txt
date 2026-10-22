@@ -1,7 +1,7 @@
 cd /d "%USERPROFILE%\Downloads\MLOG-Scanner-Bridge"
 
-powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v303_Enter_Lento_Check_Verde.zip') -DestinationPath . -Force"
+powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v304_Reabrir_IME_100ms.zip') -DestinationPath . -Force"
 
 git add -A
-git commit -m "Bridge v303 Enter lento e check verde"
-git push origin main && del /q "%USERPROFILE%\Downloads\MLOG_Scanner_Bridge_v303_Enter_Lento_Check_Verde.zip"
+git commit -m "Bridge v304 corrigir terceiro bipe e 100ms"
+git push origin main && del /q "%USERPROFILE%\Downloads\MLOG_Scanner_Bridge_v304_Reabrir_IME_100ms.zip"

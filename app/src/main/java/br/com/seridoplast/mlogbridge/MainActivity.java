@@ -441,7 +441,7 @@ public final class MainActivity extends Activity {
             prefs.edit().putBoolean("learn_trigger_armed",true).apply();
             toast("Abra o MLOG e pressione o gatilho uma vez para calibrar.");
         });
-        subtitle(ime,"Abre o campo ao apertar o gatilho. Aguarda apenas 150 ms entre toques e destrava pelo relogio, sem exigir verificacao do Enter.");
+        subtitle(ime,"Abre o campo ao apertar o gatilho. Aguarda apenas 100 ms entre toques e destrava pelo relogio, sem exigir verificacao do Enter.");
         subtitle(ime,"As opcoes comecam ativadas. Para usar o teclado Bridge, selecione-o tambem nas configuracoes de teclado do Android. O CMX continua responsavel pelo Enter.");
         subtitle(ime,"Experimento opcional. O Android exige habilitar e escolher o teclado manualmente. No MLOG, o teclado completo se recolhe apos o Enter ou ao fechar a entrada. Fora do MLOG permanece expandido. Enter automatico exclusivo do CMX.");
         button(ime,"1. Habilitar teclado no Android",false,()->startActivity(new Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)));

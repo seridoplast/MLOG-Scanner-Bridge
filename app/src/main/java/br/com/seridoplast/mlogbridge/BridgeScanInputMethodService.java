@@ -41,9 +41,23 @@ public final class BridgeScanInputMethodService extends InputMethodService {
 
     /** Somente para repeticoes solicitadas expressamente na janela flutuante.
      *  No modo normal o CMX permanece como unico emissor de Enter. */
+    /** Diagnostica IME ativo E InputConnection da tela MLOG atual.
+     * isInputViewShown e especialmente importante: a conexao antiga pode
+     * continuar existindo depois do Enter, quando o Flutter escondeu teclado.
+     */
+    static boolean hasLiveInputForMlog(){
+        BridgeScanInputMethodService ime=active;
+        if(ime==null || !ime.targetMlog || !ime.isInputViewShown())return false;
+        EditorInfo info=ime.getCurrentInputEditorInfo();
+        return info!=null && ScanCoordinator.TARGET.equals(info.packageName) &&
+            !isPassword(info.inputType) && ime.getCurrentInputConnection()!=null;
+    }
     static boolean sendEnterForAutoCount(){
         BridgeScanInputMethodService ime=active;
-        if(ime==null || !ime.targetMlog)return false;
+        if(!hasLiveInputForMlog()){
+            android.util.Log.i("MLOGBridge","AUTO_ENTER_IME_VIEW_NOT_ACTIVE");
+            return false;
+        }
         InputConnection connection=ime.getCurrentInputConnection();
         EditorInfo info=ime.getCurrentInputEditorInfo();
         if(connection==null || info==null ||
@@ -59,9 +73,15 @@ public final class BridgeScanInputMethodService extends InputMethodService {
                 KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_ENTER,0,0,device,0,flags));
         boolean up=connection.sendKeyEvent(new KeyEvent(now,now+7,
                 KeyEvent.ACTION_UP,KeyEvent.KEYCODE_ENTER,0,0,device,0,flags));
-        if(down || up){
+        if(down && up){
             android.util.Log.i("MLOGBridge","AUTO_ENTER_METHOD_KEYPAIR_SENT");
             return true; // NUNCA enviar um segundo Enter para esta repeticao.
+        }
+        if(down || up){
+            // Parte do par foi aceita. Nao executar editorAction depois,
+            // pois pode confirmar o mesmo produto duas vezes.
+            android.util.Log.i("MLOGBridge","AUTO_ENTER_METHOD_PARTIAL_KEYPAIR");
+            return true; // Tentativa ambigua, NAO uma gravacao confirmada.
         }
         android.util.Log.i("MLOGBridge","AUTO_ENTER_METHOD_KEYPAIR_UNAVAILABLE");
         // Apenas se a conexao recusou ambas as teclas, tentar acao IME.

@@ -4,6 +4,9 @@ public final class AutoRepeatPolicyTest {
     private static void check(boolean ok,String message){assertions++;if(!ok)throw new AssertionError(message);}
     public static void main(String[] args){
         check(AutoRepeatPolicy.MIN_INTERVAL_MS==900L,"900 ms cadence");
+        check(!AutoRepeatPolicy.canSubmit(false,true),"focused Flutter editor is insufficient when IME hidden");
+        check(!AutoRepeatPolicy.canSubmit(true,false),"visible IME without live connection is insufficient");
+        check(AutoRepeatPolicy.canSubmit(true,true),"live IME authorizes one Enter");
         check(AutoRepeatPolicy.virtualRepeats(1)==0,"1 total is 0 virtual");
         check(AutoRepeatPolicy.virtualRepeats(3)==2,"3 total is 2 virtual");
         check(AutoRepeatPolicy.virtualRepeats(100)==99,"100 total is 99 virtual");

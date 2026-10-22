@@ -4,6 +4,9 @@ package br.com.seridoplast.mlogbridge;
 final class AutoRepeatPolicy {
     static final long MIN_INTERVAL_MS = 900L; // entre Enters virtuais; modo normal continua 150 ms
     private AutoRepeatPolicy() {}
+    static boolean canSubmit(boolean imeWindowVisible, boolean liveInputConnection){
+        return imeWindowVisible && liveInputConnection;
+    }
     static int virtualRepeats(int totalBipes) {return Math.max(0,totalBipes-1);}
     static long delayMs(long lastSubmissionMs,long nowMs) {
         return Math.max(0L, MIN_INTERVAL_MS-Math.max(0L,nowMs-lastSubmissionMs));

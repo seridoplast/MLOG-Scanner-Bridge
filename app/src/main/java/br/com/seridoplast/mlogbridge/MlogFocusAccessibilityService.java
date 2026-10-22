@@ -60,7 +60,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     // leituras SIMULTANEAMENTE pendentes para evitar OOM em erro prolongado.
     private final ScanQueue scanQueue=new ScanQueue(128);
     private final java.util.ArrayDeque<Long> queuedAt=new java.util.ArrayDeque<>();
-    // v2.9.7: trava APENAS o novo toque, por 150 ms, sem esperar Enter.
+    // v3.0.4: trava APENAS o novo toque, por 100 ms, sem esperar Enter.
     private final TimedClickGate timedClickGate=new TimedClickGate();
     // Contador sob comando explicito do operador, nunca ativo por padrao.
     // Primeira leitura: CMX normal. Repeticoes: codigo e Enter locais (Bridge IME).
@@ -71,6 +71,14 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private int autoCountTarget;
     private int autoCountDone;
     private boolean autoCountClicked;
+    private boolean autoCountImeWaitLogged;
+    private long autoCountImeWaitStartedAt;
+    private boolean autoCountEditorReconnectTried;
+    private void traceOnceWaitingImeConnection(){
+        if(autoCountImeWaitLogged)return;
+        autoCountImeWaitLogged=true;
+        trace("AUTO_IME_WAIT_LIVE_CONNECTION_"+(autoCountDone+1));
+    }
     private String autoCountCode;
     private String autoCountScreen;
     private long autoCountLastActionAt;
@@ -198,7 +206,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             prefs().edit().putBoolean("prearm_field",false).apply();
             // Versoes anteriores podiam deixar o teclado oculto pelo controlador.
             restoreKeyboard();
-            status("v3.0.3: N-1 teclado Enter lento; modo normal 150 ms.");
+            status("v3.0.4: IME reaberto por bipe; modo normal 100 ms.");
         }catch(RuntimeException e){status("Falha ao registrar o broadcast do scanner.");}
     }
 
@@ -555,7 +563,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             return false; // CMX hardware permanece livre; Bridge nao toca MLOG
         }
         // A media das confirmacoes visiveis na v2.6 foi 576 ms (12 amostras).
-        // Cooldown experimental de 150 ms: nao esperamos Enter.
+        // Cooldown experimental de 100 ms: nao esperamos Enter.
         if(!timedClickGate.admitTrigger(now)){
             trace("CLICK_COOLDOWN_IGNORED_REMAINING_MS_"+timedClickGate.remainingMs(now));
             return false; // nunca consumir o gatilho do CMX
@@ -1614,7 +1622,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private void beginAutoRepeat(int token){
         if(token!=autoCountToken || !autoCountRunning || autoCountFirst)return;
         autoCountClicked=false;
-        autoCountDeadline=SystemClock.elapsedRealtime()+2500;
+        // Flutter pode fechar a janela do IME ao receber Enter, mas manter
+        // EditText marcado como focado. Esperar reabertura REAL antes de escrever.
+        autoCountDeadline=SystemClock.elapsedRealtime()+6000;
         trace("AUTO_COUNT_NEXT_"+(autoCountDone+1));
         pollAutoRepeatEditor(token);
     }
@@ -1633,12 +1643,66 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             cancelAutoCount("Tela mudou durante o contador; interrompido.");return;
         }
         AccessibilityNodeInfo editor=safeEditor(info,true);
+        // V3.0.4: campo focado != teclado aberto. No diagnostico da v3.0.3,
+        // InputMethod sumiu entre o segundo e o terceiro bipe, mas o editor
+        // continuou focado e o Bridge usou uma conexao IME antiga.
+        // Nunca inserir/enviar Enter virtual sem reabrir uma janela IME ativa.
+        if(!isImeVisible()){
+            if(!autoCountClicked){
+                trace("AUTO_IME_HIDDEN_REOPEN_"+(autoCountDone+1));
+                AccessibilityNodeInfo button="atividades".equals(info.screen)?
+                    activityKeyboard(info):findKeyboardTarget(info);
+                boolean requested=false;
+                if(button!=null && button.isEnabled() && button.isVisibleToUser()){
+                    AccessibilityNodeInfo target=clickable(button);
+                    Rect bounds=new Rect();target.getBoundsInScreen(bounds);
+                    if(!bounds.isEmpty() && !isPointCoveredByIme(bounds.centerX(),bounds.centerY())){
+                        try{requested=target.performAction(AccessibilityNodeInfo.ACTION_CLICK);}
+                        catch(RuntimeException ignored){}
+                        if(requested){
+                            markNativeButton(info.screen,"auto_reabrir_ime");
+                            trace("AUTO_NATIVE_REOPEN_CLICK_"+(autoCountDone+1));
+                        }
+                    }
+                }
+                // Alguns layouts Flutter nao expoem mais o botao depois de
+                // abrir o editor. Tocar NO EDITOR correto pode reconectar o IME.
+                if(!requested && editor!=null && editor.isEnabled() &&
+                   editor.isVisibleToUser() && editor.isEditable() &&
+                   !editor.isPassword() && !blockedLabel(tag(editor))){
+                    requested=focusOrClick(editor);
+                    if(requested)trace("AUTO_EDITOR_REOPEN_CLICK_"+(autoCountDone+1));
+                }
+                // Uma unica tentativa de reabertura; sem toques pendentes.
+                autoCountClicked=requested;
+                if(!requested){
+                    trace("AUTO_IME_REOPEN_UNAVAILABLE_"+(autoCountDone+1));
+                }
+            }
+            main.postDelayed(()->pollAutoRepeatEditor(token),110);
+            return;
+        }
         if(editor!=null && nativeEntryReady(info,editor) &&
            editor.isEditable() && !editor.isPassword() && !blockedLabel(tag(editor))){
             if(!editor.isFocused()){
                 focusOrClick(editor);
                 main.postDelayed(()->pollAutoRepeatEditor(token),45);return;
             }
+            if(!BridgeScanInputMethodService.hasLiveInputForMlog()){
+                // A janela pode estar aberta mas o Flutter ainda nao associou
+                // uma nova conexao ao editor. Uma unica tentativa de clique
+                // no CAMPO correto, nunca outro botao de produto.
+                traceOnceWaitingImeConnection();
+                long now=SystemClock.elapsedRealtime();
+                if(autoCountImeWaitStartedAt==0L)autoCountImeWaitStartedAt=now;
+                if(now-autoCountImeWaitStartedAt>350L && !autoCountEditorReconnectTried){
+                    autoCountEditorReconnectTried=true;
+                    if(focusOrClick(editor))trace("AUTO_EDITOR_RECONNECT_CLICK_"+(autoCountDone+1));
+                }
+                main.postDelayed(()->pollAutoRepeatEditor(token),90);
+                return;
+            }
+            trace("AUTO_IME_READY_"+(autoCountDone+1));
             // O Flutter pode conservar o texto da bipagem anterior mesmo apos Enter.
             // Forcar uma transicao texto antigo -> vazio -> mesmo codigo para a nova
             // repeticao ter um evento de alteracao real; nunca tocar outro campo.
@@ -1727,6 +1791,15 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             cancelAutoCount("Tela mudou antes do Enter; contador interrompido.");return;
         }
         AccessibilityNodeInfo editor=safeEditor(info,true);
+        if(!AutoRepeatPolicy.canSubmit(isImeVisible(),
+                BridgeScanInputMethodService.hasLiveInputForMlog())){
+            trace("AUTO_IME_LOST_BEFORE_ENTER_"+(autoCountDone+1));
+            // Ainda nao enviamos Enter para este item: reabrir o teclado
+            // uma vez, usando o prazo e a mesma quantidade pendente.
+            autoCountClicked=false;
+            main.postDelayed(()->pollAutoRepeatEditor(token),85);
+            return;
+        }
         if(editor==null || !editor.isFocused() || editor.isPassword() ||
            editor.getText()==null || !autoCountCode.equals(editor.getText().toString().trim())){
             cancelAutoCount("Nao confirmei que o codigo estava no campo. Parei sem Enter.");return;
