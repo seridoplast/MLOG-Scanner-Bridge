@@ -6,8 +6,8 @@ android {
         applicationId 'br.com.seridoplast.mlogbridge'
         minSdk 26
         targetSdk 35
-        versionCode 21
-        versionName '2.1-turbo-sem-duplicatas'
+        versionCode 22
+        versionName '2.2-qwerty-tab-pre-foco'
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17

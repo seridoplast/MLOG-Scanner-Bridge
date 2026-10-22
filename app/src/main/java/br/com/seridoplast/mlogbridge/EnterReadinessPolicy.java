@@ -6,7 +6,7 @@ final class EnterReadinessPolicy {
     static final long INITIAL_DELAY_MS=235L;
     // Reduz apenas a janela inicial quando o teclado Bridge ja esta selecionado.
     // A confirmacao ainda verifica que o codigo esta no campo correto.
-    static final long FAST_INITIAL_DELAY_MS=55L;
+    static final long FAST_INITIAL_DELAY_MS=30L;
     static final long MAX_READY_WAIT_MS=1650L;
     static final long RETRY_INTERVAL_MS=85L;
     static boolean canRetry(long ageMs){ return ageMs < MAX_READY_WAIT_MS; }

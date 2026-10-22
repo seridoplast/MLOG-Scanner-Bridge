@@ -1,0 +1,19 @@
+1. Baixar o ZIP v2.2 e deixar em Downloads.
+2. Abrir CMD:
+
+cd /d "%USERPROFILE%\Downloads\MLOG-Scanner-Bridge"
+git branch backup-v21-antes-v22
+powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v22_QWERTY_Tab_Resposta.zip') -DestinationPath . -Force"
+git add -A
+git commit -m "Bridge v22 QWERTY Tab resposta rapida"
+git push origin main
+
+3. GitHub Actions -> ultima execucao verde -> Artifacts -> MLOG-Scanner-Bridge-v22-APK.
+4. Extrair app-debug.apk para Downloads.
+5. CMD e depuracao USB autorizada:
+
+"%USERPROFILE%\Downloads\platform-tools\adb.exe" devices
+"%USERPROFILE%\Downloads\platform-tools\adb.exe" install -r "%USERPROFILE%\Downloads\app-debug.apk"
+
+6. Diagnostico:
+"%USERPROFILE%\Downloads\platform-tools\adb.exe" logcat -d -v time -s MLOGBridge:I > "%USERPROFILE%\Downloads\Bridge_v22_Log.txt"

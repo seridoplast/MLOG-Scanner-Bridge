@@ -59,6 +59,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     // Sem limite TOTAL de leituras durante a sessao. Limite apenas de
     // leituras SIMULTANEAMENTE pendentes para evitar OOM em erro prolongado.
     private final ScanQueue scanQueue=new ScanQueue(128);
+    private final java.util.ArrayDeque<Long> queuedAt=new java.util.ArrayDeque<>();
     private long totalFinished;
     private int workGeneration;
     private long lastEventProbe;
@@ -66,6 +67,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private long currentScanStartedAt;
     private boolean awaitingEnterConfirmation;
     private boolean configuredFastEvents;
+    private boolean configuredTriggerEvents;
+    private long lastTriggerPrefocus;
     private String pendingScreen="";
     private long lastDiagnostic;
     private boolean gestureInProgress;
@@ -89,7 +92,11 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                       AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS |
                       AccessibilityServiceInfo.FLAG_INPUT_METHOD_EDITOR;
             configuredFastEvents=fastImeMode();
-            si.notificationTimeout=configuredFastEvents?50:180;
+            configuredTriggerEvents=prefs().getBoolean("trigger_prefocus",false);
+            if(configuredTriggerEvents)
+                si.flags|=AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS;
+            else si.flags&=~AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS;
+            si.notificationTimeout=configuredFastEvents?15:180;
             setServiceInfo(si);
         }
         receiver=new BroadcastReceiver(){
@@ -119,7 +126,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             prefs().edit().putBoolean("prearm_field",false).apply();
             // Versoes anteriores podiam deixar o teclado oculto pelo controlador.
             restoreKeyboard();
-            status("v2.1: modo rapido com protecao contra leitura duplicada; CMX somente leitura.");
+            status("v2.2: teclado QWERTY/Tab, prioridade de eventos e pre-foco opcional.");
         }catch(RuntimeException e){status("Falha ao registrar o broadcast do scanner.");}
     }
 
@@ -132,13 +139,17 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     /** O usuario pode alternar sem reiniciar a acessibilidade. */
     void refreshEventThrottle(){
         boolean fast=fastImeMode();
-        if(fast==configuredFastEvents)return;
+        boolean trigger=prefs().getBoolean("trigger_prefocus",false);
+        if(fast==configuredFastEvents && trigger==configuredTriggerEvents)return;
         AccessibilityServiceInfo info=getServiceInfo();
         if(info==null)return;
-        info.notificationTimeout=fast?50:180;
+        info.notificationTimeout=fast?15:180;
+        if(trigger)info.flags|=AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS;
+        else info.flags&=~AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS;
         try{
             setServiceInfo(info);
             configuredFastEvents=fast;
+            configuredTriggerEvents=trigger;
         }catch(RuntimeException ex){trace("EVENT_THROTTLE_UNAVAILABLE");}
     }
     private void status(String s){ScanCoordinator.status(this,s);}
@@ -179,6 +190,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             status("Excesso de leituras simultaneas: confirme a tela antes de prosseguir.");
             trace("QUEUE_FULL");return;
         }
+        queuedAt.addLast(now);
         trace(idle?"SCAN_RECEIVED":"SCAN_QUEUED");
         if(idle)startQueuedScan();
         else status("Leitura recebida durante a anterior; aguardando na fila.");
@@ -188,6 +200,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         if(code==null)return;
         final int epoch=++workGeneration;
         currentScanStartedAt=SystemClock.elapsedRealtime();
+        if(!queuedAt.isEmpty())
+            trace("QUEUE_WAIT_MS_"+(currentScanStartedAt-queuedAt.peekFirst()));
         trace("SCAN_START");
         onBarcode(code);
         // Fail-safe: nunca manter a fila bloqueada indefinidamente.
@@ -213,13 +227,14 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         prearmFallbackUsed=false;
         ++serial; // cancelar tentativas de foco da leitura anterior
         ++enterAttempt; // cancelar callbacks de Enter da leitura anterior
+        if(!queuedAt.isEmpty())queuedAt.pollFirst();
         boolean more=scanQueue.complete();
         ++workGeneration; // invalida timeout antigo
         if(more){
             // Breve intervalo para o Flutter recompor a arvore apos Enter.
             // O Flutter precisa reconstruir a arvore. Aguardar so um frame
             // curto; cada nova leitura voltara a verificar campo/foco.
-            main.postDelayed(this::startQueuedScan,fastImeMode()?25:65);
+            main.postDelayed(this::startQueuedScan,fastImeMode()?16:65);
         }
     }
 
@@ -238,6 +253,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         directEnterSent=false;
         cancelPending();
         scanQueue.clear();
+        queuedAt.clear();
         preparedAt=0;
         preparedScreen="";
         prearmFallbackUsed=false;
@@ -327,11 +343,11 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         long time=SystemClock.elapsedRealtime();
         // Quando Flutter finalmente expuser o EditText, reagir ao evento.
         // Diminui espera da primeira leitura sem disparar outro clique.
-        if(pendingCode!=null && !pendingScreen.isEmpty() && time-lastEventProbe>75){
+        if(pendingCode!=null && !pendingScreen.isEmpty() && time-lastEventProbe>(fastImeMode()?25:75)){
             lastEventProbe=time;
             final int token=serial;
             final String screen=pendingScreen;
-            main.postDelayed(()->tryPending(token,screen),65);
+            main.postDelayed(()->tryPending(token,screen),fastImeMode()?18:65);
         }
         // Depois do Enter, o Flutter pode limpar o campo em um evento anterior
         // ao proximo timer. Verificar rapidamente para liberar a fila, sem
@@ -341,12 +357,12 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             (event.getEventType()==AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
              event.getEventType()==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
              event.getEventType()==AccessibilityEvent.TYPE_VIEW_FOCUSED)){
-            if(time-lastEnterEventProbe>35){
+            if(time-lastEnterEventProbe>(fastImeMode()?16:35)){
                 lastEnterEventProbe=time;
                 final long attempt=enterAttempt;
                 final String expected=lastEnteredByBridge;
                 if(!expected.isEmpty())
-                    main.postDelayed(()->confirmEnteredCode(expected,attempt),18);
+                    main.postDelayed(()->confirmEnteredCode(expected,attempt),fastImeMode()?12:18);
             }
         }
         if(pendingCode==null && preparedAt>0 &&
@@ -372,6 +388,47 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                     ". Aguarda bipe.");
             }
         }
+    }
+
+    /** Pre-foco experimental: e acionado no DOWN do botao fisico, ANTES do
+     * broadcast que contem o codigo. Nao consome a tecla, nao inicia o motor
+     * nem altera a configuracao do CMX. Exige que o Android exponha a tecla. */
+    @Override protected boolean onKeyEvent(KeyEvent event){
+        if(event==null || !prefs().getBoolean("trigger_prefocus",false) ||
+           !ScanCoordinator.isActive(this))return false;
+        if(event.getAction()!=KeyEvent.ACTION_DOWN || event.getRepeatCount()!=0 ||
+           !isScannerTriggerKey(event.getKeyCode()))return false;
+        if(!scanQueue.isIdle() || pendingCode!=null)return false;
+        long now=SystemClock.elapsedRealtime();
+        if(now-lastTriggerPrefocus<120 || now<navigationGuardUntil)return false;
+        AccessibilityNodeInfo root=mlogRoot();
+        if(root==null || isBlockingOverlay(root))return false;
+        ScreenInfo info=inspect(root);
+        if(info.login || info.dialog || "desconhecida".equals(info.screen))return false;
+        lastTriggerPrefocus=now;
+        trace("TRIGGER_KEY_PREFocus_"+event.getKeyCode());
+        AccessibilityNodeInfo editor=safeEditor(info,true);
+        if(editor!=null && nativeEntryReady(info,editor))return false;
+        if("consulta".equals(info.screen) || "conferencia_venda".equals(info.screen)){
+            if(editor!=null)focusOrClick(editor);
+            else if(info.searchField!=null)focusOrClick(clickable(info.searchField));
+            return false;
+        }
+        if(isImeVisible())return false;
+        AccessibilityNodeInfo button="atividades".equals(info.screen)?
+                activityKeyboard(info):findKeyboardTarget(info);
+        if(button!=null && focusOrClick(button)){
+            markNativeButton(info.screen,"gatilho fisico");
+            trace("TRIGGER_PREFOCUS_CLICK_OK");
+        }else trace("TRIGGER_PREFOCUS_ICON_NOT_EXPOSED");
+        return false; // scanner recebe normalmente o gatilho
+    }
+
+    private static boolean isScannerTriggerKey(int code){
+        return (code>=KeyEvent.KEYCODE_F1 && code<=KeyEvent.KEYCODE_F12) ||
+               (code>=KeyEvent.KEYCODE_BUTTON_1 && code<=KeyEvent.KEYCODE_BUTTON_16) ||
+               code==KeyEvent.KEYCODE_BUTTON_L1 || code==KeyEvent.KEYCODE_BUTTON_R1 ||
+               code==KeyEvent.KEYCODE_CAMERA || code==KeyEvent.KEYCODE_FOCUS;
     }
 
     private AccessibilityNodeInfo mlogRoot(){
@@ -635,7 +692,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         trace("WAIT_EDITOR_"+type);
     }
     private void retryFill(int id,String intendedScreen){
-        for(int delay:new int[]{90,170,280,430,610,850,1150,1500,2000,2700,3100}){
+        int[] intervals=fastImeMode()?new int[]{25,60,110,175,260,390,600,900,1300,1900,2700,3100}:
+                new int[]{90,170,280,430,610,850,1150,1500,2000,2700,3100};
+        for(int delay:intervals){
             main.postDelayed(()->tryPending(id,intendedScreen),delay);
         }
         scheduleRestore(id);
@@ -832,7 +891,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         long age=SystemClock.elapsedRealtime()-confirmStartedAt;
         // O diagnostico mostrou que o campo esta preenchido em ~120-300 ms.
         // Dar uma janela curta ao Enter do CMX, nao aguardar 600 ms.
-        long readiness=fastImeMode()?45:90;
+        long readiness=fastImeMode()?25:90;
         if(age<readiness){scheduleConfirm(expected,attempt,readiness-age);return;}
         if(!editor.isFocused()){
             if(age<1150){
@@ -855,7 +914,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             directEnterSentAt=SystemClock.elapsedRealtime();
             trace("FAST_IME_MODE_"+(fastImeMode()?"ON":"OFF"));
             trace("BRIDGE_IME_ENTER_SENT");
-            scheduleConfirm(expected,attempt,fastImeMode()?55:110);
+            trace("ENTER_AFTER_FILL_MS_"+(SystemClock.elapsedRealtime()-confirmStartedAt));
+            scheduleConfirm(expected,attempt,fastImeMode()?35:110);
             return;
         }
         // Prioridade v1.8: InputConnection Android 13+, sem toque no Gboard.
@@ -995,7 +1055,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     }
 
     private void scheduleConfirm(String expected,long id,long delay){
-        main.postDelayed(()->confirmEnteredCode(expected,id),Math.max(50,delay));
+        main.postDelayed(()->confirmEnteredCode(expected,id),Math.max(fastImeMode()?16:50,delay));
     }
 
     /** Fallback exclusivo do equipamento CMX 720x1440 / Gboard observado.

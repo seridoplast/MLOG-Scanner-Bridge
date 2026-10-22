@@ -61,6 +61,13 @@ public final class BridgeScanInputMethodService extends InputMethodService {
         return okDown || okUp; // nunca reenviar por eventual resultado parcial.
     }
 
+    private static boolean isLoginHint(CharSequence hint){
+        if(hint==null)return false;
+        String s=hint.toString().toLowerCase(java.util.Locale.ROOT);
+        return s.contains("login") || s.contains("senha") || s.contains("password") ||
+               s.contains("usuario") || s.contains("usuário") || s.contains("e-mail");
+    }
+
     private static boolean isPassword(int type){
         int c=type&InputType.TYPE_MASK_CLASS;
         int v=type&InputType.TYPE_MASK_VARIATION;
@@ -84,8 +91,11 @@ public final class BridgeScanInputMethodService extends InputMethodService {
 
     @Override public void onStartInput(EditorInfo info,boolean restarting){
         super.onStartInput(info,restarting);
+        boolean wasTargetMlog=targetMlog;
         targetMlog=info!=null && ScanCoordinator.TARGET.equals(info.packageName);
-        manual=!targetMlog; // Para outros apps, nunca bloquear a digitacao.
+        // Em login/senha abrir teclado manual. Nao carregar manual de outros apps.
+        boolean loginField=info!=null && (isPassword(info.inputType) || isLoginHint(info.hintText));
+        manual=!targetMlog || loginField || (targetMlog && wasTargetMlog && manual);
         numeric=info!=null && ((info.inputType&InputType.TYPE_MASK_CLASS)==InputType.TYPE_CLASS_NUMBER);
         upper=false;
         if(panel!=null)render();
@@ -142,47 +152,73 @@ public final class BridgeScanInputMethodService extends InputMethodService {
         top.addView(switcher,sp);
         panel.addView(top);
         if(manual){
-            row(numeric?new String[]{"1","2","3"}:new String[]{"1","2","3","4","5","6","7","8","9","0"});
+            // Mesma disposicao QWERTY do Gboard, sem fileira numerica em cima.
+            // Tecla Tab atua somente na digitacao MANUAL. A confirmacao
+            // automatica do scanner continua enviando KEYCODE_ENTER.
             if(numeric){
+                row(new String[]{"1","2","3"});
                 row(new String[]{"4","5","6"});
                 row(new String[]{"7","8","9"});
                 row(new String[]{".","0","⌫"});
+                row(new String[]{"ABC","Espaço","Tab ↹"});
             }else{
-                rowChars("qwertyuiop");
-                rowChars("asdfghjkl");
-                rowChars("zxcvbnm");
+                rowChars("qwertyuiop",0);
+                rowChars("asdfghjkl",dp(18));
+                row(new String[]{"⇧",upper?"Z":"z",upper?"X":"x",upper?"C":"c",
+                        upper?"V":"v",upper?"B":"b",upper?"N":"n",upper?"M":"m","⌫"});
+                row(new String[]{"?123",",","Espaço",".","Tab ↹"});
             }
-            row(new String[]{"⇧","ABC/123","Espaço","⌫","✓"});
         }
     }
 
-    private void rowChars(String chars){
+    private void rowChars(String chars,int inset){
         String[] names=new String[chars.length()];
-        for(int i=0;i<chars.length();i++)names[i]=upper?chars.substring(i,i+1).toUpperCase():chars.substring(i,i+1);
-        row(names);
+        for(int i=0;i<chars.length();i++){
+            String c=chars.substring(i,i+1);
+            names[i]=upper?c.toUpperCase():c;
+        }
+        row(names,inset);
     }
-    private void row(String[] names){
+    private void row(String[] names){row(names,0);}
+    private void row(String[] names,int inset){
         LinearLayout line=new LinearLayout(this);line.setOrientation(LinearLayout.HORIZONTAL);
-        line.setPadding(dp(3),dp(3),dp(3),dp(3));
+        line.setPadding(dp(3)+inset,dp(3),dp(3)+inset,dp(3));
         for(String n:names){
             TextView t=key(n,()->type(n),1);
-            LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,dp(46),"Espaço".equals(n)?2.5f:1f);
+            float weight="Espaço".equals(n)?3.8f:("Tab ↹".equals(n)?1.5f:1f);
+            LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,dp(46),weight);
             lp.leftMargin=dp(2);lp.rightMargin=dp(2);
             line.addView(t,lp);
         }
         panel.addView(line);
     }
+
     private void type(String value){
         InputConnection ic=getCurrentInputConnection();
         if(ic==null)return;
         if("⌫".equals(value)){ic.deleteSurroundingText(1,0);return;}
         if("⇧".equals(value)){upper=!upper;render();return;}
-        if("ABC/123".equals(value)){numeric=!numeric;render();return;}
-        if("✓".equals(value)){
-            if(!sendDefaultEditorAction(true))sendDownUpKeyEvents(KeyEvent.KEYCODE_ENTER);
+        if("?123".equals(value) || "ABC".equals(value)){numeric=!numeric;render();return;}
+        if("Tab ↹".equals(value)){
+            // No login, avancar para a senha sem submeter o formulario.
+            // Preferir NEXT quando o aplicativo expuser essa acao.
+            EditorInfo info=getCurrentInputEditorInfo();
+            boolean next=info!=null &&
+                (info.imeOptions&EditorInfo.IME_MASK_ACTION)==EditorInfo.IME_ACTION_NEXT;
+            if(next && ic.performEditorAction(EditorInfo.IME_ACTION_NEXT))return;
+            long t=SystemClock.uptimeMillis();
+            KeyEvent down=new KeyEvent(t,t,KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_TAB,0);
+            KeyEvent up=new KeyEvent(t,t+6,KeyEvent.ACTION_UP,KeyEvent.KEYCODE_TAB,0);
+            boolean sent=ic.sendKeyEvent(down);
+            sent=ic.sendKeyEvent(up)||sent;
+            if(!sent)ic.performEditorAction(EditorInfo.IME_ACTION_NEXT);
             return;
         }
         if("Espaço".equals(value))value=" ";
         ic.commitText(value,1);
+        if(upper && value.length()==1 && Character.isLetter(value.charAt(0))){
+            upper=false;
+            if(manual && !numeric)render();
+        }
     }
 }

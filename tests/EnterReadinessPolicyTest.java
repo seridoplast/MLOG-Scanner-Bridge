@@ -4,7 +4,7 @@ final class EnterReadinessPolicyTest {
     static void check(boolean ok, String msg){ if(!ok)throw new AssertionError(msg); }
     public static void main(String[] args){
         check(EnterReadinessPolicy.INITIAL_DELAY_MS>=200,"stable initial delay");
-        check(EnterReadinessPolicy.FAST_INITIAL_DELAY_MS>=40 &&
+        check(EnterReadinessPolicy.FAST_INITIAL_DELAY_MS>=20 &&
               EnterReadinessPolicy.FAST_INITIAL_DELAY_MS<EnterReadinessPolicy.INITIAL_DELAY_MS,
               "fast mode has a guarded shorter delay");
         check(EnterReadinessPolicy.canRetry(200),"early false-negative is retried");

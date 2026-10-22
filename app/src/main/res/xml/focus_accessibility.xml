@@ -8,4 +8,4 @@
     android:notificationTimeout="180"
     android:canRetrieveWindowContent="true"
     android:canPerformGestures="true"
-    android:canRequestFilterKeyEvents="false" />
+    android:canRequestFilterKeyEvents="true" />

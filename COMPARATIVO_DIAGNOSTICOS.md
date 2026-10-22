@@ -1,20 +1,15 @@
-# Comparativo dos diagnósticos — 21/10/2026
+# Análise da captura de 22/10/2026
 
-| Medida observada no log | Key Mapper (referência) | Bridge v2.0 (modo rápido) |
-|---|---:|---:|
-| Decodificações físicas registradas pelo serviço PDA | 14 | 9 |
-| Janela entre primeira e última decodificação | 6,878 s | 17,226 s |
-| Menor intervalo entre decodificações físicas | 192 ms | 1.040 ms |
-| Chamadas `SET_TEXT_OK` pelo Bridge | Não se aplica | 20 |
-| Tentativas `BRIDGE_IME_ENTER_SENT` | Não se aplica | 20 |
-| Leituras do Bridge recebidas + enfileiradas visíveis | 0 | 19 (9 recebidas + 10 enfileiradas) |
-| Segundo broadcast enfileirado após uma leitura | Não se aplica | 69-84 ms em 9 pares examinados |
-| Tempo por ciclo do Bridge (mediana `SCAN_START` a `SCAN_FINISH`) | Sem marcador correspondente | 327 ms (19 ciclos completos visíveis) |
+A captura `Diagnostico_MLOG_20261022_080508.zip` contém eventos Android e vídeo. Nos eventos do Bridge foram identificados 17 ciclos:
 
-**Cuidado com a comparação:** os dois testes não foram executados com o mesmo ritmo de operador, itens ou duração ativa; os valores são *observados*, não um benchmark controlado. O Key Mapper não emite as mesmas marcações de confirmação. A comparação mais importante é que a v2.0 aceitou 19 eventos do Bridge embora o serviço físico tenha registrado só 9 decodificações no trecho, com uma segunda entrada 69-84 ms após a primeira.
+- 17 `SCAN_START`
+- 17 `BRIDGE_IME_ENTER_SENT`
+- 9 `SCAN_FINISH_campo_mudou`
+- 8 `SCAN_FINISH_direct_enter_nao_verificado`
+- mediana de 574 ms por ciclo; as amostras incluíram 186–875 ms
 
-**Causa provável verificável no código:** `ScanCoordinator.accept(code, fast)` reduziu a janela para 65 ms em modo rápido. Essa janela aceita os ecos observados de 69-84 ms. Na referência, o menor intervalo observado de duas decodificações físicas foi 192 ms; por isso a v2.1 usa 140 ms.
+A presença de `BRIDGE_IME_ENTER_SENT` **não** comprova que o aplicativo MLOG concluiu a operação. Alguns campos permaneciam preenchidos na última verificação. Isso pode ser latência do Flutter, carregamento de pedidos ou campo que conserva texto, e exige validação pelo contador do pedido.
 
-**O que não dá para provar apenas com o log:** a contagem de itens efetivamente confirmados no backend do MLOG, se cada segunda transmissão é do mesmo action ou de actions diferentes, ou o melhor tempo possível sob fluxo real. A v2.1 registra somente aceitos/descartados para próxima validação.
+O teclado próprio gera a tecla Enter antes de procurar uma tecla no Gboard. O ganho de tempo pode vir de antecipar o campo físico via gatilho e reduzir o agrupamento de eventos; **não há prova de que esses ajustes igualarão o Key Mapper**. Testes anteriores com Key Mapper e Bridge usaram velocidades de bipagem distintas e não permitem comparar diretamente os tempos de servidor.
 
-No log v2.1, o sufixo `_CMX`, `_HIK` ou `_GENERIC` informa **somente a action** que transmitiu o evento, sem salvar o codigo. Esse dado deve permitir decidir se os ecos vem de dois canais diferentes ou da retransmissao de um mesmo canal.
+A deduplicação de 140 ms foi preservada para impedir a regressão da v2.0 (broadcasts duplicados em 69–84 ms). Não foi removida em nome da velocidade.
