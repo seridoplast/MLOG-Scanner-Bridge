@@ -1,15 +1,17 @@
-# Análise da captura de 22/10/2026
+# Medição baseada na v2.6
 
-A captura `Diagnostico_MLOG_20261022_080508.zip` contém eventos Android e vídeo. Nos eventos do Bridge foram identificados 17 ciclos:
+Fonte: `Diagnostico_MLOG_20261022_104146.zip`, arquivo `eventos_android.txt`.
 
-- 17 `SCAN_START`
-- 17 `BRIDGE_IME_ENTER_SENT`
-- 9 `SCAN_FINISH_campo_mudou`
-- 8 `SCAN_FINISH_direct_enter_nao_verificado`
-- mediana de 574 ms por ciclo; as amostras incluíram 186–875 ms
+Foram registrados 16 `SCAN_FINISH` com os seguintes desfechos:
+- 11 `campo_mudou`;
+- 1 `campo_saiu`;
+- 3 `sem_confirmacao_cmx`;
+- 1 `tela_bloqueada`.
 
-A presença de `BRIDGE_IME_ENTER_SENT` **não** comprova que o aplicativo MLOG concluiu a operação. Alguns campos permaneciam preenchidos na última verificação. Isso pode ser latência do Flutter, carregamento de pedidos ou campo que conserva texto, e exige validação pelo contador do pedido.
+Para os **12** ciclos com mudança ou desaparecimento do campo, os valores `SCAN_ELAPSED_MS` foram: **764, 507, 207, 707, 900, 148, 717, 380, 361, 1051, 997, 178**.
 
-O teclado próprio gera a tecla Enter antes de procurar uma tecla no Gboard. O ganho de tempo pode vir de antecipar o campo físico via gatilho e reduzir o agrupamento de eventos; **não há prova de que esses ajustes igualarão o Key Mapper**. Testes anteriores com Key Mapper e Bridge usaram velocidades de bipagem distintas e não permitem comparar diretamente os tempos de servidor.
+**Média aritmética = 576,4 ms; mediana = 607 ms; máximo = 1051 ms.**
 
-A deduplicação de 140 ms foi preservada para impedir a regressão da v2.0 (broadcasts duplicados em 69–84 ms). Não foi removida em nome da velocidade.
+Adotamos um intervalo fixo de **750 ms**, ~174 ms acima da média, entre tentativas de clique no botão nativo do MLOG. Este intervalo é uma decisão de configuração, não uma garantia de que toda operação já terá sido confirmada. O usuário optou por desbloqueio temporizado em vez de uma trava indefinida condicionada ao Enter.
+
+**Trade-off:** até ~1,33 tentativas de clique por segundo podem ser aceitas por essa janela. Gatilhos mais rápidos são ignorados pelo Bridge, não guardados. Isso prioriza evitar cliques duplos e travamentos, mas não alcança ainda a meta de ritmo obtida com Key Mapper.

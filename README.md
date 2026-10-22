@@ -1,64 +1,71 @@
-# MLOG Scanner Bridge v2.8 — observar Enter e destravar sem cliques antigos
+# MLOG Scanner Bridge v2.9 — Bloqueio temporizado (750 ms)
 
-## Base
+## Base e diagnóstico
 
-Derivado da v2.7 com as duas logos fornecidas e a regra de **um clique por ciclo**. CMX continua responsavel por decodificar e enviar Enter. O Bridge **nao envia Enter automaticamente** e **nao guarda cliques para depois**.
+Esta edição parte da **v2.6** (fluxo que abria o campo do MLOG corretamente) e mantém as logos incorporadas nas versões posteriores. O arquivo `Diagnostico_MLOG_20261022_104146.zip` foi usado para a medição.
 
-## Evidencia do diagnostico 22/10/2026 11:22–11:24
+Entre 16 ciclos registrados, **12 terminaram com `SCAN_FINISH_campo_mudou` ou `SCAN_FINISH_campo_saiu`**. Os tempos `SCAN_ELAPSED_MS` destes 12 ciclos foram (em milissegundos):
 
-- `CMX_ENTER_PASSIVE_WAIT` / `CMX_ENTER_NOT_OBSERVED` depois de 1.100 ms.
-- `GATE_LOCKED_UNCONFIRMED` colocava o ciclo em `NEEDS_ATTENTION` permanentemente.
-- 11 gatilhos registrados como `TRIGGER_IGNORED_LOCKED_*` durante a captura.
-- Outras leituras apresentaram `CMX_FIELD_CHANGED` e `GATE_RELEASE_CONFIRMED` em 101–232 ms.
+`764, 507, 207, 707, 900, 148, 717, 380, 361, 1051, 997, 178`
 
-## Alteracoes
+- **Média: 576,4 ms**; mediana: **607 ms**.
+- Bloqueio fixo definido: **750 ms**, cerca de 174 ms acima da média.
+- Estes são tempos de processamento observados pelo Bridge, **não** uma prova do tempo do servidor nem da confirmação física do Enter. Há ciclos acima de 750 ms.
 
-1. **Deteccao de Enter real, quando acessivel**: observa `KEYCODE_ENTER` / `KEYCODE_NUMPAD_ENTER` por `AccessibilityService.onKeyEvent()` e `InputMethodService.onKeyUp()`; retorna `false`/`super` e nao consome/reenvia o Enter.
-2. **Liberacao apos Enter observado**: se Enter chegou apos codigo inserido e a janela nao estiver em modal, libera o ciclo apos curta verificacao (90 ms). Isso observa que a tecla foi recebida no Android, mas nao garante resposta do servidor MLOG.
-3. **Confirmacao tardia por UI**: quando 1.100 ms expiram sem confirmacao verificavel, continua observando por ate 8 segundos a mudanca de tela, desaparicao do campo ou alteracao do conteudo. Sem alteracao, **nao** desbloqueia apenas por tempo.
-4. **Novo gatilho reavalia o estado** antes de recusar: se a tela ja mudou e o evento de acessibilidade atrasou, libera e permite iniciar o proximo ciclo. Nunca executa clique antigo em fila.
-5. **Protecao contra falsos positivos**: outro campo editavel como Quantidade nao comprova conclusao. Modais e login continuam bloqueados.
-6. **Diagnostico**: `RAW_ENTER_KEY_OBSERVED_accessibility`, `RAW_ENTER_KEY_OBSERVED_bridge_ime`, `GATE_RELEASE_RAW_ENTER`, `LATE_CONFIRMATION_OBSERVED_*`, `GATE_RELEASE_LATE_UI_CHANGE`, `LATE_CONFIRMATION_NOT_VISIBLE`.
+## Funcionamento
 
-### Limitacao importante
+1. O primeiro gatilho aceito inicia a janela de 750 ms e tenta abrir/focar o campo do MLOG **uma única vez**.
+2. Durante os 750 ms, novos gatilhos **não geram nenhum clique e não ficam em fila**. Leituras recebidas nesse intervalo são ignoradas pelo Bridge; o CMX continuará operando conforme sua própria configuração.
+3. Decorridos 750 ms, o **próximo gatilho** inicia um ciclo novo, mesmo que o MLOG não tenha exposto a confirmação anterior ao Android. Não é necessário rearmar manualmente.
+4. Se o código chegar por broadcast sem evento físico do gatilho, o próprio broadcast pode abrir um ciclo temporizado, respeitando o mesmo prazo. Retransmissões desse mesmo bipe são descartadas.
+5. Um mesmo ciclo nunca envia um segundo clique atrasado no botão nativo do MLOG.
+6. **O Bridge não envia Enter automático.** O Enter permanece sob responsabilidade do CMX Scanner, como na v2.6. A digitação manual do teclado Bridge permanece disponível.
+7. A versão mantém o pré-foco pelo gatilho, o reconhecimento dos layouts de produtos (inclusive quantidade), consulta, atividades, o tema claro/escuro e as logos.
 
-Se o CMX enviar Enter sintetico diretamente ao MLOG por um mecanismo que nao publica um KeyEvent, o Bridge **nao consegue interceptar a tecla** com garantia. Nesse caso, detecta o resultado visivel no Flutter. Se o Flutter nao expuser nem Enter nem mudanca de campo, mantem o bloqueio por seguranca e oferece o rearme manual apos conferencia. Nunca confundir `Enter enviado` com `item confirmado no servidor`.
+**Importante:** a proteção de 750 ms não espera a confirmação, então uma operação mais lenta que 750 ms pode ainda estar em processamento quando o próximo gatilho for aceito. Teste fora de pedidos reais e confira se não há duplicação/perda de itens.
 
-## Compilar no GitHub
+## Atualização pelo CMD do Windows
 
-No Windows (ZIP salvo em Downloads):
+Baixe `MLOG_Scanner_Bridge_v29_Bloqueio_750ms.zip` para Downloads e execute:
 
-```cmd
+```bat
 cd /d "%USERPROFILE%\Downloads\MLOG-Scanner-Bridge"
-powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v28_Enter_Observado.zip') -DestinationPath . -Force"
+powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v29_Bloqueio_750ms.zip') -DestinationPath . -Force"
 git add -A
-git commit -m "Bridge v28 desbloqueio por Enter e confirmacao tardia"
+git commit -m "Bridge v29 bloqueio temporal de 750 ms"
 git push origin main
 ```
 
-Em `Actions`, baixar o artefato `MLOG-Scanner-Bridge-v28-APK` gerado com sucesso. O APK nao vem pronto neste ZIP.
+Em https://github.com/seridoplast/MLOG-Scanner-Bridge/actions, abra a execução bem-sucedida e baixe o artefato `MLOG-Scanner-Bridge-v29-APK`. Extraia `app-debug.apk` para Downloads.
 
-## Instalar via ADB
+## Instalação pelo ADB
 
-Extrair `app-debug.apk` para Downloads:
+Conecte o coletor por USB, autorize a depuração e rode:
 
-```cmd
+```bat
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" devices
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" install -r "%USERPROFILE%\Downloads\app-debug.apk"
 ```
 
-## Capturar o novo diagnostico
+Precisa aparecer `device` no primeiro comando e `Success` no segundo. A opção de Enter automático deve estar habilitada no CMX. O próprio Bridge não deve tentar enviar outro Enter.
 
-```cmd
-"%USERPROFILE%\Downloads\platform-tools\adb.exe" logcat -d -v time -s MLOGBridge:I > "%USERPROFILE%\Downloads\Bridge_v28_Log.txt"
+## Diagnóstico da versão
+
+```bat
+"%USERPROFILE%\Downloads\platform-tools\adb.exe" logcat -d -v time -s MLOGBridge:I > "%USERPROFILE%\Downloads\Bridge_v29_Log.txt"
 ```
 
-## Validacao local
+Eventos relevantes:
+- `CLICK_COOLDOWN_STARTED_750_MS`: novo ciclo aceito.
+- `CLICK_COOLDOWN_IGNORED_REMAINING_MS_...`: gatilho ignorado durante a janela.
+- `SECOND_NATIVE_CLICK_PREVENTED_...`: clique repetido não executado.
+- `BROADCAST_IGNORED_COOLDOWN_OR_ECHO_...`: transmissão repetida/bloqueada.
+- `BROADCAST_REARM_NEW_CYCLE`: novo ciclo admitido sem evento físico de gatilho.
+- `OLD_CYCLE_CANCELLED_ON_REARM`: tarefas antigas canceladas ao começar ciclo novo.
 
-- Parser Java para os 10 fontes: OK
-- `ScanCycleGateTest`: OK
-- `ConfirmationReleasePolicyTest`: OK
-- XMLs validos, ZIP integro: OK
-- **Compilacao Android, teste no coletor e Enter sintetico CMX: nao validados neste ambiente**
+## Validação e limitações
 
-Teste primeiro em um coletor fora de pedidos reais, comparando cinco leituras lentas com uma sequencia de dez. Conferir que nao houve lancamentos duplicados. O Bridge pode rejeitar um gatilho quando a operacao anterior ainda nao terminou; a correcao evita bloqueio persistente quando uma confirmacao tardia e visivel.
+- Código-fonte Java analisado sintaticamente com parser Java 17.
+- Testes locais de janela de tempo, deduplicação, fila e políticas de Enter executados.
+- Não há Android SDK e Gradle neste ambiente: **a compilação APK não foi executada aqui**.
+- A versão precisa ser compilada no GitHub e validada em **um coletor de testes** antes de instalar em escala.

@@ -57,16 +57,6 @@ public final class BridgeScanInputMethodService extends InputMethodService {
               v==InputType.TYPE_NUMBER_VARIATION_PASSWORD;
     }
 
-    // Se o CMX entregar Enter ao IME como tecla fisica, avisar o Bridge
-    // sem consumir a tecla e sem enviar outro Enter para o MLOG.
-    @Override public boolean onKeyUp(int keyCode,KeyEvent event){
-        if(targetMlog && (keyCode==KeyEvent.KEYCODE_ENTER ||
-                          keyCode==KeyEvent.KEYCODE_NUMPAD_ENTER)){
-            MlogFocusAccessibilityService.reportEnterFromBridgeIme();
-        }
-        return super.onKeyUp(keyCode,event);
-    }
-
     @Override public void onCreate(){super.onCreate();active=this;}
     @Override public void onDestroy(){if(active==this)active=null;super.onDestroy();}
 

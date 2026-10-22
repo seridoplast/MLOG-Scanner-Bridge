@@ -6,8 +6,8 @@ android {
         applicationId 'br.com.seridoplast.mlogbridge'
         minSdk 26
         targetSdk 35
-        versionCode 28
-        versionName '2.8-enter-observado'
+        versionCode 29
+        versionName '2.9-tempo-fixo-750ms'
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17

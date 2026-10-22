@@ -1,1 +1,1 @@
-Leia README.md e ATUALIZAR_PELO_CMD.txt para instalar a versao v2.3.
+Leia README.md e ATUALIZAR_PELO_CMD.txt para compilar a v2.9 no GitHub Actions e instalar pelo ADB, sem Android Studio.

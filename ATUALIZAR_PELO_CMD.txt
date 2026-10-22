@@ -1,38 +1,25 @@
-## CMD — atualizar o projeto no GitHub
+MLOG Scanner Bridge v2.9 — COMANDOS NO CMD
 
-Baixe o ZIP em Downloads e execute:
+1) Salve MLOG_Scanner_Bridge_v29_Bloqueio_750ms.zip em Downloads.
 
-```bat
 cd /d "%USERPROFILE%\Downloads\MLOG-Scanner-Bridge"
-powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v26_Botao_A_Cada_Gatilho.zip') -DestinationPath . -Force"
+powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v29_Bloqueio_750ms.zip') -DestinationPath . -Force"
 git add -A
-git commit -m "MLOG Bridge v26 botao nativo por gatilho"
+git commit -m "Bridge v29 bloqueio temporal de 750 ms"
 git push origin main
-```
 
-Abra https://github.com/seridoplast/MLOG-Scanner-Bridge/actions e baixe `MLOG-Scanner-Bridge-v26-APK` quando a compilacao estiver verde.
+2) GitHub Actions: https://github.com/seridoplast/MLOG-Scanner-Bridge/actions
+   Baixe o artefato MLOG-Scanner-Bridge-v29-APK quando a execucao ficar verde.
+   Extraia o arquivo app-debug.apk para Downloads.
 
-## CMD — instalar por depuracao USB
+3) Conecte o coletor e instale:
 
-Extrai o `app-debug.apk` para Downloads:
-
-```bat
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" devices
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" install -r "%USERPROFILE%\Downloads\app-debug.apk"
-```
 
-## Teste seguro
-1. Mantenha `Pre-foco pelo gatilho` e `Leitura assistida` ativados. Configure o Enter automatico no CMX.
-2. Teste primeiro em um pedido ficticio: um item comum, outro com quantidade e a tela de atividades.
-3. Com o campo fechado, aperte o gatilho uma vez: o Bridge deve clicar no botao nativo do MLOG. Com o campo ja aberto, nao deve fechar nem alternar o teclado.
-4. Teste bipagens consecutivas e cheque uma leitura por bipe; confirme que o MLOG processou cada Enter.
-5. Para comparar o momento do gatilho e do codigo:
+4) Diagnostico:
 
-```bat
-"%USERPROFILE%\Downloads\platform-tools\adb.exe" logcat -d -v time -s MLOGBridge:I > "%USERPROFILE%\Downloads\Bridge_v26_Log.txt"
-```
+"%USERPROFILE%\Downloads\platform-tools\adb.exe" logcat -d -v time -s MLOGBridge:I > "%USERPROFILE%\Downloads\Bridge_v29_Log.txt"
 
-Registros esperados: `PHYSICAL_TRIGGER_SEEN_353`, `TRIGGER_OPEN_ATTEMPT_...`, `TRIGGER_NATIVE_CLICK_OK_...` (ou `TRIGGER_GESTURE_SENT_...`), `TRIGGER_EDITOR_ALREADY_OPEN`, `TRIGGER_TO_DECODE_MS_...`.
-
-## Estado de verificacao
-Revisao estatica de Java/XML e testes das classes puras podem ser executados aqui. A compilacao Android e a validacao com o MLOG no coletor dependem do GitHub Actions e do hardware real.
+Entrada e Enter: CMX como antes; Bridge so controla foco/toque e injecao de codigo, sem enviar Enter automatico.
+Intervalo fixo de clique 750 ms; gatilhos durante o bloqueio nao sao enfileirados.
