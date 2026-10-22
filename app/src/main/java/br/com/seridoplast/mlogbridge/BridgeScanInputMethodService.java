@@ -36,6 +36,9 @@ public final class BridgeScanInputMethodService extends InputMethodService {
     private boolean numeric=false;
     private boolean upper=false;
 
+    // O teclado Bridge continua com Enter MANUAL. Nenhum metodo externo
+    // consegue acionar Enter automaticamente nesta versao.
+
     private static boolean isLoginHint(CharSequence hint){
         if(hint==null)return false;
         String s=hint.toString().toLowerCase(java.util.Locale.ROOT);
@@ -66,10 +69,11 @@ public final class BridgeScanInputMethodService extends InputMethodService {
 
     @Override public void onStartInput(EditorInfo info,boolean restarting){
         super.onStartInput(info,restarting);
+        boolean wasTargetMlog=targetMlog;
         targetMlog=info!=null && ScanCoordinator.TARGET.equals(info.packageName);
-        // No MLOG, sempre comecar com as teclas OCULTAS, inclusive no login.
-        // A digitacao manual aparece apenas quando o operador tocar em Mostrar.
-        manual=!targetMlog;
+        // Em login/senha abrir teclado manual. Nao carregar manual de outros apps.
+        boolean loginField=info!=null && (isPassword(info.inputType) || isLoginHint(info.hintText));
+        manual=!targetMlog || loginField || (targetMlog && wasTargetMlog && manual);
         numeric=info!=null && ((info.inputType&InputType.TYPE_MASK_CLASS)==InputType.TYPE_CLASS_NUMBER);
         upper=false;
         if(panel!=null)render();
@@ -79,7 +83,6 @@ public final class BridgeScanInputMethodService extends InputMethodService {
         super.onStartInputView(info,restarting);
         targetMlog=info!=null && ScanCoordinator.TARGET.equals(info.packageName);
         if(!targetMlog)manual=true;
-        else manual=false;
         if(panel!=null)render();
     }
 
@@ -106,18 +109,18 @@ public final class BridgeScanInputMethodService extends InputMethodService {
         panel.removeAllViews();
         int surface=dark()?0xff111111:0xfff9f9f9;
         panel.setBackgroundColor(surface);
-        // Tela MLOG: so barra compacta. O teclado completo so aparece ao tocar em Mostrar.
+        // Tela MLOG: uma barra pequena em vez do Gboard de tela cheia.
         LinearLayout top=new LinearLayout(this);
         top.setOrientation(LinearLayout.HORIZONTAL);
         top.setPadding(dp(5),dp(3),dp(5),dp(3));
         top.setGravity(Gravity.CENTER_VERTICAL);
         TextView label=new TextView(this);
-        label.setText(targetMlog?"Bridge · Teclado oculto":"Bridge · Teclado");
+        label.setText(targetMlog?"Bridge · Leitura":"Bridge · Teclado");
         label.setTextSize(12);
         label.setTextColor(dark()?0xffeeeeee:0xff111111);
         label.setGravity(Gravity.CENTER_VERTICAL);
         top.addView(label,new LinearLayout.LayoutParams(0,dp(31),1));
-        TextView toggle=key(manual?"Ocultar":"Mostrar",()->{manual=!manual;render();},1);
+        TextView toggle=key(manual?"Ocultar teclas":"Digitar",()->{manual=!manual;render();},1);
         top.addView(toggle,new LinearLayout.LayoutParams(dp(100),dp(32)));
         TextView switcher=key("⇄",()->{
             InputMethodManager imm=(InputMethodManager)getSystemService(Context.INPUT_METHOD_SERVICE);

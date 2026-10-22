@@ -1,28 +1,42 @@
-# MLOG Scanner Bridge v2.4 — foco apenas (experimental)
+# MLOG Scanner Bridge v2.5 — retorno a v2.3 SEM Enter automatico
 
-**Mudança de arquitetura solicitada:** o Bridge não recebe nem processa códigos no MLOG, não faz ACTION_SET_TEXT, não envia KEYCODE_ENTER, não mantém fila e não gerencia confirmação. O CMX Scanner deve fazer **leitura + digitação + Enter**.
+**Esta versao usa o codigo da v2.3 como base.** A v2.4 alterou o processamento e parou de abrir os campos; esta versao nao utiliza essa arquitetura.
 
-## Funcionamento
+## O que foi mantido da v2.3
+- Captura dos broadcasts do CMX e insercao do codigo pelo Bridge (`ACTION_SET_TEXT`).
+- Pre-foco ao apertar o gatilho (tecla fisica), detecao do botao nativo do MLOG, toque guiado e reabertura dos campos.
+- Fila, filtro anti-retransmissao, suporte a separacao/quantidade/atividades/consulta/conferencia e interface QWERTY monocromatica.
+- Teclado Bridge opcional, com botao **Enter manual**. Nao foram alteradas as configuracoes do CMX.
 
-- Gatilho físico (no diagnóstico: tecla 353) é detectado pelo serviço de acessibilidade, sem consumir o evento.
-- Dentro de telas reconhecidas do MLOG, o Bridge clica no botão de teclado nativo ou foca a busca antes de o CMX terminar de decodificar.
-- Se o editor já estiver focado, não executa outro clique.
-- Gestos por posição só nas telas reconhecidas de separação e atividades e **somente com o teclado fechado**; nunca em quantidade, senha ou avisos. Desative "Toque guiado" se o firmware exibir controles em posições diferentes.
-- Teclado Bridge, quando selecionado como IME do Android, fica com **teclas ocultas por padrão no MLOG**, exibindo apenas uma barra compacta com **Mostrar**. Um toque em Mostrar expande as teclas; fora do MLOG, o teclado manual funciona normalmente.
-- CMX deve estar configurado para **emulação de teclado (keyboard wedge) com Enter**. O Bridge não trata os broadcasts na tela do MLOG. O teste passivo de broadcast da tela inicial continua disponível.
+## Unica mudanca operacional
+- **O Bridge nao envia Enter automaticamente.** Foram removidas as chamadas automáticas de `sendKeyEvent(KEYCODE_ENTER)`, `ACTION_IME_ENTER` e os cliques no Enter do Gboard.
+- Depois de colocar o codigo no campo, observa passivamente ate ~1,1 segundo se o CMX limpou/mudou o campo. Nao gera confirmacao extra.
+- O CMX precisa estar configurado para produzir o Enter e a forma de entrega deve ser compativel com a entrada em foco. **Se o CMX enviar Enter antes do Bridge abrir e preencher o campo, a confirmacao pode falhar — nenhum atraso ou envio alternativo pelo Bridge foi acrescentado.**
 
-## Aviso essencial sobre compatibilidade
+## Atualizar no CMD
 
-Se o CMX estiver emitindo código **somente por broadcast**, esta versão não inserirá código no MLOG e poderá parecer que o scanner não funciona. Antes de usar na separação, teste em um campo de texto simples se o CMX digita o código e envia Enter sozinho. Acessibilidade pode antecipar o foco, mas não altera o tempo que o MLOG Flutter leva para construir o campo.
+Baixe o ZIP em Downloads e abra o CMD:
 
-Teste em um coletor fora da operação. Faça 10 leituras espaçadas, depois 20 rápidas, e compare com o pedido efetivamente confirmado. Se falhar, retorne ao APK v2.3 (assinatura compatível) ou faça rollback pelo histórico do repositório, sem forçar a desativação de proteções do Android.
+```bat
+cd /d "%USERPROFILE%\Downloads\MLOG-Scanner-Bridge"
+powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v25_V23_Sem_Enter.zip') -DestinationPath . -Force"
+git add -A
+git commit -m "Bridge v25 base v23 somente remover Enter automatico"
+git push origin main
+```
 
-## Compilação e instalação
+## Gerar e instalar
+- Abra a aba **Actions** no GitHub e baixe o artefato `MLOG-Scanner-Bridge-v25-APK` da execucao verde.
+- Extraia `app-debug.apk` para Downloads.
 
-Veja ATUALIZAR_PELO_CMD.txt. O build é executado no GitHub Actions, no fluxo `gerar-apk.yml`.
+```bat
+"%USERPROFILE%\Downloads\platform-tools\adb.exe" devices
+"%USERPROFILE%\Downloads\platform-tools\adb.exe" install -r "%USERPROFILE%\Downloads\app-debug.apk"
+```
 
-## Diagnóstico
+## Teste
+- Configure o Enter automatico no CMX. Teste primeiro um campo simples fora do MLOG para assegurar que o CMX escreve e confirma.
+- Faca **uma leitura** em uma tela de separacao de teste e verifique se o Bridge abriu o campo; veja se o Enter do CMX confirmou.
+- Se aparecer `CMX_ENTER_NOT_OBSERVED`, o Bridge preencheu o campo, mas nao observou confirmacao do CMX. Volte a v2.3 se essa configuracao nao funcionar.
 
-`adb logcat -d -v time -s MLOGBridge:I`
-
-Eventos relevantes: TRIGGER_SEEN_353, MLOG_KEYBOARD_CLICKED, SEARCH_FOCUS_REQUESTED, FOCUS_READY, GUIDED_NATIVE_BUTTON_TAP. Não há código ou conteúdo do campo nos registros.
+Este projeto passou por validacao sintatica dos arquivos, mas a compilacao completa e o uso no coletor devem ser verificados pelo GitHub e Android.

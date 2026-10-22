@@ -6,8 +6,8 @@ android {
         applicationId 'br.com.seridoplast.mlogbridge'
         minSdk 26
         targetSdk 35
-        versionCode 24
-        versionName '2.4-foco-cmx-enter'
+        versionCode 25
+        versionName '2.5-base-v23-sem-enter-bridge'
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
