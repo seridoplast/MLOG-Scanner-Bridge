@@ -36,31 +36,6 @@ public final class BridgeScanInputMethodService extends InputMethodService {
     private boolean numeric=false;
     private boolean upper=false;
 
-    static boolean sendEnterForFocusedMlog(){
-        BridgeScanInputMethodService service=active;
-        return service!=null && service.sendScanEnter();
-    }
-
-    private boolean sendScanEnter(){
-        if(Looper.myLooper()!=Looper.getMainLooper())return false;
-        if(!ScanCoordinator.isActive(this))return false;
-        EditorInfo info=getCurrentInputEditorInfo();
-        if(info==null || !ScanCoordinator.TARGET.equals(info.packageName))return false;
-        if(isPassword(info.inputType))return false;
-        InputConnection connection=getCurrentInputConnection();
-        if(connection==null)return false;
-        // Preferir KEYCODE_ENTER, como um leitor de codigo de barras.
-        // Acessibilidade ja validou campo, tela e texto ANTES desta chamada.
-        long t=SystemClock.uptimeMillis();
-        int flags=KeyEvent.FLAG_SOFT_KEYBOARD;
-        int device=KeyCharacterMap.VIRTUAL_KEYBOARD;
-        KeyEvent down=new KeyEvent(t,t,KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_ENTER,0,0,device,0,flags);
-        KeyEvent up=new KeyEvent(t,t+7,KeyEvent.ACTION_UP,KeyEvent.KEYCODE_ENTER,0,0,device,0,flags);
-        boolean okDown=connection.sendKeyEvent(down);
-        boolean okUp=connection.sendKeyEvent(up);
-        return okDown || okUp; // nunca reenviar por eventual resultado parcial.
-    }
-
     private static boolean isLoginHint(CharSequence hint){
         if(hint==null)return false;
         String s=hint.toString().toLowerCase(java.util.Locale.ROOT);
@@ -91,11 +66,10 @@ public final class BridgeScanInputMethodService extends InputMethodService {
 
     @Override public void onStartInput(EditorInfo info,boolean restarting){
         super.onStartInput(info,restarting);
-        boolean wasTargetMlog=targetMlog;
         targetMlog=info!=null && ScanCoordinator.TARGET.equals(info.packageName);
-        // Em login/senha abrir teclado manual. Nao carregar manual de outros apps.
-        boolean loginField=info!=null && (isPassword(info.inputType) || isLoginHint(info.hintText));
-        manual=!targetMlog || loginField || (targetMlog && wasTargetMlog && manual);
+        // No MLOG, sempre comecar com as teclas OCULTAS, inclusive no login.
+        // A digitacao manual aparece apenas quando o operador tocar em Mostrar.
+        manual=!targetMlog;
         numeric=info!=null && ((info.inputType&InputType.TYPE_MASK_CLASS)==InputType.TYPE_CLASS_NUMBER);
         upper=false;
         if(panel!=null)render();
@@ -105,6 +79,7 @@ public final class BridgeScanInputMethodService extends InputMethodService {
         super.onStartInputView(info,restarting);
         targetMlog=info!=null && ScanCoordinator.TARGET.equals(info.packageName);
         if(!targetMlog)manual=true;
+        else manual=false;
         if(panel!=null)render();
     }
 
@@ -131,18 +106,18 @@ public final class BridgeScanInputMethodService extends InputMethodService {
         panel.removeAllViews();
         int surface=dark()?0xff111111:0xfff9f9f9;
         panel.setBackgroundColor(surface);
-        // Tela MLOG: uma barra pequena em vez do Gboard de tela cheia.
+        // Tela MLOG: so barra compacta. O teclado completo so aparece ao tocar em Mostrar.
         LinearLayout top=new LinearLayout(this);
         top.setOrientation(LinearLayout.HORIZONTAL);
         top.setPadding(dp(5),dp(3),dp(5),dp(3));
         top.setGravity(Gravity.CENTER_VERTICAL);
         TextView label=new TextView(this);
-        label.setText(targetMlog?"Bridge · Leitura":"Bridge · Teclado");
+        label.setText(targetMlog?"Bridge · Teclado oculto":"Bridge · Teclado");
         label.setTextSize(12);
         label.setTextColor(dark()?0xffeeeeee:0xff111111);
         label.setGravity(Gravity.CENTER_VERTICAL);
         top.addView(label,new LinearLayout.LayoutParams(0,dp(31),1));
-        TextView toggle=key(manual?"Ocultar teclas":"Digitar",()->{manual=!manual;render();},1);
+        TextView toggle=key(manual?"Ocultar":"Mostrar",()->{manual=!manual;render();},1);
         top.addView(toggle,new LinearLayout.LayoutParams(dp(100),dp(32)));
         TextView switcher=key("⇄",()->{
             InputMethodManager imm=(InputMethodManager)getSystemService(Context.INPUT_METHOD_SERVICE);

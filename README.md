@@ -1,48 +1,28 @@
-# MLOG Scanner Bridge v2.3 — Gatilho antecipado + Enter manual
+# MLOG Scanner Bridge v2.4 — foco apenas (experimental)
 
-**Versao experimental para testar primeiro em um unico CMX Android 14.** Base v2.2, preservando o teclado compacto QWERTY e o filtro de broadcasts repetidos de 140 ms.
+**Mudança de arquitetura solicitada:** o Bridge não recebe nem processa códigos no MLOG, não faz ACTION_SET_TEXT, não envia KEYCODE_ENTER, não mantém fila e não gerencia confirmação. O CMX Scanner deve fazer **leitura + digitação + Enter**.
 
-## Alteracoes
+## Funcionamento
 
-1. **Pre-foco pelo gatilho ativado por padrao**, uma unica vez ao migrar da v2.2. Ao receber `KeyEvent.ACTION_DOWN` reconhecido, o Bridge tenta acionar o botao nativo de teclado do MLOG **antes** de receber o broadcast com o codigo. Devolve `false` para nao consumir a tecla nem reconfigurar o CMX.
-2. **Aprender botao do coletor** em Ajustes, caso o codigo fisico nao seja um dos conhecidos: arme a aprendizagem, abra o MLOG e aperte o gatilho uma vez. Somente teclas nao textuais podem ser aprendidas. A primeira tecla apenas aprende; a segunda pode gerar o pre-foco.
-3. **Diagnostico temporal sem codigos de barras nos logs**: `PHYSICAL_TRIGGER_SEEN_N`, `PREFocus_NATIVE_CLICK_OK`, `TRIGGER_TO_DECODE_MS_N`, `PREFocus_NATIVE_ICON_UNAVAILABLE`. Se nao houver `PHYSICAL_TRIGGER_SEEN`, o firmware pode nao entregar o evento de tecla ao Android; a melhoria de latencia nao funcionara por esse caminho, e o fluxo por broadcast continuara.
-4. **Enter manual no teclado** no lugar de Tab, tanto no teclado numerico quanto QWERTY. O Enter automatico apos leitura foi preservado, separado da tecla manual.
-5. **Mantidas protecoes**: filtro de broadcasts duplos, campo protegido de quantidade/senha, uma confirmacao por leitura, filas e cancelamento em navegacao. Nenhuma mudanca nas configuracoes do CMX.
+- Gatilho físico (no diagnóstico: tecla 353) é detectado pelo serviço de acessibilidade, sem consumir o evento.
+- Dentro de telas reconhecidas do MLOG, o Bridge clica no botão de teclado nativo ou foca a busca antes de o CMX terminar de decodificar.
+- Se o editor já estiver focado, não executa outro clique.
+- Gestos por posição só nas telas reconhecidas de separação e atividades e **somente com o teclado fechado**; nunca em quantidade, senha ou avisos. Desative "Toque guiado" se o firmware exibir controles em posições diferentes.
+- Teclado Bridge, quando selecionado como IME do Android, fica com **teclas ocultas por padrão no MLOG**, exibindo apenas uma barra compacta com **Mostrar**. Um toque em Mostrar expande as teclas; fora do MLOG, o teclado manual funciona normalmente.
+- CMX deve estar configurado para **emulação de teclado (keyboard wedge) com Enter**. O Bridge não trata os broadcasts na tela do MLOG. O teste passivo de broadcast da tela inicial continua disponível.
 
-## Instalar no GitHub via CMD (Windows)
+## Aviso essencial sobre compatibilidade
 
-Baixe o ZIP para Downloads:
+Se o CMX estiver emitindo código **somente por broadcast**, esta versão não inserirá código no MLOG e poderá parecer que o scanner não funciona. Antes de usar na separação, teste em um campo de texto simples se o CMX digita o código e envia Enter sozinho. Acessibilidade pode antecipar o foco, mas não altera o tempo que o MLOG Flutter leva para construir o campo.
 
-```bat
-cd /d "%USERPROFILE%\Downloads\MLOG-Scanner-Bridge"
-powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v23_PreFoco_Enter.zip') -DestinationPath . -Force"
-git add -A
-git commit -m "MLOG Bridge v23 pre-foco gatilho Enter manual"
-git push origin main
-```
+Teste em um coletor fora da operação. Faça 10 leituras espaçadas, depois 20 rápidas, e compare com o pedido efetivamente confirmado. Se falhar, retorne ao APK v2.3 (assinatura compatível) ou faça rollback pelo histórico do repositório, sem forçar a desativação de proteções do Android.
 
-Github Actions: baixar artefato `MLOG-Scanner-Bridge-v23-APK` de execucao verde.
+## Compilação e instalação
 
-## Instalar no CMX pelo ADB
+Veja ATUALIZAR_PELO_CMD.txt. O build é executado no GitHub Actions, no fluxo `gerar-apk.yml`.
 
-Coloque `app-debug.apk` extraido em Downloads e conecte o coletor pelo cabo USB com depuracao autorizada.
+## Diagnóstico
 
-```bat
-"%USERPROFILE%\Downloads\platform-tools\adb.exe" devices
-"%USERPROFILE%\Downloads\platform-tools\adb.exe" install -r "%USERPROFILE%\Downloads\app-debug.apk"
-```
+`adb logcat -d -v time -s MLOGBridge:I`
 
-## Teste seguro de desempenho
-
-- Com Key Mapper desativado, mantenha **Leitura assistida**, **teclado Bridge** e **Leitura rapida** como ja estavam funcionando.
-- Em Ajustes, **Pre-foco pelo gatilho fisico** deve estar marcado; se estiver desmarcado, marque.
-- Teste 10 leituras comuns e 20 rapidas em separacao de teste, inclusive o mesmo produto repetido. Confira no MLOG as quantidades efetivamente confirmadas e zero duplicacoes.
-- Se nao houver melhora, capture os logs de gatilho abaixo. Se o firmware nao expor o evento de tecla, abra Ajustes > Aprender botao do coletor, volte ao MLOG e aperte o gatilho uma vez; depois teste novamente. Se nao for aprendido, nao force toques: mantenha o modo anterior.
-- Em telas de informacoes ou cancelamento, o Bridge deve continuar sem acionar o teclado.
-
-```bat
-"%USERPROFILE%\Downloads\platform-tools\adb.exe" logcat -d -v time -s MLOGBridge:I > "%USERPROFILE%\Downloads\Bridge_v23_Log.txt"
-```
-
-**Rollback rapido:** desmarque **Pre-foco pelo gatilho fisico** em Ajustes para voltar ao fluxo da v2.2 sem reinstalar. Esta versao nao tem compilacao Android nem medicao no dispositivo confirmadas; apenas verificacao local de estrutura/sintaxe. O objetivo de igualar o Key Mapper ainda depende de o CMX fornecer o evento fisico e da resposta do MLOG.
+Eventos relevantes: TRIGGER_SEEN_353, MLOG_KEYBOARD_CLICKED, SEARCH_FOCUS_REQUESTED, FOCUS_READY, GUIDED_NATIVE_BUTTON_TAP. Não há código ou conteúdo do campo nos registros.

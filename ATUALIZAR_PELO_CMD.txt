@@ -1,8 +1,22 @@
+MLOG Scanner Bridge v2.4 — foco apenas / CMX faz Enter
+
+1) Baixe o ZIP para Downloads.
+2) Na pasta do repositório Git, execute:
+
 cd /d "%USERPROFILE%\Downloads\MLOG-Scanner-Bridge"
-powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v23_PreFoco_Enter.zip') -DestinationPath . -Force"
+powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v24_Foco_Apenas.zip') -DestinationPath . -Force"
+REM Limpar arquivos da logica de fila e Enter que existiam na v2.3
+del /q "app\src\main\java\br\com\seridoplast\mlogbridge\ScanQueue.java" 2>nul
+del /q "app\src\main\java\br\com\seridoplast\mlogbridge\ScanDuplicatePolicy.java" 2>nul
+del /q "app\src\main\java\br\com\seridoplast\mlogbridge\EnterReadinessPolicy.java" 2>nul
 git add -A
-git commit -m "MLOG Bridge v23 pre-foco gatilho Enter"
+git commit -m "Bridge v24 foco apenas CMX enter"
 git push origin main
+
+Apos o build GitHub Actions, extraia app-debug.apk para Downloads.
 
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" devices
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" install -r "%USERPROFILE%\Downloads\app-debug.apk"
+
+CMX Scanner: configure saida como digitacao de teclado/keyboard wedge + Enter automatico.
+Apenas modo broadcast NAO sera inserido no MLOG nesta versao.
