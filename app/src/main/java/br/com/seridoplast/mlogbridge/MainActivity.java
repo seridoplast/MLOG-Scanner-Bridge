@@ -105,12 +105,20 @@ public final class MainActivity extends Activity {
             prefs.edit().putBoolean("prearm_field",false)
                 .putBoolean("migrated_bipe_only_v13",true).apply();
         }
+        // Pre-foco autorizado na v2.3. Se o usuario desligar depois,
+        // esta migracao nao volta a alterar a escolha.
+        if(!prefs.getBoolean("prefocus_v23_migrated",false)){
+            prefs.edit().putBoolean("trigger_prefocus",true)
+                .putBoolean("prefocus_v23_migrated",true).apply();
+        }
         boolean dark=darkNow();
         setTheme(dark?R.style.BridgeThemeDark:R.style.BridgeThemeLight);
         super.onCreate(saved);
         if(saved!=null)page=saved.getInt("page",0);
         palette(dark);
         displayPage();
+        MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
+        if(svc!=null)svc.refreshEventThrottle();
     }
     @Override protected void onSaveInstanceState(Bundle out){super.onSaveInstanceState(out);out.putInt("page",page);}
     private void palette(boolean dark){
@@ -178,7 +186,7 @@ public final class MainActivity extends Activity {
         head.addView(left,new LinearLayout.LayoutParams(0,-2,1));
         TextView moon=action(darkNow()?"☀":"☾",false,()->{});
         moon.setContentDescription("Alternar tema com toque na tela");
-        // Apenas um toque fisico: o Enter/Tab enviado pelo scanner nunca alterna tema.
+        // Apenas toque fisico: o Enter do scanner nunca alterna tema.
         moon.setOnTouchListener((v,event)->{
             if(event.getActionMasked()==MotionEvent.ACTION_UP){
                 long now=android.os.SystemClock.elapsedRealtime();
@@ -247,8 +255,12 @@ public final class MainActivity extends Activity {
         LinearLayout ime=card(); ime.addView(label("Teclado Bridge (experimental)",17,ink,true));
         check(ime,"Usar teclado Bridge no Enter","experimental_bridge_ime",false);
         check(ime,"Leitura rápida (teste)","fast_ime_mode",false);
-        check(ime,"Pré-foco pelo gatilho físico (teste)","trigger_prefocus",false);
-        subtitle(ime,"Tenta abrir o campo assim que o botão físico é pressionado, antes do código chegar. Só funciona se o CMX expuser a tecla ao Android. Não ativa o scanner nem intercepta a leitura.");
+        check(ime,"Pré-foco pelo gatilho físico","trigger_prefocus",true);
+        button(ime,"Aprender botão do coletor",false,()->{
+            prefs.edit().putBoolean("learn_trigger_armed",true).apply();
+            toast("Abra o MLOG e pressione o gatilho uma vez para calibrar.");
+        });
+        subtitle(ime,"Ativo por padrao: tenta selecionar o campo ao apertar o gatilho, antes da leitura ser decodificada. Se o CMX nao disponibilizar o evento, use Aprender botao e consulte o diagnostico. Pode desligar sem reinstalar.");
         subtitle(ime,"Ative a leitura rapida apenas com o teclado Bridge selecionado. Diminui a espera inicial do Enter e usa os eventos do MLOG para liberar a proxima leitura. Se houver codigo sem confirmacao, desative para voltar ao comportamento da v1.9.");
         subtitle(ime,"Experimento opcional. O Android exige habilitar e escolher o teclado manualmente. No MLOG, ele mostra uma barra compacta e so envia Enter durante a leitura; em outros apps oferece teclas para digitar.");
         button(ime,"1. Habilitar teclado no Android",false,()->startActivity(new Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)));
@@ -284,11 +296,11 @@ public final class MainActivity extends Activity {
             toast("Diagnóstico copiado. Não inclui códigos.");
         });
         LinearLayout help=card();help.addView(label("O que testar",17,ink,true));
-        subtitle(help,"Leitura aguarda campo focado. A v2.2 pode confirmar pelo teclado Bridge se ele estiver habilitado, selecionado e com a opcao experimental ativa. Log: BRIDGE_IME_ENTER_SENT.");
+        subtitle(help,"v2.3: ao bipar, veja no log PHYSICAL_TRIGGER_SEEN e TRIGGER_TO_DECODE_MS. Se nao aparecerem, o CMX nao entregou o gatilho ao Bridge. Enter automatico continua separado do botao manual do teclado.");
         button(help,"Abrir MLOG",true,this::openMlog);
     }
     private void about(){
-        title("Sobre","MLOG Scanner Bridge · v2.2 beta");
+        title("Sobre","MLOG Scanner Bridge · v2.3 beta");
         LinearLayout about=card();about.addView(label("Integração local",17,ink,true));
         subtitle(about,"Criado para o scanner físico CMX e o MLOG. Sem acesso à internet. Os códigos de leitura não são salvos em histórico.");
         space(about,10);
@@ -327,7 +339,7 @@ public final class MainActivity extends Activity {
     }
     private void nextTheme(){chooseTheme(darkNow()?"light":"dark");}
     @Override public boolean dispatchKeyEvent(KeyEvent event){
-        // Protege botoes e tema contra Enter/Tab emitidos pelo scanner (keyboard wedge).
+        // Protege botoes e tema contra Enter emitido pelo scanner (keyboard wedge).
         // Esta tela nao tem campo de texto para edicao manual.
         int k=event.getKeyCode();
         if(k==KeyEvent.KEYCODE_ENTER || k==KeyEvent.KEYCODE_NUMPAD_ENTER ||

@@ -1,27 +1,8 @@
-MLOG Scanner Bridge v2.0 beta — comandos Windows
-
-1) Baixe MLOG_Scanner_Bridge_v20_Turbo_Beta.zip na pasta Downloads.
-2) Abra CMD e execute:
-
 cd /d "%USERPROFILE%\Downloads\MLOG-Scanner-Bridge"
-git branch backup-v19-antes-turbo
-powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v20_Turbo_Beta.zip') -DestinationPath . -Force"
+powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v23_PreFoco_Enter.zip') -DestinationPath . -Force"
 git add -A
-git commit -m "Bridge v20 leitura rapida opcional"
+git commit -m "MLOG Bridge v23 pre-foco gatilho Enter"
 git push origin main
 
-Se a branch de backup ja existir, ignore o erro APENAS da etapa git branch.
-
-GitHub Actions > MLOG-Scanner-Bridge-v20-APK > extrair app-debug.apk para Downloads.
-
-INSTALAR VIA ADB (USB + DEPURACAO)
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" devices
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" install -r "%USERPROFILE%\Downloads\app-debug.apk"
-
-TESTE: No Bridge > Ajustes, marque 'Usar teclado Bridge no Enter' e
-'Leitura rapida (teste)'; selecione o teclado Bridge como IME padrao.
-
-VOLTAR AO MODO ANTERIOR: desmarcar 'Leitura rapida (teste)'.
-
-DIAGNOSTICO
-"%USERPROFILE%\Downloads\platform-tools\adb.exe" logcat -d -v time -s MLOGBridge:I > "%USERPROFILE%\Downloads\Bridge_v20_Log.txt"

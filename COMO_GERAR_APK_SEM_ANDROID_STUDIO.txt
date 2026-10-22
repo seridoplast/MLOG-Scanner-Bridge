@@ -1,1 +1,1 @@
-Veja README.md e ATUALIZAR_PELO_CMD.txt para compilar pelo GitHub Actions e instalar via depuracao USB.
+Leia README.md e ATUALIZAR_PELO_CMD.txt para instalar a versao v2.3.

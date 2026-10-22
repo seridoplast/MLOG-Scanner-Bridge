@@ -153,20 +153,20 @@ public final class BridgeScanInputMethodService extends InputMethodService {
         panel.addView(top);
         if(manual){
             // Mesma disposicao QWERTY do Gboard, sem fileira numerica em cima.
-            // Tecla Tab atua somente na digitacao MANUAL. A confirmacao
-            // automatica do scanner continua enviando KEYCODE_ENTER.
+            // Botao manual Enter; a confirmacao automatica das bipagens
+            // continua independente, via KEYCODE_ENTER apos o campo pronto.
             if(numeric){
                 row(new String[]{"1","2","3"});
                 row(new String[]{"4","5","6"});
                 row(new String[]{"7","8","9"});
                 row(new String[]{".","0","⌫"});
-                row(new String[]{"ABC","Espaço","Tab ↹"});
+                row(new String[]{"ABC","Espaço","Enter ↵"});
             }else{
                 rowChars("qwertyuiop",0);
                 rowChars("asdfghjkl",dp(18));
                 row(new String[]{"⇧",upper?"Z":"z",upper?"X":"x",upper?"C":"c",
                         upper?"V":"v",upper?"B":"b",upper?"N":"n",upper?"M":"m","⌫"});
-                row(new String[]{"?123",",","Espaço",".","Tab ↹"});
+                row(new String[]{"?123",",","Espaço",".","Enter ↵"});
             }
         }
     }
@@ -185,7 +185,7 @@ public final class BridgeScanInputMethodService extends InputMethodService {
         line.setPadding(dp(3)+inset,dp(3),dp(3)+inset,dp(3));
         for(String n:names){
             TextView t=key(n,()->type(n),1);
-            float weight="Espaço".equals(n)?3.8f:("Tab ↹".equals(n)?1.5f:1f);
+            float weight="Espaço".equals(n)?3.8f:("Enter ↵".equals(n)?1.5f:1f);
             LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,dp(46),weight);
             lp.leftMargin=dp(2);lp.rightMargin=dp(2);
             line.addView(t,lp);
@@ -199,19 +199,23 @@ public final class BridgeScanInputMethodService extends InputMethodService {
         if("⌫".equals(value)){ic.deleteSurroundingText(1,0);return;}
         if("⇧".equals(value)){upper=!upper;render();return;}
         if("?123".equals(value) || "ABC".equals(value)){numeric=!numeric;render();return;}
-        if("Tab ↹".equals(value)){
-            // No login, avancar para a senha sem submeter o formulario.
-            // Preferir NEXT quando o aplicativo expuser essa acao.
-            EditorInfo info=getCurrentInputEditorInfo();
-            boolean next=info!=null &&
-                (info.imeOptions&EditorInfo.IME_MASK_ACTION)==EditorInfo.IME_ACTION_NEXT;
-            if(next && ic.performEditorAction(EditorInfo.IME_ACTION_NEXT))return;
-            long t=SystemClock.uptimeMillis();
-            KeyEvent down=new KeyEvent(t,t,KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_TAB,0);
-            KeyEvent up=new KeyEvent(t,t+6,KeyEvent.ACTION_UP,KeyEvent.KEYCODE_TAB,0);
+        if("Enter ↵".equals(value)){
+            // Tecla Enter manual no lugar de Tab, como solicitada.
+            // Um unico par DOWN/UP; se a conexao recusar, tentar a acao
+            // IME anunciada pelo editor (Search/Done/Go/Next).
+            long now=SystemClock.uptimeMillis();
+            KeyEvent down=new KeyEvent(now,now,KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_ENTER,0);
+            KeyEvent up=new KeyEvent(now,now+7,KeyEvent.ACTION_UP,KeyEvent.KEYCODE_ENTER,0);
             boolean sent=ic.sendKeyEvent(down);
             sent=ic.sendKeyEvent(up)||sent;
-            if(!sent)ic.performEditorAction(EditorInfo.IME_ACTION_NEXT);
+            if(!sent){
+                EditorInfo info=getCurrentInputEditorInfo();
+                int action=info==null?EditorInfo.IME_ACTION_UNSPECIFIED:
+                    (info.imeOptions&EditorInfo.IME_MASK_ACTION);
+                if(action!=EditorInfo.IME_ACTION_UNSPECIFIED &&
+                   action!=EditorInfo.IME_ACTION_NONE)
+                    ic.performEditorAction(action);
+            }
             return;
         }
         if("Espaço".equals(value))value=" ";

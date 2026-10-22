@@ -69,6 +69,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private boolean configuredFastEvents;
     private boolean configuredTriggerEvents;
     private long lastTriggerPrefocus;
+    private long lastUnknownTriggerLogAt;
     private String pendingScreen="";
     private long lastDiagnostic;
     private boolean gestureInProgress;
@@ -86,6 +87,12 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     @Override protected void onServiceConnected(){
         super.onServiceConnected();
         instance=this;
+        // v2.3: ativar uma unica vez o pre-foco que existia desligado na v2.2.
+        // A preferencia continua reversivel em Ajustes.
+        if(!prefs().getBoolean("prefocus_v23_migrated",false)){
+            prefs().edit().putBoolean("trigger_prefocus",true)
+                .putBoolean("prefocus_v23_migrated",true).apply();
+        }
         AccessibilityServiceInfo si=getServiceInfo();
         if(si!=null){
             si.flags|=AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS |
@@ -113,6 +120,10 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                     return;
                 }
                 trace("BROADCAST_ACCEPTED_"+source);
+                if(lastTriggerPrefocus>0){
+                    long delta=SystemClock.elapsedRealtime()-lastTriggerPrefocus;
+                    if(delta>=0 && delta<1200)trace("TRIGGER_TO_DECODE_MS_"+delta);
+                }
                 enqueueBarcode(code);
             }
         };
@@ -126,7 +137,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             prefs().edit().putBoolean("prearm_field",false).apply();
             // Versoes anteriores podiam deixar o teclado oculto pelo controlador.
             restoreKeyboard();
-            status("v2.2: teclado QWERTY/Tab, prioridade de eventos e pre-foco opcional.");
+            status("v2.3: teclado QWERTY/Enter, pre-foco por gatilho habilitado.");
         }catch(RuntimeException e){status("Falha ao registrar o broadcast do scanner.");}
     }
 
@@ -390,45 +401,83 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         }
     }
 
-    /** Pre-foco experimental: e acionado no DOWN do botao fisico, ANTES do
-     * broadcast que contem o codigo. Nao consome a tecla, nao inicia o motor
-     * nem altera a configuracao do CMX. Exige que o Android exponha a tecla. */
+    /**
+     * Reage ao gatilho antes de o scanner terminar de decodificar o codigo.
+     * Nao consome a tecla nem solicita a leitura ao CMX. Se o firmware nao
+     * disponibilizar eventos de tecla, o fluxo por broadcast permanece igual.
+     * A calibracao opcional cobre teclas industriais fora do conjunto usual.
+     */
     @Override protected boolean onKeyEvent(KeyEvent event){
-        if(event==null || !prefs().getBoolean("trigger_prefocus",false) ||
-           !ScanCoordinator.isActive(this))return false;
-        if(event.getAction()!=KeyEvent.ACTION_DOWN || event.getRepeatCount()!=0 ||
-           !isScannerTriggerKey(event.getKeyCode()))return false;
-        if(!scanQueue.isIdle() || pendingCode!=null)return false;
+        if(event==null || !prefs().getBoolean("trigger_prefocus",true) ||
+           !ScanCoordinator.isActive(this) || event.getAction()!=KeyEvent.ACTION_DOWN ||
+           event.getRepeatCount()!=0)return false;
+        int code=event.getKeyCode();
+        if(code==KeyEvent.KEYCODE_UNKNOWN || code==KeyEvent.KEYCODE_ENTER ||
+           code==KeyEvent.KEYCODE_NUMPAD_ENTER || code==KeyEvent.KEYCODE_TAB ||
+           code==KeyEvent.KEYCODE_BACK || code==KeyEvent.KEYCODE_HOME ||
+           code==KeyEvent.KEYCODE_DEL)return false;
         long now=SystemClock.elapsedRealtime();
-        if(now-lastTriggerPrefocus<120 || now<navigationGuardUntil)return false;
+        if(now<navigationGuardUntil)return false;
+        // Janela do MLOG validada antes de observar/aprender qualquer tecla.
         AccessibilityNodeInfo root=mlogRoot();
-        if(root==null || isBlockingOverlay(root))return false;
+        if(root==null)return false;
         ScreenInfo info=inspect(root);
-        if(info.login || info.dialog || "desconhecida".equals(info.screen))return false;
-        lastTriggerPrefocus=now;
-        trace("TRIGGER_KEY_PREFocus_"+event.getKeyCode());
-        AccessibilityNodeInfo editor=safeEditor(info,true);
-        if(editor!=null && nativeEntryReady(info,editor))return false;
-        if("consulta".equals(info.screen) || "conferencia_venda".equals(info.screen)){
-            if(editor!=null)focusOrClick(editor);
-            else if(info.searchField!=null)focusOrClick(clickable(info.searchField));
+        if(info.login || info.dialog || isBlockingOverlay(root) ||
+           "desconhecida".equals(info.screen))return false;
+        boolean builtIn=isScannerTriggerKey(code);
+        int learned=prefs().getInt("learned_trigger_key",-1);
+        // Nao registrar o conteudo de teclas ou dados do MLOG; apenas o numero.
+        if(builtIn || code==learned)trace("PHYSICAL_TRIGGER_SEEN_"+code);
+        else if(prefs().getBoolean("learn_trigger_armed",false) &&
+                !event.isPrintingKey() && !KeyEvent.isModifierKey(code)){
+            prefs().edit().putInt("learned_trigger_key",code)
+                    .putBoolean("learn_trigger_armed",false).apply();
+            trace("PHYSICAL_TRIGGER_LEARNED_"+code);
+            status("Botao fisico reconhecido ("+code+"). Tente bipar novamente.");
+            // A primeira tecla apenas calibra: evita tocar na tela por engano.
+            return false;
+        }else{
+            // Amostragem pequena para diagnosticar botoes nao reconhecidos.
+            if(now-lastUnknownTriggerLogAt>900){
+                lastUnknownTriggerLogAt=now;
+                trace("PHYSICAL_KEY_UNRECOGNIZED_"+code);
+            }
             return false;
         }
+        if(!scanQueue.isIdle() || pendingCode!=null)return false;
+        if(now-lastTriggerPrefocus<140)return false;
+        lastTriggerPrefocus=now;
+        trace("PREFocus_START_KEY_"+code);
+        AccessibilityNodeInfo editor=safeEditor(info,true);
+        if(editor!=null && nativeEntryReady(info,editor)){
+            trace("PREFocus_ALREADY_READY");
+            return false;
+        }
+        // Consulta/conferencia: editor no topo ja existe, so recuperar foco.
+        if("consulta".equals(info.screen) || "conferencia_venda".equals(info.screen)){
+            boolean clicked=editor!=null ? focusOrClick(editor) :
+                 info.searchField!=null && focusOrClick(clickable(info.searchField));
+            trace(clicked?"PREFocus_SEARCH_READY_REQUESTED":"PREFocus_SEARCH_NO_FIELD");
+            return false;
+        }
+        // Nunca tocar por coordenada no evento fisico: so no botao do MLOG
+        // identificado por acessibilidade, sem risco de Quantidade/tecla zero.
         if(isImeVisible())return false;
         AccessibilityNodeInfo button="atividades".equals(info.screen)?
-                activityKeyboard(info):findKeyboardTarget(info);
+             activityKeyboard(info):findKeyboardTarget(info);
         if(button!=null && focusOrClick(button)){
             markNativeButton(info.screen,"gatilho fisico");
-            trace("TRIGGER_PREFOCUS_CLICK_OK");
-        }else trace("TRIGGER_PREFOCUS_ICON_NOT_EXPOSED");
-        return false; // scanner recebe normalmente o gatilho
+            trace("PREFocus_NATIVE_CLICK_OK");
+        }else trace("PREFocus_NATIVE_ICON_UNAVAILABLE");
+        return false; // nunca impedir que o CMX receba o gatilho fisico
     }
 
     private static boolean isScannerTriggerKey(int code){
         return (code>=KeyEvent.KEYCODE_F1 && code<=KeyEvent.KEYCODE_F12) ||
                (code>=KeyEvent.KEYCODE_BUTTON_1 && code<=KeyEvent.KEYCODE_BUTTON_16) ||
                code==KeyEvent.KEYCODE_BUTTON_L1 || code==KeyEvent.KEYCODE_BUTTON_R1 ||
-               code==KeyEvent.KEYCODE_CAMERA || code==KeyEvent.KEYCODE_FOCUS;
+               code==KeyEvent.KEYCODE_CAMERA || code==KeyEvent.KEYCODE_FOCUS ||
+               (code>=KeyEvent.KEYCODE_PROG_RED && code<=KeyEvent.KEYCODE_PROG_BLUE);
     }
 
     private AccessibilityNodeInfo mlogRoot(){
