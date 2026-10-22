@@ -261,7 +261,7 @@ public final class MainActivity extends Activity {
             prefs.edit().putBoolean("learn_trigger_armed",true).apply();
             toast("Abra o MLOG e pressione o gatilho uma vez para calibrar.");
         });
-        subtitle(ime,"Abre o campo ao apertar o gatilho. Aguarda apenas 450 ms entre toques e destrava pelo relogio, sem exigir verificacao do Enter.");
+        subtitle(ime,"Abre o campo ao apertar o gatilho. Aguarda apenas 400 ms entre toques e destrava pelo relogio, sem exigir verificacao do Enter.");
         subtitle(ime,"Ative a leitura rapida apenas com o teclado Bridge selecionado. Acelera a deteccao do campo; o CMX continua responsavel por enviar o Enter.");
         subtitle(ime,"Experimento opcional. O Android exige habilitar e escolher o teclado manualmente. No MLOG, ele mostra uma barra compacta. O Enter automatico fica exclusivamente no CMX. O botao Enter manual continua no teclado.");
         button(ime,"1. Habilitar teclado no Android",false,()->startActivity(new Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)));
@@ -297,11 +297,11 @@ public final class MainActivity extends Activity {
             toast("Diagnóstico copiado. Não inclui códigos.");
         });
         LinearLayout help=card();help.addView(label("O que testar",17,ink,true));
-        subtitle(help,"v2.9.4: bloqueio de 450 ms por toque, liberado automaticamente. O CMX envia Enter. Leituras feitas durante o intervalo nao geram cliques futuros.");
+        subtitle(help,"v2.9.5: bloqueio de 400 ms por toque, liberado automaticamente. O CMX envia Enter. Leituras feitas durante o intervalo nao geram cliques futuros.");
         button(help,"Abrir MLOG",true,this::openMlog);
     }
     private void about(){
-        title("Sobre","MLOG Scanner Bridge · v2.9.4 beta");
+        title("Sobre","MLOG Scanner Bridge · v2.9.5 beta");
         LinearLayout about=card();about.addView(label("Integração local",17,ink,true));
         subtitle(about,"Criado para o scanner físico CMX e o MLOG. Sem acesso à internet. Os códigos de leitura não são salvos em histórico.");
         space(about,10);
