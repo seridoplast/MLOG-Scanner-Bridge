@@ -1,8 +1,12 @@
-# Diagnóstico 20:06:27 de 22/10/2026
+# Por que a v3.0.2 parava depois de duas leituras?
 
-- Primeiro bipe do lote armado às 20:07:06.617.
-- `SCAN_FINISH_campo_mudou` às 20:07:06.981, 364 ms após o início.
-- Repetições `_2` a `_10` registradas como `AUTO_COUNT_ENTER_DISPATCHED` entre 20:07:07.109 e 20:07:09.295.
-- Muitos envios foram classificados como `AUTO_COUNT_ENTER_BRIDGE_IME`. Não há comprovação no log de que cada chamada tenha causado `onSubmitted` no Flutter ou registro persistido.
-- Capturas do vídeo mostram variações da contagem `SEPARADO` durante a operação, o que aponta para processamento parcial/assíncrono.
-- Correção v3.0.2: distinguir tentativas de incrementos reais; aguardar aumento visível `SEPARADO` quando disponível, usar ação do editor como prioridade, interromper em vez de declarar 10/10 se a contagem não corresponder.
+Na v3.0.2 o Bridge tratava `performEditorAction()` do IME como sucesso de Enter, sem confirmar se Flutter realmente reagiu. Após a primeira repetição virtual, se o contador visual `SEPARADO` não subisse, cancelava o lote em 1.800 ms. O diagnóstico anterior também mostrou Enters enviados que não correspondiam a registros visíveis.
+
+## Experimento v3.0.3
+
+- Usar KEYCODE_ENTER DOWN/UP na conexão IME como nas versões antigas, que demonstraram melhor reação de Enter.
+- Não disparar repetições virtualmente a 155 ms; usar no mínimo 900 ms entre Enters, mais 180 ms para texto no campo estabilizar antes da tecla.
+- Observar contador visual onde disponível, mas não parar exclusivamente por ausência de incremento; contar separadamente Enters enviados e incrementos observados. Mudanças inesperadas de produto, salto do contador e falha de foco continuam abortando.
+- Confirmar resultado **no pedido**, não apenas pela contagem de Enters.
+
+Sem teste real no CMX não há garantia de que esta abordagem elimine leituras perdidas.

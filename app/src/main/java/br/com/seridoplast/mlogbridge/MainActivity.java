@@ -45,6 +45,8 @@ public final class MainActivity extends Activity {
     private TextView preview, lastStatus, barcodeFormatStatus, barcodeArtifactStatus, barcodeFieldsStatus, serviceState;
     private LinearLayout setupWarningCard;
     private TextView setupWarningLabel;
+    private TextView setupAccessibilityStep, setupKeyboardEnabledStep,
+            setupKeyboardSelectedStep, setupFloatingStep;
     private boolean receiving;
     private int scanCount;
     private String lastSample;
@@ -247,7 +249,7 @@ public final class MainActivity extends Activity {
         }
         root.addView(footer);
         preview=null;lastStatus=null;barcodeFormatStatus=null;barcodeArtifactStatus=null;
-        barcodeFieldsStatus=null;serviceState=null;setupWarningCard=null;setupWarningLabel=null;
+        barcodeFieldsStatus=null;serviceState=null;setupWarningCard=null;setupWarningLabel=null;setupAccessibilityStep=null;setupKeyboardEnabledStep=null;setupKeyboardSelectedStep=null;setupFloatingStep=null;
         if(page==0)home();else if(page==1)settings();else if(page==2)diagnostic();else about();
     }
     private void show(int p){page=p;displayPage();}
@@ -264,17 +266,19 @@ public final class MainActivity extends Activity {
     private boolean accessibilityReady(){
         return MlogFocusAccessibilityService.current()!=null;
     }
-    private boolean keyboardReady(){
+    private boolean keyboardEnabled(){
         InputMethodManager manager=(InputMethodManager)getSystemService(Context.INPUT_METHOD_SERVICE);
-        boolean enabled=false;
-        if(manager!=null){
-            for(InputMethodInfo ime:manager.getEnabledInputMethodList()){
-                if(getPackageName().equals(ime.getPackageName())){enabled=true;break;}
-            }
+        if(manager==null)return false;
+        for(InputMethodInfo ime:manager.getEnabledInputMethodList()){
+            if(getPackageName().equals(ime.getPackageName()))return true;
         }
-        String selected=Settings.Secure.getString(getContentResolver(),Settings.Secure.DEFAULT_INPUT_METHOD);
-        return enabled && selected!=null && selected.startsWith(getPackageName()+"/");
+        return false;
     }
+    private boolean keyboardSelected(){
+        String selected=Settings.Secure.getString(getContentResolver(),Settings.Secure.DEFAULT_INPUT_METHOD);
+        return keyboardEnabled() && selected!=null && selected.startsWith(getPackageName()+"/");
+    }
+    private boolean keyboardReady(){return keyboardSelected();}
     private boolean floatingReady(){
         boolean allowed=Build.VERSION.SDK_INT<23 || Settings.canDrawOverlays(this);
         return allowed && FloatingToolsService.isRunning();
@@ -303,6 +307,24 @@ public final class MainActivity extends Activity {
                 Uri.parse("package:"+getPackageName())));
         }
     }
+    /** Cada autorização mostra um check verde ASSIM QUE o Android confirmar. */
+    private TextView setupStep(String title,Runnable open){
+        TextView t=label(title,14,0xffffffff,true);
+        t.setPadding(dp(13),dp(12),dp(13),dp(12));
+        t.setBackground(shape(0xff742b32,0xff9a5158,12));
+        t.setOnClickListener(v->open.run());
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
+        lp.topMargin=dp(8);setupWarningCard.addView(t,lp);
+        return t;
+    }
+    private void updateSetupStep(TextView t,boolean ready,String label){
+        if(t==null)return;
+        t.setText((ready?"✓  ":"○  ")+label+(ready?"  — Ativado":"  — Pendente"));
+        t.setTextColor(ready?0xffdcffe8:0xffffffff);
+        t.setBackground(shape(ready?0xff167a43:0xff742b32,
+                              ready?0xff28d17b:0xff9a5158,12));
+        t.setContentDescription(label+(ready?", concluído":", precisa ativar"));
+    }
     private void showSetupWarning(){
         setupWarningCard=column();
         setupWarningCard.setPadding(dp(17),dp(15),dp(17),dp(17));
@@ -312,20 +334,30 @@ public final class MainActivity extends Activity {
         setupWarningCard.addView(label("⚠ Configuração necessária",17,0xffffffff,true));
         setupWarningLabel=label("",13,0xffffffff,false);
         space(setupWarningCard,7);setupWarningCard.addView(setupWarningLabel);
-        button(setupWarningCard,"1. Ativar acessibilidade",false,this::openAccessibilitySettings);
-        button(setupWarningCard,"2. Habilitar teclado Bridge",false,this::openKeyboardSettings);
-        button(setupWarningCard,"Selecionar teclado Bridge",false,()->{
+        setupAccessibilityStep=setupStep("1. Acessibilidade",this::openAccessibilitySettings);
+        setupKeyboardEnabledStep=setupStep("2. Habilitar teclado Bridge",this::openKeyboardSettings);
+        setupKeyboardSelectedStep=setupStep("3. Selecionar teclado Bridge",()->{
             InputMethodManager imm=(InputMethodManager)getSystemService(Context.INPUT_METHOD_SERVICE);
             if(imm!=null)imm.showInputMethodPicker();
         });
-        button(setupWarningCard,"3. Autorizar botão flutuante",false,this::openOverlaySettings);
+        setupFloatingStep=setupStep("4. Botão flutuante",this::openOverlaySettings);
         refreshSetupWarning();
     }
     private void refreshSetupWarning(){
         if(setupWarningCard==null || setupWarningLabel==null)return;
-        String missing=missingRequiredSetup();
-        setupWarningCard.setVisibility(missing.isEmpty()?View.GONE:View.VISIBLE);
-        setupWarningLabel.setText("Sem essas autorizações, o Bridge pode falhar.\n"+missing);
+        boolean access=accessibilityReady();
+        boolean enabled=keyboardEnabled();
+        boolean selected=keyboardSelected();
+        boolean floating=floatingReady();
+        updateSetupStep(setupAccessibilityStep,access,"Acessibilidade");
+        updateSetupStep(setupKeyboardEnabledStep,enabled,"Teclado habilitado");
+        updateSetupStep(setupKeyboardSelectedStep,selected,"Teclado selecionado");
+        updateSetupStep(setupFloatingStep,floating,"Botão flutuante");
+        boolean complete=access && enabled && selected && floating;
+        setupWarningCard.setVisibility(complete?View.GONE:View.VISIBLE);
+        setupWarningLabel.setText(complete?"Tudo configurado.":
+            "Concluídas: "+((access?1:0)+(enabled?1:0)+(selected?1:0)+(floating?1:0))+
+            "/4. Toque nas pendentes; cada autorização fica verde automaticamente.");
     }
     private void maybeShowFirstSetupDialog(){
         if(prefs.getBoolean("first_setup_prompt_v302",false))return;

@@ -49,21 +49,30 @@ public final class BridgeScanInputMethodService extends InputMethodService {
         if(connection==null || info==null ||
            !ScanCoordinator.TARGET.equals(info.packageName) ||
            isPassword(info.inputType))return false;
-        // Flutter TextField costuma confirmar em performEditorAction.
-        // sendKeyEvent() retornar true não garante que o Flutter processou.
+        // Compatibilidade com o fluxo lento que funcionava na v1.9:
+        // SEMPRE preferir um par físico DOWN/UP de Enter, nunca declarar
+        // sucesso apenas porque performEditorAction() retornou true.
+        long now=SystemClock.uptimeMillis();
+        int flags=KeyEvent.FLAG_SOFT_KEYBOARD;
+        int device=KeyCharacterMap.VIRTUAL_KEYBOARD;
+        boolean down=connection.sendKeyEvent(new KeyEvent(now,now,
+                KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_ENTER,0,0,device,0,flags));
+        boolean up=connection.sendKeyEvent(new KeyEvent(now,now+7,
+                KeyEvent.ACTION_UP,KeyEvent.KEYCODE_ENTER,0,0,device,0,flags));
+        if(down || up){
+            android.util.Log.i("MLOGBridge","AUTO_ENTER_METHOD_KEYPAIR_SENT");
+            return true; // NUNCA enviar um segundo Enter para esta repeticao.
+        }
+        android.util.Log.i("MLOGBridge","AUTO_ENTER_METHOD_KEYPAIR_UNAVAILABLE");
+        // Apenas se a conexao recusou ambas as teclas, tentar acao IME.
         int action=info.imeOptions & EditorInfo.IME_MASK_ACTION;
         if(action!=EditorInfo.IME_ACTION_UNSPECIFIED &&
            action!=EditorInfo.IME_ACTION_NONE){
             boolean handled=connection.performEditorAction(action);
-            if(handled){android.util.Log.i("MLOGBridge","AUTO_ENTER_METHOD_EDITOR_ACTION_"+action);return true;}
+            android.util.Log.i("MLOGBridge","AUTO_ENTER_METHOD_FALLBACK_EDITOR_ACTION_"+action+"_"+handled);
+            return handled;
         }
-        long now=SystemClock.uptimeMillis();
-        boolean down=connection.sendKeyEvent(new KeyEvent(now,now,KeyEvent.ACTION_DOWN,
-                KeyEvent.KEYCODE_ENTER,0));
-        boolean up=connection.sendKeyEvent(new KeyEvent(now,now+1,KeyEvent.ACTION_UP,
-                KeyEvent.KEYCODE_ENTER,0));
-        android.util.Log.i("MLOGBridge",(down && up)?"AUTO_ENTER_METHOD_KEYPAIR_SENT":"AUTO_ENTER_METHOD_KEYPAIR_FAILED");
-        return down && up;
+        return false;
     }
 
     private static boolean isLoginHint(CharSequence hint){

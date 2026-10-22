@@ -198,7 +198,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             prefs().edit().putBoolean("prearm_field",false).apply();
             // Versoes anteriores podiam deixar o teclado oculto pelo controlador.
             restoreKeyboard();
-            status("v3.0.2: N-1 com confirmação por SEPARADO; modo normal 150 ms.");
+            status("v3.0.3: N-1 teclado Enter lento; modo normal 150 ms.");
         }catch(RuntimeException e){status("Falha ao registrar o broadcast do scanner.");}
     }
 
@@ -1665,7 +1665,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 main.postDelayed(()->pollAutoRepeatEditor(token),45);return;
             }
             trace("AUTO_COUNT_SET_TEXT_OK");
-            main.postDelayed(()->submitAutoRepeatEnter(token),50);
+            main.postDelayed(()->submitAutoRepeatEnter(token),180);
             return;
         }
         if(!autoCountClicked){
@@ -1756,11 +1756,12 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         autoCountEnterAt=autoCountLastActionAt;
         autoCountDone=AutoRepeatPolicy.afterEnterDispatched(autoCountDone,autoCountTarget);
         trace("AUTO_COUNT_ENTER_DISPATCHED_"+autoCountDone);
+        trace("AUTO_COUNT_SLOW_ENTER_CADENCE_MS_"+AutoRepeatPolicy.MIN_INTERVAL_MS);
         ScanAssistState.report("Enters enviados: "+autoCountDone+"/"+autoCountTarget+
             "; confirmações observadas: "+autoCountUiVerified+". Aguardando MLOG.");
         // O retorno sendKeyEvent=true NAO comprova processamento pelo Flutter.
         // Esperar a contagem SEPARADO aumentar, sem re-enviar o mesmo Enter.
-        main.postDelayed(()->observeAutoRepeatResult(token),90);
+        main.postDelayed(()->observeAutoRepeatResult(token),150);
     }
 
     /** Confirmação por contador de separação quando disponível.
@@ -1797,13 +1798,20 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                     "Confira quantos registros foram lançados.");
                 return;
             }
-            if(SystemClock.elapsedRealtime()-autoCountEnterAt<1800L){
-                main.postDelayed(()->observeAutoRepeatResult(token),90);return;
+            // Acessibilidade do Flutter nem sempre expõe o incremento do cartão
+            // no momento em que o pedido já processou a confirmação.
+            // Sem incremento, aguardar uma cadência conservadora, registrar a
+            // falta de evidência e continuar apenas enquanto campo/produto
+            // permanecerem consistentes. Não classificar envio como gravação.
+            if(SystemClock.elapsedRealtime()-autoCountEnterAt<AutoRepeatPolicy.MIN_INTERVAL_MS){
+                main.postDelayed(()->observeAutoRepeatResult(token),120);return;
             }
-            trace("AUTO_COUNT_ENTER_UNCONFIRMED_"+autoCountDone);
-            cancelAutoCount("Enter enviado no bipe "+autoCountDone+
-                ", mas o contador SEPARADO não aumentou em 1,8 s. " +
-                "Não somei esse bipe como confirmado. Confira o MLOG.");
+            autoCountUnverified++;
+            trace("AUTO_COUNT_UNVERIFIED_CONTINUING_"+autoCountDone);
+            ScanAssistState.report("Enters enviados "+autoCountDone+"/"+autoCountTarget+
+                "; confirmações visíveis "+autoCountUiVerified+
+                "; "+autoCountUnverified+" sem confirmação. Conferir pedido.");
+            scheduleAutoRepeat();
             return;
         }
         // Consultas/atividades podem não expor quantidade separada.

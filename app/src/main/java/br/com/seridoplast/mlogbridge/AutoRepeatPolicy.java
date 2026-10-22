@@ -2,7 +2,7 @@ package br.com.seridoplast.mlogbridge;
 
 /** Timing and submission accounting for an explicitly armed continuous batch. */
 final class AutoRepeatPolicy {
-    static final long MIN_INTERVAL_MS = 155L;
+    static final long MIN_INTERVAL_MS = 900L; // entre Enters virtuais; modo normal continua 150 ms
     private AutoRepeatPolicy() {}
     static int virtualRepeats(int totalBipes) {return Math.max(0,totalBipes-1);}
     static long delayMs(long lastSubmissionMs,long nowMs) {

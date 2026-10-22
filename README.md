@@ -1,30 +1,28 @@
-# MLOG Scanner Bridge v3.0.2 — Diagnóstico e sincronização
+# MLOG Scanner Bridge v3.0.3 — Enter lento e permissões com ✓ verde
 
-Base: v3.0.1. Preservados: 150 ms de bloqueio do gatilho físico, leitura normal com Enter do CMX, tratador de códigos, formato do CMX, painel com interruptores e gaveta N−1.
+Base **v3.0.2**, preservando leitura física normal com CMX, pré-foco, proteção temporal de **150 ms**, tratador de caracteres invisíveis, aviso de formatos de código e painel flutuante.
 
-## Evidência do diagnóstico 2026-10-22 20:06:27
+## Bipes automáticos: 1 físico + N−1 virtuais
 
-O log do Bridge registrou `AUTO_COUNT_ENTER_DISPATCHED_2` até `_10` e `AUTO_COUNT_FINISHED`; isso comprova chamadas de envio, mas não a execução no MLOG. O vídeo mostra atualização de unidades `SEPARADO` em alguns momentos, evidenciando processamento parcial/assíncrono. O histórico não comprova que o pedido gravou as dez unidades. O teclado aparecia/ocultava durante o lote.
+- Repetição virtual envia o **Enter por teclado (KEYCODE_ENTER DOWN e UP)**, no mesmo estilo da implementação antiga v1.9, em vez de preferir `performEditorAction()`.
+- Se ambas as teclas forem recusadas pela conexão, tenta uma única ação de editor como último recurso. **Nunca envia dois Enters para a mesma repetição.**
+- Cadência experimental mais conservadora: **mínimo de 900 ms entre Enters virtuais**, em vez de 155 ms. Após inserir código via acessibilidade, espera **180 ms** antes do Enter (antes eram 50 ms).
+- Quando a contagem `SEPARADO` aumenta, usa o incremento como evidência visual. Se não aumentar após 900 ms, **continua o lote na cadência lenta**, registra `AUTO_COUNT_UNVERIFIED_CONTINUING_N` e informa quantidade de Enters enviados vs incrementos observados. Isso não é confirmação de gravação.
+- Proteção permanece para erro de campo, mudança de tela/produto, saltos anormais da contagem e cancelamento. Quantidade máxima 100. Em pedidos reais, testar com 3 antes de 10 ou 100, pois enviar Enter **não garante registro no MLOG**.
 
-## Correções
+## Configuração inicial
 
-- Repetições: passa a preferir `InputConnection.performEditorAction(imeAction)` quando o editor do MLOG oferecer uma ação válida; fallback para par KEYCODE_ENTER. Mantém 1 tentativa por repetição; não reenvia Enter às cegas.
-- Na tela `Separação`, o Bridge lê o total `PC/UN SEPARADO` exibido no cartão do mesmo produto e só passa à próxima repetição quando a contagem subir exatamente uma unidade. Limiar de observação: 1.800 ms. Caso a contagem não mude, interrompe e informa quantos Enters foram enviados e quantos incrementos foram observados. Troca antecipada de produto ou salto maior que 1 interrompe para conferir o pedido.
-- Nas outras telas, onde não existe o contador visível `SEPARADO`, as tentativas usam cadência mínima de 650 ms e permanecem explicitamente marcadas como **sem confirmação**. O Bridge não tem acesso ao backend do MLOG e não consegue comprovar gravação.
-- Engrenagem: memoriza coordenadas da bolha em preferências ao arrastar e restaura ao recolher o painel, reabri-lo e reiniciar o serviço. A posição do painel expandido nunca substitui a posição armazenada da bolha.
-- Primeira execução: apresenta diálogo guiado com acessibilidade, teclado Bridge habilitado/selecionado e permissão de sobreposição. Mostra um aviso vermelho na tela inicial até os três requisitos estarem autorizados. O Android precisa receber a autorização do usuário; nenhum serviço é ativado silenciosamente.
+O cartão de configuração inicial mostra indicadores **✓ verdes individuais** para:
 
-## Teste recomendado
+1. Acessibilidade ativa;
+2. Teclado Bridge habilitado;
+3. Teclado Bridge selecionado como IME;
+4. Bolha flutuante autorizada e ativa.
 
-1. Fazer backup/conferir pedido de teste. Usar 3 no contador (1 físico + 2 virtuais).
-2. Verificar se o número `SEPARADO` aumenta três vezes no produto correto.
-3. Se o lote parar, copiar o diagnóstico; eventos `AUTO_COUNT_SEPARADO_CONFIRMED_N`, `AUTO_COUNT_ENTER_UNCONFIRMED_N`, `AUTO_COUNT_ENTER_BRIDGE_IME` e `AUTO_ENTER_METHOD_EDITOR_ACTION_*` ajudarão a identificar a falha.
-4. Validar novamente o total gravado no MLOG. Atualização visual não prova persistência no servidor.
+Cada indicador é atualizado ao retornar de Configurações ou na verificação periódica do aplicativo. O cartão vermelho some automaticamente quando os quatro requisitos forem satisfeitos. As permissões continuam dependentes da aprovação do operador pelo Android.
 
-## Atualização
+## Instalação
 
-Veja `ATUALIZAR_PELO_CMD.txt` (inclui remoção automática do ZIP após push confirmado).
+Extraia o ZIP na pasta local `MLOG-Scanner-Bridge`, faça `git add -A`, `git commit`, `git push origin main`, baixe o artefato **MLOG-Scanner-Bridge-v303-APK** do GitHub Actions e instale `app-debug.apk` via ADB.
 
-## Compilação
-
-O Android SDK/Gradle não está disponível neste ambiente. Foram executados testes Java locais das políticas, identificação de incremento e controle de fila; a compilação final e a integração com Flutter exigem GitHub Actions e o coletor.
+> A compilação completa do APK e a interação real com o Flutter não foram executadas neste ambiente. Testes locais de Java verificam políticas e temporização, mas são insuficientes para garantir o total de itens gravados no pedido.
