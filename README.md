@@ -1,40 +1,64 @@
-# MLOG Scanner Bridge v2.7 — 1 clique por leitura
+# MLOG Scanner Bridge v2.8 — observar Enter e destravar sem cliques antigos
 
-Base: v2.6. Nova regra: **um gatilho não pode gerar dois cliques**, nem enfileirar cliques para execução tardia.
+## Base
 
-## Diagnóstico analisado
+Derivado da v2.7 com as duas logos fornecidas e a regra de **um clique por ciclo**. CMX continua responsavel por decodificar e enviar Enter. O Bridge **nao envia Enter automaticamente** e **nao guarda cliques para depois**.
 
-No log de 22/10 10:41, o mesmo ciclo recebeu um clique por gatilho (`TRIGGER_NATIVE_CLICK_OK`) e depois outro ao processar o broadcast (`WAIT_EDITOR` seguido de novo clique). Leituras subsequentes aguardaram até ~3 s em fila. Ambas as situações motivaram esta correção.
+## Evidencia do diagnostico 22/10/2026 11:22–11:24
 
-## Comportamento
+- `CMX_ENTER_PASSIVE_WAIT` / `CMX_ENTER_NOT_OBSERVED` depois de 1.100 ms.
+- `GATE_LOCKED_UNCONFIRMED` colocava o ciclo em `NEEDS_ATTENTION` permanentemente.
+- 11 gatilhos registrados como `TRIGGER_IGNORED_LOCKED_*` durante a captura.
+- Outras leituras apresentaram `CMX_FIELD_CHANGED` e `GATE_RELEASE_CONFIRMED` em 101–232 ms.
 
-- Primeiro gatilho com MLOG reconhecido bloqueia o ciclo e tenta abrir o campo **uma única vez**.
-- O primeiro broadcast do scanner preenche o campo. Retransmissões e bipes durante o processamento são **ignorados, nunca guardados**.
-- Após a confirmação ser observada como mudança/fechamento do campo, o bloqueio é liberado.
-- Se nenhuma leitura for decodificada, o gatilho é liberado após 1,35 s, sem toques atrasados.
-- Se não for possível confirmar, o ciclo permanece bloqueado para evitar confirmação duplicada; usar **Diagnóstico → Rearmar após falha** somente depois de verificar o MLOG.
-- O Bridge **não envia Enter**; o CMX continua responsável por isso.
-- LOGO 1.svg no ícone de instalação; LOGO 2.svg no cabeçalho em duas cores para os temas.
+## Alteracoes
 
-⚠️ **Leituras acionadas enquanto ocupado serão descartadas**, não executadas mais tarde. O operador deve aguardar a conclusão antes de bipar novamente. Essa é uma escolha deliberada para evitar duplicações e cliques retardados; não representa suporte a bipagem ilimitada em alta frequência.
+1. **Deteccao de Enter real, quando acessivel**: observa `KEYCODE_ENTER` / `KEYCODE_NUMPAD_ENTER` por `AccessibilityService.onKeyEvent()` e `InputMethodService.onKeyUp()`; retorna `false`/`super` e nao consome/reenvia o Enter.
+2. **Liberacao apos Enter observado**: se Enter chegou apos codigo inserido e a janela nao estiver em modal, libera o ciclo apos curta verificacao (90 ms). Isso observa que a tecla foi recebida no Android, mas nao garante resposta do servidor MLOG.
+3. **Confirmacao tardia por UI**: quando 1.100 ms expiram sem confirmacao verificavel, continua observando por ate 8 segundos a mudanca de tela, desaparicao do campo ou alteracao do conteudo. Sem alteracao, **nao** desbloqueia apenas por tempo.
+4. **Novo gatilho reavalia o estado** antes de recusar: se a tela ja mudou e o evento de acessibilidade atrasou, libera e permite iniciar o proximo ciclo. Nunca executa clique antigo em fila.
+5. **Protecao contra falsos positivos**: outro campo editavel como Quantidade nao comprova conclusao. Modais e login continuam bloqueados.
+6. **Diagnostico**: `RAW_ENTER_KEY_OBSERVED_accessibility`, `RAW_ENTER_KEY_OBSERVED_bridge_ime`, `GATE_RELEASE_RAW_ENTER`, `LATE_CONFIRMATION_OBSERVED_*`, `GATE_RELEASE_LATE_UI_CHANGE`, `LATE_CONFIRMATION_NOT_VISIBLE`.
 
-## Atualizar no Windows
+### Limitacao importante
 
-```bat
+Se o CMX enviar Enter sintetico diretamente ao MLOG por um mecanismo que nao publica um KeyEvent, o Bridge **nao consegue interceptar a tecla** com garantia. Nesse caso, detecta o resultado visivel no Flutter. Se o Flutter nao expuser nem Enter nem mudanca de campo, mantem o bloqueio por seguranca e oferece o rearme manual apos conferencia. Nunca confundir `Enter enviado` com `item confirmado no servidor`.
+
+## Compilar no GitHub
+
+No Windows (ZIP salvo em Downloads):
+
+```cmd
 cd /d "%USERPROFILE%\Downloads\MLOG-Scanner-Bridge"
-powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v27_Um_Clique_Por_Ciclo.zip') -DestinationPath . -Force"
+powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v28_Enter_Observado.zip') -DestinationPath . -Force"
 git add -A
-git commit -m "Bridge v27 trava de ciclo e logos"
+git commit -m "Bridge v28 desbloqueio por Enter e confirmacao tardia"
 git push origin main
 ```
 
-## Instalar usando ADB
+Em `Actions`, baixar o artefato `MLOG-Scanner-Bridge-v28-APK` gerado com sucesso. O APK nao vem pronto neste ZIP.
 
-```bat
+## Instalar via ADB
+
+Extrair `app-debug.apk` para Downloads:
+
+```cmd
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" devices
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" install -r "%USERPROFILE%\Downloads\app-debug.apk"
 ```
 
-## Segurança dos testes
+## Capturar o novo diagnostico
 
-Testar num único coletor, fora de pedidos reais, para confirmar: 1) um clique por gatilho; 2) o próximo clique só após confirmação; 3) Enter somente pelo CMX; 4) recuperação manual sem executar cliques atrasados. O código foi validado sintaticamente, mas o APK e a integração dependem da compilação e teste físico.
+```cmd
+"%USERPROFILE%\Downloads\platform-tools\adb.exe" logcat -d -v time -s MLOGBridge:I > "%USERPROFILE%\Downloads\Bridge_v28_Log.txt"
+```
+
+## Validacao local
+
+- Parser Java para os 10 fontes: OK
+- `ScanCycleGateTest`: OK
+- `ConfirmationReleasePolicyTest`: OK
+- XMLs validos, ZIP integro: OK
+- **Compilacao Android, teste no coletor e Enter sintetico CMX: nao validados neste ambiente**
+
+Teste primeiro em um coletor fora de pedidos reais, comparando cinco leituras lentas com uma sequencia de dez. Conferir que nao houve lancamentos duplicados. O Bridge pode rejeitar um gatilho quando a operacao anterior ainda nao terminou; a correcao evita bloqueio persistente quando uma confirmacao tardia e visivel.

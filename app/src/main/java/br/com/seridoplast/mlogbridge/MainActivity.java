@@ -297,7 +297,7 @@ public final class MainActivity extends Activity {
             toast("Diagnóstico copiado. Não inclui códigos.");
         });
         LinearLayout help=card();help.addView(label("O que testar",17,ink,true));
-        subtitle(help,"v2.7: um clique por ciclo, sem fila. Um novo toque so e liberado apos a confirmacao do CMX ser observada.");
+        subtitle(help,"v2.8: um clique por ciclo, sem fila. O bloqueio e liberado ao observar Enter fisico ou a mudanca efetiva do campo, inclusive depois do prazo normal.");
         button(help,"Rearmar apos falha (sem clicar)",false,()->{
             MlogFocusAccessibilityService service=MlogFocusAccessibilityService.current();
             if(service!=null){service.resetScanLock();toast("Ciclo liberado sem executar cliques pendentes.");}
@@ -306,7 +306,7 @@ public final class MainActivity extends Activity {
         button(help,"Abrir MLOG",true,this::openMlog);
     }
     private void about(){
-        title("Sobre","MLOG Scanner Bridge · v2.7 beta");
+        title("Sobre","MLOG Scanner Bridge · v2.8 beta");
         LinearLayout about=card();about.addView(label("Integração local",17,ink,true));
         subtitle(about,"Criado para o scanner físico CMX e o MLOG. Sem acesso à internet. Os códigos de leitura não são salvos em histórico.");
         space(about,10);

@@ -67,6 +67,15 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private long lastEnterEventProbe;
     private long currentScanStartedAt;
     private boolean awaitingEnterConfirmation;
+    // O CMX pode enviar Enter como KeyEvent fisico ou por um IME. So o
+    // primeiro e diretamente visivel a onKeyEvent(); no segundo caso usamos
+    // transicoes observaveis do campo, inclusive depois do timeout.
+    private long rawEnterObservedAt;
+    private String unconfirmedCode;
+    private String unconfirmedScreen="";
+    private long unconfirmedSince;
+    private int lateConfirmationEpoch;
+
     private boolean configuredFastEvents;
     private boolean configuredTriggerEvents;
     private long lastTriggerPrefocus;
@@ -151,7 +160,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             prefs().edit().putBoolean("prearm_field",false).apply();
             // Versoes anteriores podiam deixar o teclado oculto pelo controlador.
             restoreKeyboard();
-            status("v2.6: a cada gatilho, preparar botao nativo do MLOG; Enter pelo CMX.");
+            status("v2.8: aguarda confirmacao do CMX e libera tambem apos atualizacao tardia.");
         }catch(RuntimeException e){status("Falha ao registrar o broadcast do scanner.");}
     }
 
@@ -239,6 +248,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private void finishQueuedScan(String reason){
         if(scanQueue.isIdle())return;
         final long now=SystemClock.elapsedRealtime();
+        final String incompleteCode=scanQueue.active();
+        final String incompleteScreen=lastEnteredScreen;
         trace("SCAN_FINISH_"+reason);
         trace("SCAN_ELAPSED_MS_"+(now-currentScanStartedAt));
         awaitingEnterConfirmation=false;
@@ -249,27 +260,99 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         ++serial;++enterAttempt;++workGeneration;
         queuedAt.clear();
         scanQueue.clear(); // NUNCA iniciar codigo antigo depois de outro bipe
-        if("campo_mudou".equals(reason) || "campo_saiu".equals(reason)){
+        if("campo_mudou".equals(reason) || "campo_saiu".equals(reason) ||
+           "enter_fisico_observado".equals(reason)){
+            clearUnconfirmed();
             cycleGate.completed(now);
-            trace("GATE_RELEASE_CONFIRMED");
+            trace("enter_fisico_observado".equals(reason)?
+                  "GATE_RELEASE_RAW_ENTER":"GATE_RELEASE_CONFIRMED");
         }else if("fora_do_mlog".equals(reason) || "tela_bloqueada".equals(reason) ||
                   "icone_ausente".equals(reason) || "icone_atividade_ausente".equals(reason) ||
                   "editor_bloqueado".equals(reason) || "quantidade_protegida".equals(reason) ||
                   "busca_nao_acessivel".equals(reason) || "gesto_cancelado".equals(reason) ||
                   "gesto_indisponivel".equals(reason)){
+            clearUnconfirmed();
             cycleGate.aborted(now);
             trace("GATE_RELEASE_NO_OPERATION");
         }else{
-            // Se nao sabemos se o Enter do CMX ocorreu, nao clicamos de novo:
-            // exige cancelamento/navegacao ou rearmar manualmente.
+            // O Enter do CMX pode chegar por um mecanismo nao visivel como
+            // KeyEvent. Em vez de travar para sempre, continuar observando
+            // exclusivamente mudancas efetivas do campo apos o prazo.
+            unconfirmedCode=incompleteCode;
+            unconfirmedScreen=incompleteScreen==null?"":incompleteScreen;
+            unconfirmedSince=now;
             cycleGate.needsAttention();
-            trace("GATE_LOCKED_UNCONFIRMED");
-            status("Leitura sem confirmacao verificavel; nao repetirei o clique. Confira o MLOG e, se preciso, use Rearmar no Bridge.");
+            trace("GATE_AWAITING_LATE_CONFIRMATION");
+            status("Confirmacao nao observada ainda. Monitorando campo, sem repetir cliques.");
+            scheduleLateConfirmationObservation();
         }
+    }
+
+    /** Cancela observadores tardios de uma confirmacao anterior. */
+    private void clearUnconfirmed(){
+        unconfirmedCode=null;
+        unconfirmedScreen="";
+        unconfirmedSince=0;
+        ++lateConfirmationEpoch;
+    }
+
+    /**
+     * Detecta confirmacao TARDIA sem o truque inseguro de desbloquear somente
+     * porque passou um tempo. Exige que o campo antes preenchido tenha sumido,
+     * mudado ou sido esvaziado em tela validada do MLOG.
+     */
+    private boolean maybeReleaseLateConfirmation(String origin){
+        if(cycleGate.phase()!=ScanCycleGate.Phase.NEEDS_ATTENTION ||
+           unconfirmedCode==null || !scanQueue.isIdle())return false;
+        AccessibilityNodeInfo root=mlogRoot();
+        if(root==null)return false;
+        ScreenInfo info=inspect(root);
+        if(info.login || info.dialog || isBlockingOverlay(root) ||
+           "desconhecida".equals(info.screen))return false;
+        AccessibilityNodeInfo editor=safeEditor(info,true);
+        if(editor==null && info.editors.size()==1 &&
+           info.editors.get(0).isEditable() &&
+           !blockedLabel(tag(info.editors.get(0))))editor=info.editors.get(0);
+        boolean screenChanged=!unconfirmedScreen.isEmpty() &&
+                              !unconfirmedScreen.equals(info.screen);
+        boolean editorPresent=editor!=null && editor.isVisibleToUser();
+        boolean contentMatches=true;
+        if(editorPresent){
+            CharSequence t=editor.getText();
+            contentMatches=t!=null && unconfirmedCode.equals(t.toString().trim());
+        }
+        long now=SystemClock.elapsedRealtime();
+        // Campo de quantidade ou outro editor nao significa que a leitura
+        // terminou. Tempo sozinho tampouco desbloqueia.
+        if(!ConfirmationReleasePolicy.shouldRelease(
+             now-unconfirmedSince,screenChanged,editorPresent,
+             !info.editors.isEmpty(),contentMatches))return false;
+        trace("LATE_CONFIRMATION_OBSERVED_"+origin);
+        clearUnconfirmed();
+        cycleGate.completed(now);
+        trace("GATE_RELEASE_LATE_UI_CHANGE");
+        return true;
+    }
+
+    /** Fallback sem fila nem gestos. Para quando Flutter atualiza a tela
+     * depois que o prazo principal de 1,1 s expirou. */
+    private void scheduleLateConfirmationObservation(){
+        final int epoch=++lateConfirmationEpoch;
+        final long until=SystemClock.elapsedRealtime()+8000;
+        final Runnable[] job=new Runnable[1];
+        job[0]=()->{
+            if(epoch!=lateConfirmationEpoch ||
+               cycleGate.phase()!=ScanCycleGate.Phase.NEEDS_ATTENTION)return;
+            if(maybeReleaseLateConfirmation("poll"))return;
+            if(SystemClock.elapsedRealtime()<until)main.postDelayed(job[0],90);
+            else trace("LATE_CONFIRMATION_NOT_VISIBLE");
+        };
+        main.postDelayed(job[0],100);
     }
 
     /** Liberacao EXPLICITA, sem disparar qualquer toque armazenado. */
     void resetScanLock(){
+        clearUnconfirmed();
         ++serial;++enterAttempt;++workGeneration;
         cancelPending();
         scanQueue.clear();queuedAt.clear();
@@ -286,6 +369,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
      *  cancelamento ou um dialogo. Nunca retoma gestos pendentes sozinho. */
     private void suspendForNavigation(String reason){
         boolean busy=!scanQueue.isIdle() || pendingCode!=null || !cycleGate.isIdle();
+        clearUnconfirmed();
         navigationGuardUntil=SystemClock.elapsedRealtime()+350;
         if(!busy)return;
         trace("NAVIGATION_CANCEL_"+reason);
@@ -360,6 +444,12 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 if(!cycleGate.isIdle())suspendForNavigation("fora_do_mlog");
             }
             return;
+        }
+        if((event.getEventType()==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+            event.getEventType()==AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
+            event.getEventType()==AccessibilityEvent.TYPE_VIEW_FOCUSED) &&
+           cycleGate.phase()==ScanCycleGate.Phase.NEEDS_ATTENTION){
+            maybeReleaseLateConfirmation("event");
         }
         if(event.getEventType()==AccessibilityEvent.TYPE_VIEW_CLICKED){
             AccessibilityNodeInfo source=event.getSource();
@@ -436,8 +526,56 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
      * Nao clicar novamente quando um editor de codigo ja estiver focado:
      * o botao do MLOG pode funcionar como alternancia e fechar a entrada.
      */
+    /** Entrada detectada por hardware/acessibilidade ou pelo IME do Bridge.
+     *  InputConnection.sendKeyEvent() de um terceiro app pode NAO gerar
+     *  onKeyEvent: manter monitoramento visual de campo como fallback. */
+    static void reportEnterFromBridgeIme(){
+        MlogFocusAccessibilityService service=instance;
+        if(service!=null)service.main.post(()->service.observeExternalEnter("bridge_ime"));
+    }
+
+    private void observeExternalEnter(String source){
+        if(!ScanCoordinator.isActive(this) || mlogRoot()==null)return;
+        long now=SystemClock.elapsedRealtime();
+        if(now-rawEnterObservedAt<95)return; // nao contar o mesmo DOWN/UP duas vezes
+        rawEnterObservedAt=now;
+        boolean waiting=awaitingEnterConfirmation && !scanQueue.isIdle() &&
+                        rawEnterObservedAt>=confirmStartedAt;
+        boolean late=cycleGate.phase()==ScanCycleGate.Phase.NEEDS_ATTENTION &&
+                     unconfirmedCode!=null;
+        if(!waiting && !late)return;
+        trace("RAW_ENTER_KEY_OBSERVED_"+source);
+        final long token=enterAttempt;
+        final int epoch=lateConfirmationEpoch;
+        main.postDelayed(()->{
+            AccessibilityNodeInfo root=mlogRoot();
+            if(root==null || isBlockingOverlay(root))return;
+            ScreenInfo i=inspect(root);
+            if(i.login || i.dialog || "desconhecida".equals(i.screen))return;
+            if(waiting && token==enterAttempt && awaitingEnterConfirmation &&
+               !scanQueue.isIdle()){
+                trace("ENTER_AFTER_CODE_RECEIVED");
+                finishQueuedScan("enter_fisico_observado");
+            }else if(late && epoch==lateConfirmationEpoch &&
+                     cycleGate.phase()==ScanCycleGate.Phase.NEEDS_ATTENTION &&
+                     unconfirmedCode!=null){
+                trace("LATE_RAW_ENTER_OBSERVED");
+                clearUnconfirmed();
+                cycleGate.completed(SystemClock.elapsedRealtime());
+                trace("GATE_RELEASE_RAW_ENTER");
+            }
+        },90);
+    }
+
     @Override protected boolean onKeyEvent(KeyEvent event){
-        if(event==null || !prefs().getBoolean("trigger_prefocus",true) ||
+        if(event==null)return false;
+        // Apenas observar, NUNCA consumir nem reenviar Enter do CMX.
+        if(event.getKeyCode()==KeyEvent.KEYCODE_ENTER ||
+           event.getKeyCode()==KeyEvent.KEYCODE_NUMPAD_ENTER){
+            if(event.getAction()==KeyEvent.ACTION_UP)observeExternalEnter("accessibility");
+            return false;
+        }
+        if(!prefs().getBoolean("trigger_prefocus",true) ||
            !ScanCoordinator.isActive(this) || event.getAction()!=KeyEvent.ACTION_DOWN ||
            event.getRepeatCount()!=0)return false;
         final int code=event.getKeyCode();
@@ -448,6 +586,30 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         final long now=SystemClock.elapsedRealtime();
         if(now<navigationGuardUntil)return false;
         final int savedLearned=prefs().getInt("learned_trigger_key",-1);
+        if((isScannerTriggerKey(code) || code==savedLearned) && !cycleGate.isIdle()){
+            // Ultima oportunidade: Flutter pode ter concluido a leitura, mas
+            // nao publicou evento acessivel a tempo. Rever ANTES de rejeitar
+            // o novo gatilho; nunca enfileirar um clique antigo.
+            if(cycleGate.phase()==ScanCycleGate.Phase.NEEDS_ATTENTION)
+                maybeReleaseLateConfirmation("trigger");
+            if(cycleGate.phase()==ScanCycleGate.Phase.WAIT_CONFIRMATION &&
+               !scanQueue.isIdle()){
+                final String expected=scanQueue.active();
+                AccessibilityNodeInfo current=mlogRoot();
+                if(current!=null && !isBlockingOverlay(current)){
+                    ScreenInfo state=inspect(current);
+                    AccessibilityNodeInfo ed=safeEditor(state,true);
+                    if(!state.login && !state.dialog &&
+                       !"desconhecida".equals(state.screen) &&
+                       ((ed==null && state.editors.isEmpty()) ||
+                        (ed!=null && (ed.getText()==null ||
+                           !expected.equals(ed.getText().toString().trim()))))){
+                        trace("CONFIRMATION_AT_NEW_TRIGGER");
+                        finishQueuedScan("campo_mudou");
+                    }
+                }
+            }
+        }
         if((isScannerTriggerKey(code) || code==savedLearned) && !cycleGate.isIdle()){
             trace("TRIGGER_IGNORED_LOCKED_"+cycleGate.phase());
             // O proximo broadcast desse gatilho nao deve reaparecer como
@@ -956,6 +1118,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private boolean directEnterSent; // sempre false nesta versao; preserva evento legado sem acao
 
     private void awaitCmxConfirmation(String expected,long ignoredDelay){
+        clearUnconfirmed();
         final long token=++enterAttempt;
         awaitingEnterConfirmation=true;
         directEnterSent=false;
@@ -1355,8 +1518,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         if(Math.abs(a.rect.centerY()-b.rect.centerY())>18*density)return null;
         return b.node;
     }
-    @Override public void onInterrupt(){cancelPending();scanQueue.clear();cycleGate.aborted(SystemClock.elapsedRealtime());++workGeneration;restoreKeyboard();status("Acessibilidade interrompida.");}
+    @Override public void onInterrupt(){clearUnconfirmed();cancelPending();scanQueue.clear();cycleGate.aborted(SystemClock.elapsedRealtime());++workGeneration;restoreKeyboard();status("Acessibilidade interrompida.");}
     @Override public void onDestroy(){
+        clearUnconfirmed();
         if(receiverRegistered)try{unregisterReceiver(receiver);}catch(RuntimeException ignored){}
         main.removeCallbacksAndMessages(null);
         cancelPending();
