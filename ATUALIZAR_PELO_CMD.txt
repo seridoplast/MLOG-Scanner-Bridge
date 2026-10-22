@@ -1,15 +1,15 @@
-MLOG Scanner Bridge v2.9.3 — COMANDOS NO CMD
+MLOG Scanner Bridge v2.9.4 — COMANDOS NO CMD
 
-1) Salve MLOG_Scanner_Bridge_v293_Bloqueio_500ms.zip em Downloads.
+1) Salve MLOG_Scanner_Bridge_v294_Bloqueio_450ms.zip em Downloads.
 
 cd /d "%USERPROFILE%\Downloads\MLOG-Scanner-Bridge"
-powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v293_Bloqueio_500ms.zip') -DestinationPath . -Force"
+powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v294_Bloqueio_450ms.zip') -DestinationPath . -Force"
 git add -A
-git commit -m "Bridge v293 bloqueio temporal de 500 ms"
+git commit -m "Bridge v294 bloqueio temporal de 450 ms"
 git push origin main
 
 2) GitHub Actions: https://github.com/seridoplast/MLOG-Scanner-Bridge/actions
-   Baixe o artefato MLOG-Scanner-Bridge-v293-APK quando a execucao ficar verde.
+   Baixe o artefato MLOG-Scanner-Bridge-v294-APK quando a execucao ficar verde.
    Extraia o arquivo app-debug.apk para Downloads.
 
 3) Conecte o coletor e instale:
@@ -19,7 +19,7 @@ git push origin main
 
 4) Diagnostico:
 
-"%USERPROFILE%\Downloads\platform-tools\adb.exe" logcat -d -v time -s MLOGBridge:I > "%USERPROFILE%\Downloads\Bridge_v293_Log.txt"
+"%USERPROFILE%\Downloads\platform-tools\adb.exe" logcat -d -v time -s MLOGBridge:I > "%USERPROFILE%\Downloads\Bridge_v294_Log.txt"
 
 Entrada e Enter: CMX como antes; Bridge so controla foco/toque e injecao de codigo, sem enviar Enter automatico.
-Intervalo fixo de clique 500 ms; gatilhos durante o bloqueio nao sao enfileirados.
+Intervalo fixo de clique 450 ms; gatilhos durante o bloqueio nao sao enfileirados.

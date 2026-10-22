@@ -1,4 +1,4 @@
-# MLOG Scanner Bridge v2.9.3 — Bloqueio temporizado (500 ms)
+# MLOG Scanner Bridge v2.9.4 — Bloqueio temporizado (450 ms)
 
 ## Base e diagnóstico
 
@@ -9,34 +9,34 @@ Entre 16 ciclos registrados, **12 terminaram com `SCAN_FINISH_campo_mudou` ou `S
 `764, 507, 207, 707, 900, 148, 717, 380, 361, 1051, 997, 178`
 
 - **Média: 576,4 ms**; mediana: **607 ms**.
-- Bloqueio fixo definido: **500 ms**, cerca de 76 ms abaixo da média de 576 ms (e abaixo da mediana de 607 ms).
-- Estes são tempos de processamento observados pelo Bridge, **não** uma prova do tempo do servidor nem da confirmação física do Enter. Há ciclos acima de 500 ms.
+- Bloqueio fixo definido: **450 ms**, cerca de 126 ms abaixo da média de 576 ms (e abaixo da mediana de 607 ms).
+- Estes são tempos de processamento observados pelo Bridge, **não** uma prova do tempo do servidor nem da confirmação física do Enter. Há ciclos acima de 450 ms.
 
 ## Funcionamento
 
-1. O primeiro gatilho aceito inicia a janela de 500 ms e tenta abrir/focar o campo do MLOG **uma única vez**.
-2. Durante os 500 ms, novos gatilhos **não geram nenhum clique e não ficam em fila**. Leituras recebidas nesse intervalo são ignoradas pelo Bridge; o CMX continuará operando conforme sua própria configuração.
-3. Decorridos 500 ms, o **próximo gatilho** inicia um ciclo novo, mesmo que o MLOG não tenha exposto a confirmação anterior ao Android. Não é necessário rearmar manualmente.
+1. O primeiro gatilho aceito inicia a janela de 450 ms e tenta abrir/focar o campo do MLOG **uma única vez**.
+2. Durante os 450 ms, novos gatilhos **não geram nenhum clique e não ficam em fila**. Leituras recebidas nesse intervalo são ignoradas pelo Bridge; o CMX continuará operando conforme sua própria configuração.
+3. Decorridos 450 ms, o **próximo gatilho** inicia um ciclo novo, mesmo que o MLOG não tenha exposto a confirmação anterior ao Android. Não é necessário rearmar manualmente.
 4. Se o código chegar por broadcast sem evento físico do gatilho, o próprio broadcast pode abrir um ciclo temporizado, respeitando o mesmo prazo. Retransmissões desse mesmo bipe são descartadas.
 5. Um mesmo ciclo nunca envia um segundo clique atrasado no botão nativo do MLOG.
 6. **O Bridge não envia Enter automático.** O Enter permanece sob responsabilidade do CMX Scanner, como na v2.6. A digitação manual do teclado Bridge permanece disponível.
 7. A versão mantém o pré-foco pelo gatilho, o reconhecimento dos layouts de produtos (inclusive quantidade), consulta, atividades, o tema claro/escuro e as logos.
 
-**Importante:** a proteção de 500 ms não espera a confirmação, então uma operação mais lenta que 500 ms pode ainda estar em processamento quando o próximo gatilho for aceito. Teste fora de pedidos reais e confira se não há duplicação/perda de itens.
+**Importante:** a proteção de 450 ms não espera a confirmação, então uma operação mais lenta que 450 ms pode ainda estar em processamento quando o próximo gatilho for aceito. Teste fora de pedidos reais e confira se não há duplicação/perda de itens.
 
 ## Atualização pelo CMD do Windows
 
-Baixe `MLOG_Scanner_Bridge_v293_Bloqueio_500ms.zip` para Downloads e execute:
+Baixe `MLOG_Scanner_Bridge_v294_Bloqueio_450ms.zip` para Downloads e execute:
 
 ```bat
 cd /d "%USERPROFILE%\Downloads\MLOG-Scanner-Bridge"
-powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v293_Bloqueio_500ms.zip') -DestinationPath . -Force"
+powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v294_Bloqueio_450ms.zip') -DestinationPath . -Force"
 git add -A
-git commit -m "Bridge v293 bloqueio temporal de 500 ms"
+git commit -m "Bridge v294 bloqueio temporal de 450 ms"
 git push origin main
 ```
 
-Em https://github.com/seridoplast/MLOG-Scanner-Bridge/actions, abra a execução bem-sucedida e baixe o artefato `MLOG-Scanner-Bridge-v293-APK`. Extraia `app-debug.apk` para Downloads.
+Em https://github.com/seridoplast/MLOG-Scanner-Bridge/actions, abra a execução bem-sucedida e baixe o artefato `MLOG-Scanner-Bridge-v294-APK`. Extraia `app-debug.apk` para Downloads.
 
 ## Instalação pelo ADB
 
@@ -52,11 +52,11 @@ Precisa aparecer `device` no primeiro comando e `Success` no segundo. A opção 
 ## Diagnóstico da versão
 
 ```bat
-"%USERPROFILE%\Downloads\platform-tools\adb.exe" logcat -d -v time -s MLOGBridge:I > "%USERPROFILE%\Downloads\Bridge_v293_Log.txt"
+"%USERPROFILE%\Downloads\platform-tools\adb.exe" logcat -d -v time -s MLOGBridge:I > "%USERPROFILE%\Downloads\Bridge_v294_Log.txt"
 ```
 
 Eventos relevantes:
-- `CLICK_COOLDOWN_STARTED_500_MS`: novo ciclo aceito.
+- `CLICK_COOLDOWN_STARTED_450_MS`: novo ciclo aceito.
 - `CLICK_COOLDOWN_IGNORED_REMAINING_MS_...`: gatilho ignorado durante a janela.
 - `SECOND_NATIVE_CLICK_PREVENTED_...`: clique repetido não executado.
 - `BROADCAST_IGNORED_COOLDOWN_OR_ECHO_...`: transmissão repetida/bloqueada.
@@ -72,4 +72,4 @@ Eventos relevantes:
 
 ### Atenção ao intervalo reduzido
 
-O novo prazo de 500 ms fica 76,4 ms abaixo da média observada (576,4 ms) e abaixo da mediana (607 ms). Algumas leituras no diagnóstico chegaram a superar 1 segundo; portanto, o desbloqueio pelo relógio não garante que o MLOG já tenha concluído o processamento. Não utilize a versão em pedidos reais antes de confirmar ausência de perdas e duplicações.
+O novo prazo de 450 ms fica 126,4 ms abaixo da média observada (576,4 ms) e abaixo da mediana (607 ms). Algumas leituras no diagnóstico chegaram a superar 1 segundo; portanto, o desbloqueio pelo relógio não garante que o MLOG já tenha concluído o processamento. Não utilize a versão em pedidos reais antes de confirmar ausência de perdas e duplicações.
