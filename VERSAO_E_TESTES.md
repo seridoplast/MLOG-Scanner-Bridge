@@ -1,9 +1,9 @@
-# v2.9.6 — validação
+# v2.9.7 — 150 ms / Formato lido
 
-- Origem: projeto v2.9.5 (400 ms).
-- Mudança de tempo: `TimedClickGate.COOLDOWN_MS = 200L`.
-- Mudanças na IME: `BridgeScanInputMethodService` reinicia em modo compacto no MLOG após fechamento/mudança de campo; `Digitar` expande manualmente; `⌫ Apagar` funciona na barra compacta; após Enter manual recolhe o QWERTY.
-- Ajustes: migração única (`BridgePreferences`) liga os seis controles padrão sem exigir reset de dados e respeita escolhas subsequentes. Habilitar a opção Bridge não substitui o teclado padrão escolhido no Android.
-- Rotina de preenchimento do scanner e Enter CMX preservados.
-- Verificação local: executar `javac` nos testes Java puros; sem Android SDK disponível para `assembleDebug` neste ambiente.
-- Teste funcional: conferir recolhimento apenas no MLOG, seleção do IME no Android, botão Apagar e erro do Gboard na primeira leitura.
+- Base: v2.9.6.
+- Alteracao no bloqueio: `TimedClickGate.COOLDOWN_MS` de 200L para 150L.
+- ScannerProtocol.type() recupera informacoes de simbologia no broadcast do CMX/Hikvision e utiliza BarcodeFormatLabel.normalize().
+- Tela principal de testes mostra `Formato lido: ...` como linha propria.
+- Quando metadados ausentes, indica `Nao informado pelo CMX` (nao supoe pelo comprimento).
+- Testes locais: `TimedClickGateTest`, `BarcodeFormatLabelTest`, `ScanDuplicatePolicyTest`, `ScanQueueTest`, `EnterReadinessPolicyTest`.
+- Compilacao completa no GitHub Actions e teste com coletor fisico pendentes.

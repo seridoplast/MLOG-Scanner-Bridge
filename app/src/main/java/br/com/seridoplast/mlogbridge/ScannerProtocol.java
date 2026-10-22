@@ -35,10 +35,17 @@ public final class ScannerProtocol {
 
     public static String type(Intent i) {
         if (i == null) return "";
-        for (String k : new String[]{"CmxCodeType","ScanCodeType","CmxCodeTypeName","codeType","scannerType"}) {
-            try { String v=i.getStringExtra(k); if(v!=null) return v; }
-            catch(Exception ignore){}
+        for (String k : new String[]{"CmxCodeType","ScanCodeType","CmxCodeTypeName",
+                "codeType","scannerType","barcodeType","barcode_type",
+                "symbology","symbologyName","labelType","decode_type","barcodeFormat"}) {
+            try {
+                Object value=i.getExtras()==null?null:i.getExtras().get(k);
+                if(value!=null && !value.toString().trim().isEmpty())
+                    return BarcodeFormatLabel.normalize(value.toString());
+            }catch(Exception ignore){}
         }
-        return "";
+        // Nao inferir por quantidade de digitos: um numero de 13 digitos
+        // tambem pode ter sido escaneado no formato Code 39.
+        return BarcodeFormatLabel.UNKNOWN;
     }
 }

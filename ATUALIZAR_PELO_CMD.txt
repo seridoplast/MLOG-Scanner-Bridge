@@ -1,20 +1,22 @@
-MLOG Scanner Bridge v2.9.6 — 200 ms e barra compacta com Apagar
+MLOG Scanner Bridge v2.9.7 — 150 ms + formato lido
 
-1. Baixar MLOG_Scanner_Bridge_v296_200ms_Teclado_Oculto_Apagar.zip para Downloads
+1. Baixe MLOG_Scanner_Bridge_v297_150ms_Formato_Leitura.zip para Downloads.
 
-2. Abrir CMD:
+2. Execute no CMD:
 cd /d "%USERPROFILE%\Downloads\MLOG-Scanner-Bridge"
-powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v296_200ms_Teclado_Oculto_Apagar.zip') -DestinationPath . -Force"
+powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v297_150ms_Formato_Leitura.zip') -DestinationPath . -Force"
 git add -A
-git commit -m "Bridge v296 200ms teclado compacto e apagar"
-git push origin main
+git commit -m "Bridge v297 150ms formato de leitura"
+git push origin main && del /q "%USERPROFILE%\Downloads\MLOG_Scanner_Bridge_v297_150ms_Formato_Leitura.zip"
 
-3. Acessar https://github.com/seridoplast/MLOG-Scanner-Bridge/actions
-   Baixar MLOG-Scanner-Bridge-v296-APK depois que a compilacao ficar verde.
+3. Em https://github.com/seridoplast/MLOG-Scanner-Bridge/actions baixe MLOG-Scanner-Bridge-v297-APK.
 
-4. Extrair app-debug.apk em Downloads e instalar:
+4. Extraia app-debug.apk para Downloads e instale:
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" devices
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" install -r "%USERPROFILE%\Downloads\app-debug.apk"
 
-Atencao: 200 ms pode permitir um novo clique antes que o MLOG finalize o anterior.
-O Enter continua vindo do CMX. Para usar o teclado Bridge, selecione-o no Android.
+Observacoes:
+- O ZIP somente e excluido se o git push terminar com sucesso.
+- Enter automatico permanece no CMX.
+- Se nao houver tipo no broadcast do CMX, sera informado na tela do teste; sem inferir formatos.
+- 150 ms e experimental; verificar duplicacoes e perdas antes da operacao real.

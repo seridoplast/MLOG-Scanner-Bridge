@@ -6,7 +6,7 @@ package br.com.seridoplast.mlogbridge;
  * Todos os horarios sao SystemClock.elapsedRealtime() no Android.
  */
 final class TimedClickGate {
-    static final long COOLDOWN_MS = 200L;
+    static final long COOLDOWN_MS = 150L;
     private static final long TRIGGER_BOUNCE_MS = 70L;
     private static final long DECODE_ASSOCIATION_MS = 500L;
     private long unlockAt;

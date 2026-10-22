@@ -38,7 +38,7 @@ public final class MainActivity extends Activity {
     private int page = 0;
     private int bg, card, line, ink, muted, inverse, inkSurface;
     private LinearLayout root, content, footer;
-    private TextView preview, lastStatus, serviceState;
+    private TextView preview, lastStatus, barcodeFormatStatus, serviceState;
     private boolean receiving;
     private int scanCount;
     private String lastSample;
@@ -53,6 +53,7 @@ public final class MainActivity extends Activity {
             if(code==null){
                 lastSample=null;
                 if(preview!=null)preview.setText("Sinal recebido sem codigo");
+                if(barcodeFormatStatus!=null)barcodeFormatStatus.setText("Formato lido: nao informado");
                 return;
             }
             if(code.equals(lastSample) && android.os.SystemClock.elapsedRealtime()-lastReceivedAt<320)return;
@@ -61,8 +62,8 @@ public final class MainActivity extends Activity {
             lastSample=code;
             lastSymbology=ScannerProtocol.type(intent);
             if(preview!=null)preview.setText(code);
-            if(lastStatus!=null)lastStatus.setText("Leitura "+scanCount +
-                    (lastSymbology==null || lastSymbology.isEmpty()?"":" · "+lastSymbology));
+            if(lastStatus!=null)lastStatus.setText("Leitura "+scanCount);
+            if(barcodeFormatStatus!=null)barcodeFormatStatus.setText("Formato lido: "+lastSymbology);
         }
     };
     private boolean isActiveAppScreen(){return !isFinishing() && !isDestroyed();}
@@ -214,7 +215,7 @@ public final class MainActivity extends Activity {
             footer.addView(tab,tp);tab.setOnClickListener(v->show(target));
         }
         root.addView(footer);
-        preview=null;lastStatus=null;serviceState=null;
+        preview=null;lastStatus=null;barcodeFormatStatus=null;serviceState=null;
         if(page==0)home();else if(page==1)settings();else if(page==2)diagnostic();else about();
     }
     private void show(int p){page=p;displayPage();}
@@ -236,6 +237,9 @@ public final class MainActivity extends Activity {
         preview.setGravity(Gravity.CENTER);preview.setTextIsSelectable(true);sample.addView(preview);
         lastStatus=label(scanCount==0?"Aperte o gatilho do coletor":"Leitura "+scanCount,12,muted,false);
         lastStatus.setGravity(Gravity.CENTER);space(sample,9);sample.addView(lastStatus);
+        barcodeFormatStatus=label("Formato lido: "+(lastSymbology==null?"Aguardando leitura":lastSymbology),14,ink,true);
+        barcodeFormatStatus.setGravity(Gravity.CENTER);
+        space(sample,6);sample.addView(barcodeFormatStatus);
         space(sample,18);
         subtitle(sample,"Use o gatilho fisico do coletor para testar a leitura. O Bridge nao modifica a configuracao do CMX.");
         LinearLayout service=card();
@@ -262,7 +266,7 @@ public final class MainActivity extends Activity {
             prefs.edit().putBoolean("learn_trigger_armed",true).apply();
             toast("Abra o MLOG e pressione o gatilho uma vez para calibrar.");
         });
-        subtitle(ime,"Abre o campo ao apertar o gatilho. Aguarda apenas 200 ms entre toques e destrava pelo relogio, sem exigir verificacao do Enter.");
+        subtitle(ime,"Abre o campo ao apertar o gatilho. Aguarda apenas 150 ms entre toques e destrava pelo relogio, sem exigir verificacao do Enter.");
         subtitle(ime,"As opcoes comecam ativadas. Para usar o teclado Bridge, selecione-o tambem nas configuracoes de teclado do Android. O CMX continua responsavel pelo Enter.");
         subtitle(ime,"Experimento opcional. O Android exige habilitar e escolher o teclado manualmente. No MLOG, o teclado completo se recolhe apos o Enter ou ao fechar a entrada. Fora do MLOG permanece expandido. Enter automatico exclusivo do CMX.");
         button(ime,"1. Habilitar teclado no Android",false,()->startActivity(new Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)));
@@ -298,11 +302,11 @@ public final class MainActivity extends Activity {
             toast("Diagnóstico copiado. Não inclui códigos.");
         });
         LinearLayout help=card();help.addView(label("O que testar",17,ink,true));
-        subtitle(help,"v2.9.6: bloqueio de 200 ms por toque, liberado automaticamente. O CMX envia Enter. Leituras feitas durante o intervalo nao geram cliques futuros.");
+        subtitle(help,"v2.9.7: bloqueio de 150 ms por toque, liberado automaticamente. O CMX envia Enter. Leituras feitas durante o intervalo nao geram cliques futuros.");
         button(help,"Abrir MLOG",true,this::openMlog);
     }
     private void about(){
-        title("Sobre","MLOG Scanner Bridge · v2.9.6 beta");
+        title("Sobre","MLOG Scanner Bridge · v2.9.7 beta");
         LinearLayout about=card();about.addView(label("Integração local",17,ink,true));
         subtitle(about,"Criado para o scanner físico CMX e o MLOG. Sem acesso à internet. Os códigos de leitura não são salvos em histórico.");
         space(about,10);
