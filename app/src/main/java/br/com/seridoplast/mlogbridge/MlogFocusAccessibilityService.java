@@ -32,8 +32,8 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Leitura sem IME proprio: recebe broadcast do motor CMX e usa apenas a janela
- * do MLOG. Prepara e preenche o campo, sem enviar Enter automatico. Nao armazena codigos nem usa clipboard.
+ * Usa o gatilho fisico para preparar o botao nativo antes do broadcast CMX.
+ * Preserva a insercao e nao envia Enter automatico. Nao armazena codigos nem usa clipboard.
  *
  * Um gesto opcional e limitado a dois layouts identificados por titulo. O
  * posicionamento e relativo a tela do coletor, nao e uma garantia do Flutter.
@@ -137,7 +137,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             prefs().edit().putBoolean("prearm_field",false).apply();
             // Versoes anteriores podiam deixar o teclado oculto pelo controlador.
             restoreKeyboard();
-            status("v2.5: foco da v2.3 preservado; Enter automatico so pelo CMX.");
+            status("v2.6: a cada gatilho, preparar botao nativo do MLOG; Enter pelo CMX.");
         }catch(RuntimeException e){status("Falha ao registrar o broadcast do scanner.");}
     }
 
@@ -391,73 +391,175 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
      * disponibilizar eventos de tecla, o fluxo por broadcast permanece igual.
      * A calibracao opcional cobre teclas industriais fora do conjunto usual.
      */
+    /**
+     * v2.6: um acionamento fisico => uma tentativa de ABRIR a entrada nativa.
+     * O KeyEvent chega ANTES do broadcast com o codigo. Nunca consumimos o
+     * gatilho, inserimos texto ou enviamos Enter nesta rotina.
+     *
+     * Nao clicar novamente quando um editor de codigo ja estiver focado:
+     * o botao do MLOG pode funcionar como alternancia e fechar a entrada.
+     */
     @Override protected boolean onKeyEvent(KeyEvent event){
         if(event==null || !prefs().getBoolean("trigger_prefocus",true) ||
            !ScanCoordinator.isActive(this) || event.getAction()!=KeyEvent.ACTION_DOWN ||
            event.getRepeatCount()!=0)return false;
-        int code=event.getKeyCode();
+        final int code=event.getKeyCode();
         if(code==KeyEvent.KEYCODE_UNKNOWN || code==KeyEvent.KEYCODE_ENTER ||
            code==KeyEvent.KEYCODE_NUMPAD_ENTER || code==KeyEvent.KEYCODE_TAB ||
            code==KeyEvent.KEYCODE_BACK || code==KeyEvent.KEYCODE_HOME ||
            code==KeyEvent.KEYCODE_DEL)return false;
-        long now=SystemClock.elapsedRealtime();
+        final long now=SystemClock.elapsedRealtime();
         if(now<navigationGuardUntil)return false;
-        // Janela do MLOG validada antes de observar/aprender qualquer tecla.
         AccessibilityNodeInfo root=mlogRoot();
         if(root==null)return false;
         ScreenInfo info=inspect(root);
-        if(info.login || info.dialog || isBlockingOverlay(root) ||
-           "desconhecida".equals(info.screen))return false;
-        boolean builtIn=isScannerTriggerKey(code);
-        int learned=prefs().getInt("learned_trigger_key",-1);
-        // Nao registrar o conteudo de teclas ou dados do MLOG; apenas o numero.
-        if(builtIn || code==learned)trace("PHYSICAL_TRIGGER_SEEN_"+code);
-        else if(prefs().getBoolean("learn_trigger_armed",false) &&
-                !event.isPrintingKey() && !KeyEvent.isModifierKey(code)){
-            prefs().edit().putInt("learned_trigger_key",code)
-                    .putBoolean("learn_trigger_armed",false).apply();
-            trace("PHYSICAL_TRIGGER_LEARNED_"+code);
-            status("Botao fisico reconhecido ("+code+"). Tente bipar novamente.");
-            // A primeira tecla apenas calibra: evita tocar na tela por engano.
-            return false;
-        }else{
-            // Amostragem pequena para diagnosticar botoes nao reconhecidos.
-            if(now-lastUnknownTriggerLogAt>900){
+        if(info.login || info.dialog || "desconhecida".equals(info.screen) ||
+           isBlockingOverlay(root))return false;
+        final int learned=prefs().getInt("learned_trigger_key",-1);
+        final boolean recognized=isScannerTriggerKey(code) || code==learned;
+        if(!recognized){
+            if(prefs().getBoolean("learn_trigger_armed",false) &&
+               !event.isPrintingKey() && !KeyEvent.isModifierKey(code)){
+                prefs().edit().putInt("learned_trigger_key",code)
+                        .putBoolean("learn_trigger_armed",false).apply();
+                trace("PHYSICAL_TRIGGER_LEARNED_"+code);
+                status("Botao fisico reconhecido ("+code+"). Tente bipar novamente.");
+            }else if(now-lastUnknownTriggerLogAt>900){
                 lastUnknownTriggerLogAt=now;
                 trace("PHYSICAL_KEY_UNRECOGNIZED_"+code);
             }
             return false;
         }
-        if(!scanQueue.isIdle() || pendingCode!=null)return false;
-        if(now-lastTriggerPrefocus<140)return false;
+        trace("PHYSICAL_TRIGGER_SEEN_"+code);
+        // Descarta apenas o ressalto do mesmo botao. Nao aplica o filtro de
+        // 140 ms dos broadcasts fisicos ao gatilho.
+        if(now-lastTriggerPrefocus<70){trace("TRIGGER_KEY_BOUNCE");return false;}
         lastTriggerPrefocus=now;
-        trace("PREFocus_START_KEY_"+code);
+        trace("TRIGGER_OPEN_ATTEMPT_"+info.screen);
+
+        // O Flutter ainda esta abrindo um campo a partir desse mesmo gatilho.
+        // Nao disparar segundo clique durante a transicao, nem na tecla zero.
+        if(gestureInProgress || preparing){
+            trace("TRIGGER_OPEN_IN_PROGRESS");return false;
+        }
         AccessibilityNodeInfo editor=safeEditor(info,true);
-        if(editor!=null && nativeEntryReady(info,editor)){
-            trace("PREFocus_ALREADY_READY");
-            return false;
+        if(editor!=null && nativeEntryReady(info,editor) && editor.isFocused()){
+            trace("TRIGGER_EDITOR_ALREADY_OPEN");return false;
         }
-        // Consulta/conferencia: editor no topo ja existe, so recuperar foco.
+        if(preparedAt>0 && info.screen.equals(preparedScreen) &&
+           now-preparedAt<450){
+            trace("TRIGGER_OPEN_ALREADY_REQUESTED");return false;
+        }
+
+        // Na busca, o campo JA existe. Selecionar a caixa, nao um controle
+        // generico nem o Gboard. Inclusive apos resultado de consulta.
         if("consulta".equals(info.screen) || "conferencia_venda".equals(info.screen)){
-            boolean clicked=editor!=null ? focusOrClick(editor) :
-                 info.searchField!=null && focusOrClick(clickable(info.searchField));
-            trace(clicked?"PREFocus_SEARCH_READY_REQUESTED":"PREFocus_SEARCH_NO_FIELD");
+            boolean ok=editor!=null ? focusOrClick(editor) :
+                info.searchField!=null && focusOrClick(clickable(info.searchField));
+            trace(ok?"TRIGGER_SEARCH_FOCUS_OK":"TRIGGER_SEARCH_FOCUS_UNAVAILABLE");
             return false;
         }
-        // Nunca tocar por coordenada no evento fisico: so no botao do MLOG
-        // identificado por acessibilidade, sem risco de Quantidade/tecla zero.
-        if(isImeVisible())return false;
+
+        // Para separacao (inclusive Quantidade), atividades, pedidos e notas:
+        // clicar no botao nativo ANTES da decodificacao. Nao esperar que a
+        // fila de broadcasts fique ociosa e nao usar visibilidade do IME
+        // como sinal de que o campo do Flutter ja esta pronto.
         AccessibilityNodeInfo button="atividades".equals(info.screen)?
              activityKeyboard(info):findKeyboardTarget(info);
-        if(button!=null && focusOrClick(button)){
-            markNativeButton(info.screen,"gatilho fisico");
-            trace("PREFocus_NATIVE_CLICK_OK");
-        }else trace("PREFocus_NATIVE_ICON_UNAVAILABLE");
-        return false; // nunca impedir que o CMX receba o gatilho fisico
+        if(button!=null && clickNativeKeyboardOnTrigger(button,info.screen))return false;
+
+        // Fallback de coordenadas somente em duas telas reconhecidas e
+        // homologadas. Se um IME ocupa a tela, nao arriscar atingir o zero.
+        if(prefs().getBoolean("guided_taps",true) &&
+           supportedAspect(realScreenSize())){
+            if("separacao".equals(info.screen) && info.hasSeparationControls){
+                Point p=realScreenSize();
+                triggerGesture(info.screen,p.x*(info.hasQuantity?0.44f:0.60f),p.y*.603f);
+            }else if("atividades".equals(info.screen) && info.hasActivitiesTitle){
+                Point p=realScreenSize();
+                triggerGesture(info.screen,p.x*.375f,p.y*.888f);
+            }else trace("TRIGGER_NATIVE_ICON_UNAVAILABLE_"+info.screen);
+        }else trace("TRIGGER_NATIVE_ICON_UNAVAILABLE_"+info.screen);
+        return false; // nao impedir a leitura original do CMX
+    }
+
+    /** Apenas ACTION_CLICK e considerado abertura. ACTION_FOCUS nao equivale
+     * ao toque no botao do Flutter e nao deve ser contado como sucesso. */
+    private boolean clickNativeKeyboardOnTrigger(AccessibilityNodeInfo button,String screen){
+        AccessibilityNodeInfo target=clickable(button);
+        if(target==null || !target.isEnabled() || !target.isVisibleToUser() ||
+           target.isEditable() || blockedLabel(tag(target)))return false;
+        Rect r=new Rect();target.getBoundsInScreen(r);
+        Point p=realScreenSize();
+        if(r.isEmpty() || r.width()>p.x*.34f || r.height()>p.y*.18f ||
+           isPointCoveredByIme(r.centerX(),r.centerY()))return false;
+        try{
+            if(target.isClickable() && target.performAction(AccessibilityNodeInfo.ACTION_CLICK)){
+                markNativeButton(screen,"gatilho fisico");
+                trace("TRIGGER_NATIVE_CLICK_OK_"+screen);
+                return true;
+            }
+        }catch(RuntimeException ignored){}
+        // O Flutter pode anunciar o botao, mas rejeitar ACTION_CLICK.
+        // Tentar UM gesto no centro do proprio icone (nao no teclado Android).
+        return triggerGesture(screen,r.centerX(),r.centerY());
+    }
+
+    /** Um toque por gatilho em coordenada validada. Nunca em caixas de
+     * dialogo, login, quantidade ou quando IME pode sobrepor o icone. */
+    /** Um IME compacto pode estar visivel SEM cobrir o icone do MLOG.
+     * Nunca usar visibilidade do teclado como veto global. Bloquear o toque
+     * somente quando o ponto estiver dentro da area realmente ocupada. */
+    private boolean isPointCoveredByIme(float x,float y){
+        try{
+            for(AccessibilityWindowInfo w:getWindows()){
+                if(w.getType()!=AccessibilityWindowInfo.TYPE_INPUT_METHOD)continue;
+                Rect bounds=new Rect();
+                w.getBoundsInScreen(bounds);
+                // Sem limites confiaveis, falhar de forma conservadora.
+                if(bounds.isEmpty() || bounds.contains((int)x,(int)y))return true;
+            }
+        }catch(RuntimeException ignored){return true;}
+        return false;
+    }
+
+    private boolean triggerGesture(String screen,float x,float y){
+        if(gestureInProgress || isPointCoveredByIme(x,y))return false;
+        AccessibilityNodeInfo root=mlogRoot();
+        if(root==null)return false;
+        ScreenInfo i=inspect(root);
+        if(!screen.equals(i.screen) || i.dialog || i.login ||
+           isBlockingOverlay(root))return false;
+        markNativeButton(screen,"gesto pelo gatilho");
+        gestureInProgress=true;
+        Path path=new Path();path.moveTo(x,y);
+        GestureDescription.Builder gesture=new GestureDescription.Builder();
+        gesture.addStroke(new GestureDescription.StrokeDescription(path,0,45));
+        boolean dispatched;
+        try{
+            dispatched=dispatchGesture(gesture.build(),new GestureResultCallback(){
+                @Override public void onCompleted(GestureDescription g){
+                    gestureInProgress=false;
+                    trace("TRIGGER_GESTURE_COMPLETED_"+screen);
+                }
+                @Override public void onCancelled(GestureDescription g){
+                    gestureInProgress=false;
+                    preparedAt=0;preparedScreen="";
+                    trace("TRIGGER_GESTURE_CANCELLED_"+screen);
+                }
+            },main);
+        }catch(RuntimeException e){dispatched=false;}
+        if(!dispatched){
+            gestureInProgress=false;
+            preparedAt=0;preparedScreen="";
+            trace("TRIGGER_GESTURE_UNAVAILABLE_"+screen);
+        }else trace("TRIGGER_GESTURE_SENT_"+screen);
+        return dispatched;
     }
 
     private static boolean isScannerTriggerKey(int code){
-        return (code>=KeyEvent.KEYCODE_F1 && code<=KeyEvent.KEYCODE_F12) ||
+        // Gatilho industrial CMX observado pelo ADB no coletor do usuario.
+        return code==353 || (code>=KeyEvent.KEYCODE_F1 && code<=KeyEvent.KEYCODE_F12) ||
                (code>=KeyEvent.KEYCODE_BUTTON_1 && code<=KeyEvent.KEYCODE_BUTTON_16) ||
                code==KeyEvent.KEYCODE_BUTTON_L1 || code==KeyEvent.KEYCODE_BUTTON_R1 ||
                code==KeyEvent.KEYCODE_CAMERA || code==KeyEvent.KEYCODE_FOCUS ||
