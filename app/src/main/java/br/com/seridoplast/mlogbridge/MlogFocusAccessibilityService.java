@@ -66,6 +66,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     // Primeira leitura: CMX normal. Repeticoes: codigo e Enter locais (Bridge IME).
     private boolean autoCountRunning;
     private boolean autoCountFirst;
+    private long autoCountFirstEnterAt;
     private int autoCountToken;
     private int autoCountTarget;
     private int autoCountDone;
@@ -190,7 +191,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             prefs().edit().putBoolean("prearm_field",false).apply();
             // Versoes anteriores podiam deixar o teclado oculto pelo controlador.
             restoreKeyboard();
-            status("v2.9.9: ferramentas flutuantes e diagnóstico invisível; cooldown 150 ms.");
+            status("v3.0.0: bipes N-1 por IME/acessibilidade, menu enxuto; 150 ms.");
         }catch(RuntimeException e){status("Falha ao registrar o broadcast do scanner.");}
     }
 
@@ -307,7 +308,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 autoCountDone=1;
                 ScanAssistState.report("Primeiro bipe confirmado; iniciando "+(autoCountTarget-1)+" bipes virtuais.");
                 scheduleAutoRepeat();
-            }else cancelAutoCount("Primeira leitura nao confirmada ("+reason+"). Contador parado.");
+            }else cancelAutoCount("O MLOG nao confirmou visualmente a 1ª leitura ("+reason+"). " +
+                (autoCountFirstEnterAt>0?"Enter fisico observado, mas sem atualizacao do campo. ":"") +
+                "Confira o MLOG antes de tentar novamente.");
         }
         ++workGeneration; // invalida timeout antigo
         if(more){
@@ -491,6 +494,16 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
      * o botao do MLOG pode funcionar como alternancia e fechar a entrada.
      */
     @Override protected boolean onKeyEvent(KeyEvent event){
+        // O CMX pode entregar Enter ao Android em separado do broadcast.
+        // NUNCA consumimos essa tecla; servira para diagnosticar a primeira
+        // confirmacao sem reemitir Enter.
+        if(event!=null && autoCountRunning && autoCountFirst &&
+            (event.getKeyCode()==KeyEvent.KEYCODE_ENTER ||
+             event.getKeyCode()==KeyEvent.KEYCODE_NUMPAD_ENTER) &&
+            event.getAction()==KeyEvent.ACTION_UP){
+            autoCountFirstEnterAt=SystemClock.elapsedRealtime();
+            trace("AUTO_FIRST_HARDWARE_ENTER_OBSERVED");
+        }
         if(event==null || !prefs().getBoolean("trigger_prefocus",true) ||
            !ScanCoordinator.isActive(this) || event.getAction()!=KeyEvent.ACTION_DOWN ||
            event.getRepeatCount()!=0)return false;
@@ -1470,12 +1483,10 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         int quantity=ScanAssistState.clamp(p.getInt(ScanAssistState.COUNT,1));
         p.edit().putBoolean(ScanAssistState.ARMED,false).apply();
         if(quantity<=1){ScanAssistState.report("Quantidade 1: leitura normal pelo CMX.");return;}
-        String selected=android.provider.Settings.Secure.getString(
-                getContentResolver(),android.provider.Settings.Secure.DEFAULT_INPUT_METHOD);
-        if(selected==null || !selected.startsWith(getPackageName()+"/")){
-            ScanAssistState.report("Selecione o teclado MLOG Bridge para repetir com Enter.");
-            trace("AUTO_COUNT_REJECTED_IME_NOT_SELECTED");return;
-        }
+        // Android 14: a conexao da propria acessibilidade pode enviar Enter
+        // mesmo quando o teclado Bridge nao for o IME selecionado.
+        // Conferimos disponibilidade real apenas no momento da repeticao,
+        // quando ja existe um editor ativo; nunca alternar teclado sozinho.
         AccessibilityNodeInfo root=mlogRoot();
         if(root==null || isBlockingOverlay(root)){
             ScanAssistState.report("Contador nao iniciado: volte a uma tela de leitura.");return;
@@ -1487,6 +1498,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         ++autoCountToken;
         autoCountRunning=true;
         autoCountFirst=true;
+        autoCountFirstEnterAt=0L;
         autoCountCode=code;
         autoCountScreen=info.screen;
         autoCountTarget=quantity;
@@ -1497,12 +1509,20 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         ScanAssistState.report("Bipes automáticos: aguardando confirmação do 1º bipe físico; faltam "+(quantity-1)+" virtuais.");
     }
 
+    void onCmxEnterObservedByKeyboard(){
+        if(autoCountRunning && autoCountFirst){
+            autoCountFirstEnterAt=SystemClock.elapsedRealtime();
+            trace("AUTO_FIRST_ENTER_BRIDGE_KEYBOARD_OBSERVED");
+        }
+    }
+
     /** Botao cancelar acessivel a partir da janela flutuante. */
     void cancelAutoCount(String message){
         boolean wasRunning=autoCountRunning;
         ++autoCountToken;
         autoCountRunning=false;
         autoCountFirst=false;
+        autoCountFirstEnterAt=0L;
         autoCountCode=null;
         autoCountScreen=null;
         autoCountClicked=false;
@@ -1529,7 +1549,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private void beginAutoRepeat(int token){
         if(token!=autoCountToken || !autoCountRunning || autoCountFirst)return;
         autoCountClicked=false;
-        autoCountDeadline=SystemClock.elapsedRealtime()+1600;
+        autoCountDeadline=SystemClock.elapsedRealtime()+2500;
         trace("AUTO_COUNT_NEXT_"+(autoCountDone+1));
         pollAutoRepeatEditor(token);
     }
@@ -1588,6 +1608,34 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         main.postDelayed(()->pollAutoRepeatEditor(token),55);
     }
 
+    /** Fallback para Android 13+: envia Enter somente ao campo editavel
+     *  reconhecido no MLOG. O envio nao prova que o Flutter registrou o item:
+     *  observeAutoCountEnter continua exigindo alteracao visual depois disso.
+     */
+    private boolean sendAutoEnterByAccessibility(){
+        if(Build.VERSION.SDK_INT<33)return false;
+        try{
+            InputMethod method=getInputMethod();
+            if(method==null || method.getCurrentInputConnection()==null)return false;
+            EditorInfo editor=method.getCurrentInputEditorInfo();
+            if(editor==null || !ScanCoordinator.TARGET.equals(editor.packageName))return false;
+            int kind=editor.inputType & android.text.InputType.TYPE_MASK_VARIATION;
+            if(kind==android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD ||
+               kind==android.text.InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD)return false;
+            InputMethod.AccessibilityInputConnection conn=method.getCurrentInputConnection();
+            long now=SystemClock.uptimeMillis();
+            conn.sendKeyEvent(new KeyEvent(now,now,KeyEvent.ACTION_DOWN,
+                KeyEvent.KEYCODE_ENTER,0,0,0,0,KeyEvent.FLAG_SOFT_KEYBOARD));
+            conn.sendKeyEvent(new KeyEvent(now,now+1,KeyEvent.ACTION_UP,
+                KeyEvent.KEYCODE_ENTER,0,0,0,0,KeyEvent.FLAG_SOFT_KEYBOARD));
+            trace("AUTO_COUNT_ENTER_ACCESSIBILITY_IME");
+            return true;
+        }catch(RuntimeException exception){
+            trace("AUTO_COUNT_ACCESSIBILITY_IME_UNAVAILABLE");
+            return false;
+        }
+    }
+
     private void submitAutoRepeatEnter(int token){
         if(token!=autoCountToken || !autoCountRunning || autoCountFirst)return;
         AccessibilityNodeInfo root=mlogRoot();
@@ -1603,8 +1651,22 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
            editor.getText()==null || !autoCountCode.equals(editor.getText().toString().trim())){
             cancelAutoCount("Nao confirmei que o codigo estava no campo. Parei sem Enter.");return;
         }
-        if(!BridgeScanInputMethodService.sendEnterForAutoCount()){
-            cancelAutoCount("Teclado Bridge nao conseguiu enviar Enter; contador interrompido.");return;
+        // Preferir teclado Bridge. Se ele nao estiver conectado ao editor,
+        // usar a conexao IME da acessibilidade (API 33+, Android 14).
+        boolean sent=BridgeScanInputMethodService.sendEnterForAutoCount();
+        if(sent){trace("AUTO_COUNT_ENTER_BRIDGE_IME");}
+        else sent=sendAutoEnterByAccessibility();
+        if(!sent && Build.VERSION.SDK_INT>=30 &&
+           supports(editor,AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.getId())){
+            try{
+                sent=editor.performAction(
+                    AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.getId());
+                if(sent)trace("AUTO_COUNT_ENTER_EDITOR_ACTION");
+            }catch(RuntimeException ignored){}
+        }
+        if(!sent){
+            cancelAutoCount("Enter automatico indisponivel para este campo. " +
+                "Abra o teclado nativo do MLOG e selecione o teclado Bridge; tente de novo.");return;
         }
         autoCountLastActionAt=SystemClock.elapsedRealtime();
         autoCountSubmittedAt=autoCountLastActionAt;
@@ -1632,7 +1694,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             // se o layout mudar, abortar na proxima tentativa com seguranca.
             scheduleAutoRepeat();return;
         }
-        if(SystemClock.elapsedRealtime()-autoCountSubmittedAt>2000){
+        if(SystemClock.elapsedRealtime()-autoCountSubmittedAt>2500){
             cancelAutoCount("Enter sem confirmacao visivel; parei em "+autoCountDone+
                     "/"+autoCountTarget+". Confira o pedido.");return;
         }

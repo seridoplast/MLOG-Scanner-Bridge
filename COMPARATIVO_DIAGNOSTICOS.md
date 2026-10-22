@@ -1,20 +1,7 @@
-# Diferenças entre v2.9.8 e v2.9.9
+# Diagnóstico e diferenças da v3.0.0
 
-- Sem mudança no cooldown normal do Bridge: **150 ms**.
-- Botão SP 55 dp (janela) e texto → engrenagem vetorial circular 40 dp, opacidade 50%.
-- Painel expandido: espaçamento lateral/superior/inferior de 9 dp → 16 dp; largura 314 dp ajustada à tela.
-- Contador: nome mudado para **Bipes automáticos (N−1)**, esclarecendo que 100 bipes = 1 físico + 99 virtuais. Mecanismo continua baseado na confirmação observada do MLOG e intervalo mínimo de 155 ms. Sem garantir conclusão em 155 ms.
-- Tela de teste do scanner agora inspeciona o broadcast original (espaço, Tab, CR, LF e Unicode invisível) e exibe advertência imediatamente abaixo do formato lido.
-- Leitura operacional normal continua recebendo o valor legado limpo com `trim`; no tratador opt-in, a limpeza usa o original bruto. Assim o diagnóstico não muda a interpretação do código em separação normal.
-- Nunca persiste histórico ou código decodificado em disco.
-
-# Testes locais
-
-- `AutoRepeatPolicyTest`: 13 verificações, incluindo 100→99.
-- `BarcodeArtifactReportTest`: 9 verificações.
-- Testes dos demais componentes puros: sucesso.
-- `ScannerProtocol` compilado com stub Android confirmou raw preservado + leitura normal `trim`.
-- Parse Java: 24 arquivos sem erros sintáticos.
-- XML: 9 recursos válidos.
-
-APK Android e comportamento no coletor não foram validados neste ambiente.
+- Na v2.9.9, os bipes automáticos podiam não iniciar porque a primeira confirmação precisava de uma mudança de texto no editor e o Enter virtual exigia IME Bridge ativo.
+- Na v3.0.0, o primeiro bipe ainda exige conclusão observável no MLOG. Foram acrescentados Enter virtual por conexão do serviço de acessibilidade (Android 13+, testado em API de documentação) e ACTION_IME_ENTER disponível no próprio nó editável. **Não garante** que o Flutter exponha um campo compatível; interrupções continuam apresentando motivo no painel flutuante.
+- O broadcast pode expor conteúdo decodificado sem o tipo real de código. Se não houver metadado de simbologia, não é possível deduzir de forma confiável Code 39, EAN-13, Code 128 ou QR Code apenas pelo valor textual.
+- Na tela de teste, além do formato, são exibidos os nomes dos campos recebidos quando o tipo está ausente, sem registrar o conteúdo em log.
+- Validar 3 bipes e comparar com registros salvos no MLOG; não avançar para 100 sem comprovar em todas as telas.

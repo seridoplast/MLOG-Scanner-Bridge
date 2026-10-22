@@ -40,19 +40,46 @@ public final class ScannerProtocol {
         return null;
     }
 
-    public static String type(Intent i) {
-        if (i == null) return "";
-        for (String k : new String[]{"CmxCodeType","ScanCodeType","CmxCodeTypeName",
-                "codeType","scannerType","barcodeType","barcode_type",
-                "symbology","symbologyName","labelType","decode_type","barcodeFormat"}) {
-            try {
-                Object value=i.getExtras()==null?null:i.getExtras().get(k);
-                if(value!=null && !value.toString().trim().isEmpty())
-                    return BarcodeFormatLabel.normalize(value.toString());
-            }catch(Exception ignore){}
+    private static boolean isFormatKey(String key){
+        if(key==null)return false;
+        String k=key.toLowerCase(java.util.Locale.ROOT);
+        return k.contains("symbology") || k.contains("codetype") ||
+            k.contains("barcodeformat") || k.contains("barcodetype") ||
+            k.contains("decodetype") || k.contains("decode_type") ||
+            k.contains("labeltype") || k.contains("code_format") ||
+            k.equals("scantype") || k.equals("scan_type") ||
+            k.equals("scanformat") || k.equals("scan_format") ||
+            k.equals("scanner_type") ||
+            k.equals("type");
+    }
+    public static String type(Intent i){
+        if(i==null || i.getExtras()==null)return BarcodeFormatLabel.UNKNOWN;
+        // Ordem prioriza o nome legivel frente a possiveis IDs numericos.
+        String[] keys={"CmxCodeTypeName","symbologyName","barcodeFormatName",
+            "codeTypeName","ScanCodeTypeName","CmxCodeType","ScanCodeType",
+            "codeType","scannerType","barcodeType","barcode_type",
+            "symbology","labelType","decode_type","barcodeFormat"};
+        for(String k:keys){
+            try{
+                Object v=i.getExtras().get(k);
+                if(v!=null && !v.toString().trim().isEmpty())return BarcodeFormatLabel.normalize(v.toString());
+            }catch(RuntimeException ignored){}
         }
-        // Nao inferir por quantidade de digitos: um numero de 13 digitos
-        // tambem pode ter sido escaneado no formato Code 39.
+        for(String k:i.getExtras().keySet()){
+            if(!isFormatKey(k))continue;
+            try{
+                Object v=i.getExtras().get(k);
+                if(v!=null && !v.toString().trim().isEmpty())return BarcodeFormatLabel.normalize(v.toString());
+            }catch(RuntimeException ignored){}
+        }
         return BarcodeFormatLabel.UNKNOWN;
+    }
+    /** Lista apenas nomes de campos: nunca revela o codigo escaneado no log. */
+    public static String receivedFields(Intent i){
+        if(i==null || i.getExtras()==null)return "Nenhum campo de broadcast";
+        java.util.List<String> keys=new java.util.ArrayList<>(i.getExtras().keySet());
+        java.util.Collections.sort(keys);
+        if(keys.size()>20)keys=keys.subList(0,20);
+        return keys.isEmpty()?"Nenhum campo de broadcast":android.text.TextUtils.join(", ",keys);
     }
 }

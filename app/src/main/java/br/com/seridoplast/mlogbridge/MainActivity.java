@@ -38,12 +38,13 @@ public final class MainActivity extends Activity {
     private int page = 0;
     private int bg, card, line, ink, muted, inverse, inkSurface;
     private LinearLayout root, content, footer;
-    private TextView preview, lastStatus, barcodeFormatStatus, barcodeArtifactStatus, serviceState;
+    private TextView preview, lastStatus, barcodeFormatStatus, barcodeArtifactStatus, barcodeFieldsStatus, serviceState;
     private boolean receiving;
     private int scanCount;
     private String lastSample;
     private long lastReceivedAt;
     private String lastSymbology;
+    private String lastMetadataFields;
     private long lastThemeTapAt;
 
     private final BroadcastReceiver scannerTest = new BroadcastReceiver(){
@@ -57,11 +58,21 @@ public final class MainActivity extends Activity {
                 if(barcodeArtifactStatus!=null)barcodeArtifactStatus.setText("Não foi possível inspecionar o código recebido.");
                 return;
             }
-            if(code.equals(lastSample) && android.os.SystemClock.elapsedRealtime()-lastReceivedAt<140)return;
+            if(code.equals(lastSample) && android.os.SystemClock.elapsedRealtime()-lastReceivedAt<140){
+                // Alguns CMX enviam dois broadcasts para a mesma leitura.
+                // Aproveitar metadados do segundo mesmo que o valor seja eco.
+                String maybeType=ScannerProtocol.type(intent);
+                if(!BarcodeFormatLabel.UNKNOWN.equals(maybeType)){
+                    lastSymbology=maybeType;
+                    if(barcodeFormatStatus!=null)barcodeFormatStatus.setText("Formato lido: "+maybeType);
+                }
+                return;
+            }
             lastReceivedAt=android.os.SystemClock.elapsedRealtime();
             scanCount++;
             lastSample=code;
             lastSymbology=ScannerProtocol.type(intent);
+            lastMetadataFields=ScannerProtocol.receivedFields(intent);
             String visibleCode=BarcodeCleaner.clean(code);
             if(preview!=null)preview.setText(visibleCode==null || visibleCode.isEmpty()?
                     "Somente caracteres invisíveis":visibleCode);
@@ -72,6 +83,11 @@ public final class MainActivity extends Activity {
             }
             if(lastStatus!=null)lastStatus.setText("Leitura "+scanCount);
             if(barcodeFormatStatus!=null)barcodeFormatStatus.setText("Formato lido: "+lastSymbology);
+            if(barcodeFieldsStatus!=null){
+                barcodeFieldsStatus.setText(BarcodeFormatLabel.UNKNOWN.equals(lastSymbology)?
+                    "CMX não informou o tipo. Campos recebidos: "+lastMetadataFields:
+                    "Simbologia declarada pelo scanner. Valor acima é o conteúdo decodificado.");
+            }
         }
     };
     private boolean isActiveAppScreen(){return !isFinishing() && !isDestroyed();}
@@ -223,7 +239,8 @@ public final class MainActivity extends Activity {
             footer.addView(tab,tp);tab.setOnClickListener(v->show(target));
         }
         root.addView(footer);
-        preview=null;lastStatus=null;barcodeFormatStatus=null;barcodeArtifactStatus=null;serviceState=null;
+        preview=null;lastStatus=null;barcodeFormatStatus=null;barcodeArtifactStatus=null;
+        barcodeFieldsStatus=null;serviceState=null;
         if(page==0)home();else if(page==1)settings();else if(page==2)diagnostic();else about();
     }
     private void show(int p){page=p;displayPage();}
@@ -236,7 +253,7 @@ public final class MainActivity extends Activity {
         }else space(content,22);
     }
     private void home(){
-        title("Leitura de códigos","Aperte o gatilho físico para testar. Configuração do CMX preservada.");
+        title("Leitura de códigos","Aperte o gatilho físico para ver o valor decodificado, o formato e possíveis caracteres invisíveis.");
         LinearLayout sample=card();
         TextView statusLabel=label("TESTE DO SCANNER",11,muted,true);sample.addView(statusLabel);
         space(sample,20);
@@ -248,6 +265,13 @@ public final class MainActivity extends Activity {
         barcodeFormatStatus=label("Formato lido: "+(lastSymbology==null?"Aguardando leitura":lastSymbology),14,ink,true);
         barcodeFormatStatus.setGravity(Gravity.CENTER);
         space(sample,6);sample.addView(barcodeFormatStatus);
+        space(sample,4);
+        barcodeFieldsStatus=label(lastSample==null?"O CMX ainda não enviou metadados.":
+            BarcodeFormatLabel.UNKNOWN.equals(lastSymbology)?
+                "CMX não informou o tipo. Campos recebidos: "+lastMetadataFields:
+                "Simbologia informada pelo leitor.",11,muted,false);
+        barcodeFieldsStatus.setGravity(Gravity.CENTER);
+        sample.addView(barcodeFieldsStatus);
         space(sample,10);
         barcodeArtifactStatus=label(lastSample==null?
             "Aguardando leitura para verificar caracteres invisíveis.":
@@ -257,7 +281,7 @@ public final class MainActivity extends Activity {
             BarcodeArtifactReport.describe(lastSample).startsWith("Atenção:")?0xffd97706:muted);
         sample.addView(barcodeArtifactStatus);
         space(sample,18);
-        subtitle(sample,"Use o gatilho fisico do coletor para testar a leitura. O Bridge nao modifica a configuracao do CMX.");
+        subtitle(sample,"O código acima é o conteúdo lido. Code 39, EAN, QR Code etc. só podem ser identificados com segurança se o CMX transmitir a simbologia; o mesmo texto pode existir em padrões distintos.");
         LinearLayout service=card();
         service.addView(label("Serviço",17,ink,true));
         serviceState=label("Verificando acessibilidade...",14,muted,false);
@@ -316,7 +340,7 @@ public final class MainActivity extends Activity {
         }
         appearance.addView(bar,bp);
         LinearLayout cmx=card();cmx.addView(label("CMX Scanner",17,ink,true));
-        subtitle(cmx,"No modo normal, CMX continua responsável pelo Enter. No contador, as repetições são inseridas e confirmadas pelo teclado Bridge.");
+        subtitle(cmx,"No modo normal, CMX continua responsável pelo Enter. Nas repetições armadas, o Bridge tenta Enter pelo teclado Bridge, acessibilidade Android 14 e ação de editor, conforme disponibilidade do campo MLOG.");
     }
     private void diagnostic(){
         title("Diagnóstico","Se uma tela nao funcionar, copie este resultado.");
@@ -329,11 +353,11 @@ public final class MainActivity extends Activity {
             toast("Diagnóstico copiado. Não inclui códigos.");
         });
         LinearLayout help=card();help.addView(label("O que testar",17,ink,true));
-        subtitle(help,"v2.9.7: bloqueio de 150 ms por toque, liberado automaticamente. O CMX envia Enter. Leituras feitas durante o intervalo nao geram cliques futuros.");
+        subtitle(help,"v3.0.0: bloqueio de 150 ms na leitura física. Contador N−1 usa Enter assistido e exige confirmação visível a cada repetição. Veja o motivo da interrupção na bolha.");
         button(help,"Abrir MLOG",true,this::openMlog);
     }
     private void about(){
-        title("Sobre","MLOG Scanner Bridge · v2.9.9 beta");
+        title("Sobre","MLOG Scanner Bridge · v3.0.0 beta");
         LinearLayout about=card();about.addView(label("Integração local",17,ink,true));
         subtitle(about,"Criado para o scanner físico CMX e o MLOG. Sem acesso à internet. Os códigos de leitura não são salvos em histórico.");
         space(about,10);

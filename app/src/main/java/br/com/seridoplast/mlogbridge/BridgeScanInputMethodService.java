@@ -124,7 +124,13 @@ public final class BridgeScanInputMethodService extends InputMethodService {
     @Override public boolean onKeyUp(int keyCode,KeyEvent event){
         boolean handled=super.onKeyUp(keyCode,event);
         // Nao interceptar nem emitir Enter: o CMX continua responsavel.
-        // Se o hardware entregar a tecla a esta IME, so recolher as teclas.
+        // Se o hardware entregar a tecla a esta IME, apenas registrar que
+        // a tecla passou e recolher o QWERTY quando aberto.
+        if(targetMlog &&
+            (keyCode==KeyEvent.KEYCODE_ENTER || keyCode==KeyEvent.KEYCODE_NUMPAD_ENTER)){
+            MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
+            if(svc!=null)svc.onCmxEnterObservedByKeyboard();
+        }
         if(targetMlog && manual &&
             (keyCode==KeyEvent.KEYCODE_ENTER || keyCode==KeyEvent.KEYCODE_NUMPAD_ENTER)){
             main.post(()->collapseInMlog());

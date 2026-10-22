@@ -16,9 +16,14 @@ public final class BarcodeFormatLabelTest {
         eq("QR Code",BarcodeFormatLabel.normalize("QR_CODE"));
         eq("Data Matrix",BarcodeFormatLabel.normalize("DataMatrix"));
         eq("PDF417",BarcodeFormatLabel.normalize("PDF417"));
-        eq("Nao informado pelo CMX",BarcodeFormatLabel.normalize(null));
-        eq("Nao informado pelo CMX",BarcodeFormatLabel.normalize(" "));
+        eq("Não informado pelo CMX",BarcodeFormatLabel.normalize(null));
+        eq("Não informado pelo CMX",BarcodeFormatLabel.normalize(" "));
         eq("Aztec",BarcodeFormatLabel.normalize("Aztec"));
+        eq("GS1-128",BarcodeFormatLabel.normalize("GS1_128"));
+        eq("Micro QR",BarcodeFormatLabel.normalize("MICRO_QR"));
+        eq("Code 39 Full ASCII",BarcodeFormatLabel.normalize("CODE39_EXTENDED"));
+        eq("ID 19 (tipo sem tabela CMX)",BarcodeFormatLabel.normalize("19"));
+        eq("GS1 DataBar",BarcodeFormatLabel.normalize("GS1_DATABAR"));
         System.out.println("BarcodeFormatLabelTest OK: "+count+" assertions");
     }
 }
