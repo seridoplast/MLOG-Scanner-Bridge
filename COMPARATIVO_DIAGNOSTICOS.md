@@ -1,7 +1,20 @@
-# Continuidade v2.9.7 → v2.9.8
+# Diferenças entre v2.9.8 e v2.9.9
 
-- Preservado `TimedClickGate.COOLDOWN_MS = 150L`, formato exibido no teste, foco por gatilho, teclado compacto e Enter pelo CMX no modo normal.
-- O tratamento é opt-in; sem ativação, a entrada e o processamento do código seguem a v2.9.7.
-- O contador é opt-in e inclui um fluxo de repetição separado, sem mudar a lógica padrão de leitura simples.
-- Intervalo mínimo entre inserções = **155 ms**, sujeito à conclusão/atualização do Flutter; não garante 155 ms efetivos.
-- Falha e cancelamento interrompem o contador, sem tarefas antigas executadas posteriormente.
+- Sem mudança no cooldown normal do Bridge: **150 ms**.
+- Botão SP 55 dp (janela) e texto → engrenagem vetorial circular 40 dp, opacidade 50%.
+- Painel expandido: espaçamento lateral/superior/inferior de 9 dp → 16 dp; largura 314 dp ajustada à tela.
+- Contador: nome mudado para **Bipes automáticos (N−1)**, esclarecendo que 100 bipes = 1 físico + 99 virtuais. Mecanismo continua baseado na confirmação observada do MLOG e intervalo mínimo de 155 ms. Sem garantir conclusão em 155 ms.
+- Tela de teste do scanner agora inspeciona o broadcast original (espaço, Tab, CR, LF e Unicode invisível) e exibe advertência imediatamente abaixo do formato lido.
+- Leitura operacional normal continua recebendo o valor legado limpo com `trim`; no tratador opt-in, a limpeza usa o original bruto. Assim o diagnóstico não muda a interpretação do código em separação normal.
+- Nunca persiste histórico ou código decodificado em disco.
+
+# Testes locais
+
+- `AutoRepeatPolicyTest`: 13 verificações, incluindo 100→99.
+- `BarcodeArtifactReportTest`: 9 verificações.
+- Testes dos demais componentes puros: sucesso.
+- `ScannerProtocol` compilado com stub Android confirmou raw preservado + leitura normal `trim`.
+- Parse Java: 24 arquivos sem erros sintáticos.
+- XML: 9 recursos válidos.
+
+APK Android e comportamento no coletor não foram validados neste ambiente.

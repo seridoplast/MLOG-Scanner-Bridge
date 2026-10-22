@@ -15,7 +15,14 @@ public final class ScannerProtocol {
 
     private ScannerProtocol() {}
 
+    /** Mantem a normalizacao legada da leitura operacional. */
     public static String barcode(Intent i) {
+        String raw=barcodeRaw(i);
+        return raw==null || raw.trim().isEmpty() ? null : raw.trim();
+    }
+
+    /** Para diagnostico e tratador opt-in: mantem sufixos CR, LF, Tab etc. */
+    public static String barcodeRaw(Intent i) {
         if (i == null) return null;
         final String[] keys = {
             "CmxCode","ScanCode","code","scanCode","scannerdata","barcode",
@@ -25,9 +32,9 @@ public final class ScannerProtocol {
         for (String k : keys) {
             try {
                 Object v = i.getExtras() == null ? null : i.getExtras().get(k);
-                if (v instanceof String && !((String)v).trim().isEmpty()) return ((String)v).trim();
+                if (v instanceof String && !((String)v).isEmpty()) return (String)v;
                 if (v instanceof byte[] && ((byte[])v).length > 0)
-                    return new String((byte[])v, java.nio.charset.StandardCharsets.UTF_8).trim();
+                    return new String((byte[])v, java.nio.charset.StandardCharsets.UTF_8);
             } catch (Exception ignore) { }
         }
         return null;

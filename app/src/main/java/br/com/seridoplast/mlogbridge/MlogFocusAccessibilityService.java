@@ -125,8 +125,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         }
         receiver=new BroadcastReceiver(){
             @Override public void onReceive(Context context,Intent intent){
-                String code=ScannerProtocol.barcode(intent);
-                if(ScanAssistState.isClean(MlogFocusAccessibilityService.this)){
+                boolean treat=ScanAssistState.isClean(MlogFocusAccessibilityService.this);
+                String code=treat?ScannerProtocol.barcodeRaw(intent):ScannerProtocol.barcode(intent);
+                if(treat){
                     String cleaned=BarcodeCleaner.clean(code);
                     if(code!=null && cleaned!=null && !code.equals(cleaned)){
                         trace("SCAN_CLEANED_REMOVED_CHARS_"+
@@ -135,6 +136,12 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                                 (code.length()-cleaned.length())+" caracteres invisíveis.");
                     }
                     code=cleaned;
+                }
+                // Leitura que contem SOMENTE artefatos nao pode ser inserida.
+                if(code!=null && BarcodeCleaner.clean(code).isEmpty()){
+                    trace("SCAN_CONTROLS_ONLY_IGNORED");
+                    ScanAssistState.report("Codigo ignorado: somente espacos/caracteres invisiveis.");
+                    return;
                 }
                 // Nao misturar leitura fisica com repeticoes automatizadas.
                 if(autoCountRunning){
@@ -183,7 +190,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             prefs().edit().putBoolean("prearm_field",false).apply();
             // Versoes anteriores podiam deixar o teclado oculto pelo controlador.
             restoreKeyboard();
-            status("v2.9.8: scanner assistido opcional; cooldown 150 ms.");
+            status("v2.9.9: ferramentas flutuantes e diagnóstico invisível; cooldown 150 ms.");
         }catch(RuntimeException e){status("Falha ao registrar o broadcast do scanner.");}
     }
 
@@ -298,7 +305,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             autoCountFirst=false;
             if(AutoRepeatPolicy.firstConfirmed(reason)){
                 autoCountDone=1;
-                ScanAssistState.report("Contador: 1/"+autoCountTarget+" confirmado.");
+                ScanAssistState.report("Primeiro bipe confirmado; iniciando "+(autoCountTarget-1)+" bipes virtuais.");
                 scheduleAutoRepeat();
             }else cancelAutoCount("Primeira leitura nao confirmada ("+reason+"). Contador parado.");
         }
@@ -1487,7 +1494,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         autoCountClicked=false;
         autoCountLastActionAt=SystemClock.elapsedRealtime();
         trace("AUTO_COUNT_ARMED_TOTAL_"+quantity);
-        ScanAssistState.report("Contador: aguardando Enter do primeiro bipe (1/"+quantity+").");
+        ScanAssistState.report("Bipes automáticos: aguardando confirmação do 1º bipe físico; faltam "+(quantity-1)+" virtuais.");
     }
 
     /** Botao cancelar acessivel a partir da janela flutuante. */
@@ -1508,7 +1515,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private void scheduleAutoRepeat(){
         if(!autoCountRunning || autoCountFirst)return;
         if(autoCountDone>=autoCountTarget){
-            ScanAssistState.report("Contador concluido: "+autoCountDone+"/"+autoCountTarget+" confirmados.");
+            ScanAssistState.report("Bipes concluídos: 1 físico + "+(autoCountTarget-1)+" virtuais ("+autoCountDone+"/"+autoCountTarget+").");
             trace("AUTO_COUNT_FINISHED");
             cancelAutoCount(null);
             return;
@@ -1620,7 +1627,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         if(changed){
             autoCountDone++;
             trace("AUTO_COUNT_UI_CONFIRMED_"+autoCountDone);
-            ScanAssistState.report("Contador: "+autoCountDone+"/"+autoCountTarget+" confirmados.");
+            ScanAssistState.report("Bipes: "+autoCountDone+"/"+autoCountTarget+" observados ("+(autoCountDone-1)+" virtuais).");
             // Em telas de consulta que trocam resultado, a tela pode continuar;
             // se o layout mudar, abortar na proxima tentativa com seguranca.
             scheduleAutoRepeat();return;

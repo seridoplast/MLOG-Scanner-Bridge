@@ -1,15 +1,9 @@
-MLOG Scanner Bridge v2.9.8 — Ferramentas flutuantes
+MLOG Scanner Bridge v2.9.9 — engrenagem, bipes automáticos N−1 e diagnóstico de caracteres invisíveis
 
 cd /d "%USERPROFILE%\Downloads\MLOG-Scanner-Bridge"
-powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v298_Flutuante_Tratador_Contador.zip') -DestinationPath . -Force"
+powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v299_Engrenagem_Bipes_Inspecao.zip') -DestinationPath . -Force"
 git add -A
-git commit -m "Bridge v298 ferramentas flutuantes tratador contador"
-git push origin main && del /q "%USERPROFILE%\Downloads\MLOG_Scanner_Bridge_v298_Flutuante_Tratador_Contador.zip"
+git commit -m "Bridge v299 engrenagem discreta bipes automaticos e diagnostico"
+git push origin main && del /q "%USERPROFILE%\Downloads\MLOG_Scanner_Bridge_v299_Engrenagem_Bipes_Inspecao.zip"
 
-APK no GitHub Actions: MLOG-Scanner-Bridge-v298-APK
-
-ADB:
-"%USERPROFILE%\Downloads\platform-tools\adb.exe" devices
-"%USERPROFILE%\Downloads\platform-tools\adb.exe" install -r "%USERPROFILE%\Downloads\app-debug.apk"
-
-O ZIP só será apagado se o push terminar com sucesso.
+APK: MLOG-Scanner-Bridge-v299-APK

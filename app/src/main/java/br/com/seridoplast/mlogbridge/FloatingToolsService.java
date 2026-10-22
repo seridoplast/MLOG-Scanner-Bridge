@@ -20,6 +20,8 @@ import android.view.WindowManager;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.CheckBox;
 import android.widget.EditText;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -87,23 +89,38 @@ public final class FloatingToolsService extends Service {
         if(view!=null){try{wm.removeView(view);}catch(RuntimeException ignored){} view=null;}
         expanded=open;
         LinearLayout layout=new LinearLayout(this);layout.setOrientation(LinearLayout.VERTICAL);
-        layout.setBackground(bg(background,17));
-        layout.setPadding(dp(9),dp(9),dp(9),dp(9));
+        if(open){
+            layout.setBackground(bg(background,18));
+            layout.setPadding(dp(16),dp(16),dp(16),dp(16));
+        }else{
+            layout.setPadding(0,0,0,0);
+        }
         view=layout;
         params=new WindowManager.LayoutParams(
-            open?dp(304):dp(55),WindowManager.LayoutParams.WRAP_CONTENT,
+            open?dp(314):dp(40),WindowManager.LayoutParams.WRAP_CONTENT,
             Build.VERSION.SDK_INT>=26 ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY :
                 WindowManager.LayoutParams.TYPE_PHONE,
             open ? WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL :
                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
                        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT);
-        params.gravity=Gravity.TOP|Gravity.START;params.x=oldX;params.y=oldY;
+        params.gravity=Gravity.TOP|Gravity.START;
+        int screenWidth=getResources().getDisplayMetrics().widthPixels;
+        int windowWidth=open?dp(314):dp(40);
+        params.x=Math.max(0,Math.min(oldX,Math.max(0,screenWidth-windowWidth)));
+        params.y=Math.max(0,oldY);
         params.softInputMode=WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;
         if(!open){
-            TextView bubble=button("SP",()->draw(true));
-            bubble.setTextSize(18);layout.addView(bubble,
-                new LinearLayout.LayoutParams(dp(46),dp(45)));
+            FrameLayout bubble=new FrameLayout(this);
+            bubble.setBackground(bg(0xff252525,40));
+            bubble.setAlpha(.50f);
+            bubble.setContentDescription("Abrir ferramentas do MLOG Bridge");
+            ImageView gear=new ImageView(this);
+            gear.setImageResource(R.drawable.ic_floating_gear);
+            gear.setColorFilter(0xffffffff);
+            gear.setPadding(dp(9),dp(9),dp(9),dp(9));
+            bubble.addView(gear,new FrameLayout.LayoutParams(dp(40),dp(40),Gravity.CENTER));
+            layout.addView(bubble,new LinearLayout.LayoutParams(dp(40),dp(40)));
             bubble.setOnTouchListener(new View.OnTouchListener(){
                 private float downX,downY;private int startX,startY;private boolean moved;
                 @Override public boolean onTouch(View v,MotionEvent e){
@@ -135,56 +152,61 @@ public final class FloatingToolsService extends Service {
                 p.edit().putBoolean(ScanAssistState.CLEAN,on).apply();
                 statusText=on?"Tratador ativo para códigos por broadcast.":"Tratador desativado.";
                 if(status!=null)status.setText(statusText);
-            });layout.addView(cleaner);
+            });LinearLayout.LayoutParams cleanerParams=new LinearLayout.LayoutParams(-1,-2);
+            cleanerParams.topMargin=dp(12);layout.addView(cleaner,cleanerParams);
             TextView hint=label("Remove espaços, Enter/Tab e caracteres ocultos. Não modifica dígitos nem pontuação.",12,false);
-            hint.setTextColor(0xffcccccc);layout.addView(hint);
-            CheckBox batch=new CheckBox(this);batch.setText("Contador automático");batch.setTextColor(text);
+            hint.setTextColor(0xffcccccc);
+            LinearLayout.LayoutParams hintParams=new LinearLayout.LayoutParams(-1,-2);
+            hintParams.leftMargin=dp(5);hintParams.rightMargin=dp(5);
+            layout.addView(hint,hintParams);
+            CheckBox batch=new CheckBox(this);batch.setText("Bipes automáticos (N−1)");batch.setTextColor(text);
             batch.setChecked(p.getBoolean(ScanAssistState.BATCH,false));
             batch.setOnCheckedChangeListener((b,on)->{
                 p.edit().putBoolean(ScanAssistState.BATCH,on).putBoolean(ScanAssistState.ARMED,false).apply();
                 MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
-                if(svc!=null)svc.cancelAutoCount("Contador desativado.");
-                statusText=on?"Contador ativo: escolha a quantidade e arme.":"Contador desativado.";
+                if(svc!=null)svc.cancelAutoCount("Bipes automáticos desativados.");
+                statusText=on?"Bipes automáticos: informe o total e arme.":"Bipes automáticos desativados.";
                 if(status!=null)status.setText(statusText);
-            });layout.addView(batch);
+            });LinearLayout.LayoutParams batchParams=new LinearLayout.LayoutParams(-1,-2);
+            batchParams.topMargin=dp(12);layout.addView(batch,batchParams);
             LinearLayout row=new LinearLayout(this);row.setOrientation(LinearLayout.HORIZONTAL);
             row.setGravity(Gravity.CENTER_VERTICAL);
             row.setPadding(0,dp(7),0,dp(7));
-            row.addView(label("Quantidade: ",14,true));
+            row.addView(label("Total de bipes: ",14,true));
             EditText amount=new EditText(this);amount.setSingleLine(true);amount.setTextColor(text);
             amount.setHintTextColor(0xffbbbbbb);amount.setInputType(InputType.TYPE_CLASS_NUMBER);
             amount.setSelectAllOnFocus(true);
             amount.setText(String.valueOf(ScanAssistState.clamp(p.getInt(ScanAssistState.COUNT,1))));
             row.addView(amount,new LinearLayout.LayoutParams(dp(80),dp(48)));layout.addView(row);
-            TextView arm=button("▶ Armar próximo bipe",()->{
+            TextView arm=button("▶ Armar 1 bipe físico + N−1",()->{
                 int count;
                 try{count=Integer.parseInt(amount.getText().toString());}catch(NumberFormatException e){count=0;}
                 if(count<1 || count>ScanAssistState.MAX_COUNT){
-                    statusText="Informe de 1 a "+ScanAssistState.MAX_COUNT+" unidades.";
+                    statusText="Informe de 1 a "+ScanAssistState.MAX_COUNT+" bipes no total.";
                     if(status!=null)status.setText(statusText);return;
                 }
                 if(!batch.isChecked()){
-                    statusText="Ative Contador automático primeiro.";
+                    statusText="Ative Bipes automáticos primeiro.";
                     if(status!=null)status.setText(statusText);return;
                 }
                 MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
                 if(svc!=null)svc.cancelAutoCount(null);
                 p.edit().putInt(ScanAssistState.COUNT,count)
                     .putBoolean(ScanAssistState.ARMED,true).apply();
-                statusText="Armado para "+count+" unidade(s). Aponte e bipe UMA vez.";
+                statusText="Armado: 1 bipe físico + "+AutoRepeatPolicy.virtualRepeats(count)+" automáticos ("+count+" no total).";
                 ScanAssistState.report(statusText);
                 collapse();
             });layout.addView(arm);
-            TextView stop=button("■ Cancelar repetições",()->{
+            TextView stop=button("■ Cancelar bipes automáticos",()->{
                 p.edit().putBoolean(ScanAssistState.ARMED,false).apply();
                 MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
-                if(svc!=null)svc.cancelAutoCount("Contador cancelado.");
+                if(svc!=null)svc.cancelAutoCount("Bipes automáticos cancelados.");
             });LinearLayout.LayoutParams stopParams=new LinearLayout.LayoutParams(-1,-2);
             stopParams.topMargin=dp(8);layout.addView(stop,stopParams);
             status=label(statusText,12,false);status.setTextColor(0xffcfcfcf);
             LinearLayout.LayoutParams sl=new LinearLayout.LayoutParams(-1,-2);
             sl.topMargin=dp(12);layout.addView(status,sl);
-            TextView foot=label("Mínimo 155 ms entre repetições. O MLOG pode precisar de mais tempo; sem confirmação, o processo para.",12,false);
+            TextView foot=label("Ex.: 100 = 1 bipe físico + 99 virtuais. Mínimo de 155 ms e confirmação do MLOG entre cada repetição. Se falhar, para.",12,false);
             foot.setTextColor(0xffb8b8b8);
             LinearLayout.LayoutParams fl=new LinearLayout.LayoutParams(-1,-2);fl.topMargin=dp(9);
             layout.addView(foot,fl);

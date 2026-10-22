@@ -1,62 +1,53 @@
-# MLOG Scanner Bridge v2.9.8 — Ferramentas flutuantes
+# MLOG Scanner Bridge v2.9.9 — Ferramentas flutuantes compactas
 
-## Mantido da v2.9.7
+Versão baseada na **v2.9.8**. A leitura normal, o clique pelo gatilho e o **bloqueio de 150 ms** permanecem. O Enter da leitura física continua com o CMX.
 
-- `TimedClickGate.COOLDOWN_MS = 150L` na leitura comum; nenhum novo Enter automático no modo comum.
-- O CMX continua responsável pelo código e Enter da leitura física normal.
-- Interface preta/branca, logos atuais, teclado compacto com Digitar/Apagar/trocar, formato do código no teste e as preferências anteriores.
+## 1. Bolha e painel
 
-## Botão flutuante SP (opcional)
+- A bolha flutuante usa uma **engrenagem vetorial** (`ic_floating_gear.xml` nativo Android, com fonte `assets/engrenagem_bolha.svg`).
+- Diâmetro da bolha: **40 dp**; opacidade visual **50%**. Arrastável; ao tocar, mostra o painel.
+- Painel expandido com **16 dp de margens internas em todas as direções**, espaçamento entre opções e largura de 314 dp (ajustada aos limites da tela).
+- Permissão do Android **Exibir sobre outros apps** continua necessária; nada inicia sem ação do operador.
 
-1. Abra MLOG Scanner Bridge → **Início → Ativar / abrir botão flutuante**.
-2. Autorize **Exibir sobre outros apps** quando solicitado; volte e pressione ativar novamente.
-3. Arraste a bolha `SP` para outra posição; toque para expandir/recolher.
-4. O painel apresenta **Tratar códigos invisíveis**, **Contador automático**, **Quantidade**, **Armar próximo bipe** e **Cancelar repetições**.
-5. **Desativar botão flutuante** na tela inicial desliga as duas funções.
+## 2. Bipes automáticos — N−1
 
-### Tratador de códigos
+No painel, o antigo nome **Contador automático** foi substituído por **Bipes automáticos (N−1)**.
 
-Habilitado manualmente, remove: CR, LF, Tab, outros controles, espaços Unicode, marcadores invisíveis e BOM. Preserva letras, dígitos, maiúsculas/minúsculas e pontuação do código (inclusive Code 39). Não transforma Code 39 em EAN-13, não inventa dígitos de verificação e não recupera uma simbologia que o scanner físico não decodificou.
+**Exemplo:** ao informar 100 e tocar em **Armar 1 bipe físico + N−1**, uma única leitura física do CMX corresponde ao primeiro registro; **as outras 99 tentativas de inserção + Enter** são feitas pelo Bridge somente após a confirmação anterior. A primeira leitura NÃO é repetida pelo contador.
 
-**Limite técnico:** o tratamento opera no código recebido pelo **broadcast CMX/Hikvision** e na inserção que o Bridge controla. Caso o CMX envie o código e Enter diretamente como teclas antes de o broadcast chegar, o Bridge pode não conseguir substituir a entrada a tempo; alguns campos Flutter também recusam a modificação. Se o wedge preencheu o campo com código equivalente apenas após remover caracteres invisíveis, o Bridge tenta substituí-lo pelo tratado no campo de leitura reconhecido.
+O intervalo mínimo entre repetições continua **155 ms**, mas cada repetição pode levar mais tempo enquanto o Flutter não expuser evidência de conclusão. Se o campo não ficar pronto, o fluxo falha, o Enter não for enviado ou não houver confirmação visual, **o lote para sem emitir os próximos Enters**. Também há **Cancelar bipes automáticos**. O CMX deve estar configurado para o primeiro Enter, e o teclado Bridge deve estar selecionado para o Enter das repetições.
 
-### Contador automático
+**Atenção:** bipes automáticos são **repetições virtuais da entrada** no MLOG, não disparos sonoros/físicos do leitor. Alteração visual do Flutter não confirma persistência no pedido. Testar primeiro em pedido fictício e conferir contagem efetiva antes de usar em produção. Nunca usar sem validar telas de quantidade/peso.
 
-- Deixe **Contador automático** marcado no painel e digite a quantidade total (de 1 a 100).
-- Selecione **MLOG Bridge** como teclado padrão do Android; o contador automático depende do seu InputConnection para Enter nas repetições.
-- Toque **Armar próximo bipe** (a janela recolhe) e leia o produto **UMA vez**.
-- A primeira leitura e primeiro Enter continuam vindo do CMX. Ao verificar que o MLOG mudou ou fechou o campo, o Bridge tenta inserir o mesmo código e enviar Enter nas **N−1 repetições restantes**.
-- Há **pelo menos 155 ms** entre tentativas; o tempo REAL pode ser muito maior, porque o Bridge espera o MLOG apresentar confirmação visual antes de cada próxima leitura.
-- Se a tela mudar, aparecer um aviso, o campo não abrir, o Enter falhar ou não houver confirmação, o contador **cancela** em vez de executar repetições cegamente. O botão **Cancelar** invalida as tarefas pendentes imediatamente.
-- Não aperte o gatilho durante as repetições: o Bridge ignora esses eventos, mas **não controla a emissão direta de teclas pelo driver CMX**.
-- `3` significa **3 inserções no total** (primeiro bipe físico + 2 repetições virtuais). Não há bipes físicos adicionais do hardware.
+## 3. Diagnóstico de espaços e caracteres ocultos
 
-**Limites / segurança operacional:** a mudança visual do Flutter não é prova de persistência no pedido ou no estoque. Confirme a quantidade registrada no MLOG e teste com produtos e pedidos fictícios antes de utilizar em separação, peso, conferência ou estoque real. 155 ms é o piso, não um tempo de conclusão garantido. O contador não deve ser usado em telas de quantidade/peso não homologadas.
+A tela inicial **Leitura de códigos** exibe abaixo de **Formato lido** uma observação de caracteres detectados no broadcast original: espaços, Enter/CR, LF, Tab, Unicode invisível e controles. A forma legível do código é mostrada sem esses caracteres.
 
-## Atualizar pelo CMD
+O `ScannerProtocol.barcode()` **não remove mais espaços/sufixos antes do diagnóstico**. O tratador ativo pode removê-los antes da inserção do Bridge; se estiver desligado, apenas a exibição no teste é normalizada. Um código só de caracteres invisíveis é ignorado para não enviar uma leitura vazia ao MLOG. A identificação da simbologia (Code 39, EAN-13 etc.) segue dependendo dos metadados do CMX.
 
-Coloque `MLOG_Scanner_Bridge_v298_Flutuante_Tratador_Contador.zip` em Downloads e execute no CMD:
+**Limite importante:** o Bridge só identifica CR/LF/Tab quando fazem parte do dado de código recebido por broadcast. Se o CMX enviar Enter como tecla separada, não há como afirmar que estava embutido no código.
+
+## 4. Atualizar pelo CMD
 
 ```bat
 cd /d "%USERPROFILE%\Downloads\MLOG-Scanner-Bridge"
-powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v298_Flutuante_Tratador_Contador.zip') -DestinationPath . -Force"
+powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v299_Engrenagem_Bipes_Inspecao.zip') -DestinationPath . -Force"
 git add -A
-git commit -m "Bridge v298 ferramentas flutuantes tratador contador"
-git push origin main && del /q "%USERPROFILE%\Downloads\MLOG_Scanner_Bridge_v298_Flutuante_Tratador_Contador.zip"
+git commit -m "Bridge v299 engrenagem discreta bipes automaticos e diagnostico"
+git push origin main && del /q "%USERPROFILE%\Downloads\MLOG_Scanner_Bridge_v299_Engrenagem_Bipes_Inspecao.zip"
 ```
 
-**O ZIP somente é apagado se o `git push` terminar com sucesso.** Baixe o artefato `MLOG-Scanner-Bridge-v298-APK` em https://github.com/seridoplast/MLOG-Scanner-Bridge/actions.
+O ZIP só será apagado quando `git push` tiver êxito. Se `git commit` não gerar alterações (ex.: projeto já atualizado), `git push` ainda poderá executar.
 
-### Instalação por ADB
+Baixe o artefato **MLOG-Scanner-Bridge-v299-APK** em https://github.com/seridoplast/MLOG-Scanner-Bridge/actions.
+
+### ADB
 
 ```bat
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" devices
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" install -r "%USERPROFILE%\Downloads\app-debug.apk"
 ```
 
-## Validação
+## 5. Validação
 
-- Todos os arquivos Java passaram pela análise sintática (`JavacTask.parse`).
-- Testes locais puros passaram: `TimedClickGateTest`, `BarcodeFormatLabelTest`, `ScanDuplicatePolicyTest`, `ScanQueueTest`, `EnterReadinessPolicyTest`, `BarcodeCleanerTest`, `AutoRepeatPolicyTest`.
-- Todos os arquivos XML passaram por parser XML.
-- Não foi possível compilar o APK Android neste ambiente (Android SDK não instalado); o artefato GitHub Actions e o teste no **CMX Android 14/MLOG Flutter** ainda são necessários.
+Foram executados testes locais Java independentes do Android (incluindo o cálculo de N−1 e a inspeção de caracteres ocultos) e validação de integridade de XML/ZIP. A compilação completa em Android e o teste em CMX/MLOG ainda precisam ser executados no GitHub Actions e em um coletor de teste.

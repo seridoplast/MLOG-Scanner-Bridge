@@ -38,7 +38,7 @@ public final class MainActivity extends Activity {
     private int page = 0;
     private int bg, card, line, ink, muted, inverse, inkSurface;
     private LinearLayout root, content, footer;
-    private TextView preview, lastStatus, barcodeFormatStatus, serviceState;
+    private TextView preview, lastStatus, barcodeFormatStatus, barcodeArtifactStatus, serviceState;
     private boolean receiving;
     private int scanCount;
     private String lastSample;
@@ -49,19 +49,27 @@ public final class MainActivity extends Activity {
     private final BroadcastReceiver scannerTest = new BroadcastReceiver(){
         @Override public void onReceive(Context context,Intent intent){
             if(!isActiveAppScreen() || page!=0)return;
-            String code=ScannerProtocol.barcode(intent);
+            String code=ScannerProtocol.barcodeRaw(intent);
             if(code==null){
                 lastSample=null;
                 if(preview!=null)preview.setText("Sinal recebido sem codigo");
                 if(barcodeFormatStatus!=null)barcodeFormatStatus.setText("Formato lido: nao informado");
+                if(barcodeArtifactStatus!=null)barcodeArtifactStatus.setText("Não foi possível inspecionar o código recebido.");
                 return;
             }
-            if(code.equals(lastSample) && android.os.SystemClock.elapsedRealtime()-lastReceivedAt<320)return;
+            if(code.equals(lastSample) && android.os.SystemClock.elapsedRealtime()-lastReceivedAt<140)return;
             lastReceivedAt=android.os.SystemClock.elapsedRealtime();
             scanCount++;
             lastSample=code;
             lastSymbology=ScannerProtocol.type(intent);
-            if(preview!=null)preview.setText(code);
+            String visibleCode=BarcodeCleaner.clean(code);
+            if(preview!=null)preview.setText(visibleCode==null || visibleCode.isEmpty()?
+                    "Somente caracteres invisíveis":visibleCode);
+            if(barcodeArtifactStatus!=null){
+                String report=BarcodeArtifactReport.describe(code);
+                barcodeArtifactStatus.setText(report);
+                barcodeArtifactStatus.setTextColor(report.startsWith("Atenção:")?0xffd97706:muted);
+            }
             if(lastStatus!=null)lastStatus.setText("Leitura "+scanCount);
             if(barcodeFormatStatus!=null)barcodeFormatStatus.setText("Formato lido: "+lastSymbology);
         }
@@ -215,7 +223,7 @@ public final class MainActivity extends Activity {
             footer.addView(tab,tp);tab.setOnClickListener(v->show(target));
         }
         root.addView(footer);
-        preview=null;lastStatus=null;barcodeFormatStatus=null;serviceState=null;
+        preview=null;lastStatus=null;barcodeFormatStatus=null;barcodeArtifactStatus=null;serviceState=null;
         if(page==0)home();else if(page==1)settings();else if(page==2)diagnostic();else about();
     }
     private void show(int p){page=p;displayPage();}
@@ -233,13 +241,21 @@ public final class MainActivity extends Activity {
         TextView statusLabel=label("TESTE DO SCANNER",11,muted,true);sample.addView(statusLabel);
         space(sample,20);
         TextView scanner=label("▥",43,ink,true);scanner.setGravity(Gravity.CENTER);sample.addView(scanner);
-        preview=label(lastSample==null?"Aguardando leitura...":lastSample,19,ink,true);
+        preview=label(lastSample==null?"Aguardando leitura...":BarcodeCleaner.clean(lastSample),19,ink,true);
         preview.setGravity(Gravity.CENTER);preview.setTextIsSelectable(true);sample.addView(preview);
         lastStatus=label(scanCount==0?"Aperte o gatilho do coletor":"Leitura "+scanCount,12,muted,false);
         lastStatus.setGravity(Gravity.CENTER);space(sample,9);sample.addView(lastStatus);
         barcodeFormatStatus=label("Formato lido: "+(lastSymbology==null?"Aguardando leitura":lastSymbology),14,ink,true);
         barcodeFormatStatus.setGravity(Gravity.CENTER);
         space(sample,6);sample.addView(barcodeFormatStatus);
+        space(sample,10);
+        barcodeArtifactStatus=label(lastSample==null?
+            "Aguardando leitura para verificar caracteres invisíveis.":
+            BarcodeArtifactReport.describe(lastSample),12,muted,false);
+        barcodeArtifactStatus.setGravity(Gravity.CENTER);
+        barcodeArtifactStatus.setTextColor(lastSample!=null &&
+            BarcodeArtifactReport.describe(lastSample).startsWith("Atenção:")?0xffd97706:muted);
+        sample.addView(barcodeArtifactStatus);
         space(sample,18);
         subtitle(sample,"Use o gatilho fisico do coletor para testar a leitura. O Bridge nao modifica a configuracao do CMX.");
         LinearLayout service=card();
@@ -248,7 +264,7 @@ public final class MainActivity extends Activity {
         space(service,8);service.addView(serviceState);
         LinearLayout tools=card();
         tools.addView(label("Ferramentas flutuantes",17,ink,true));
-        subtitle(tools,"Tratador de caracteres invisíveis e contador por um único bipe. Ambos desligados inicialmente.");
+        subtitle(tools,"Tratador de caracteres invisíveis e bipes automáticos (1 bipe físico + N−1 virtuais). Ambos desligados inicialmente.");
         button(tools,"Ativar / abrir botão flutuante",true,this::openFloatingTools);
         button(tools,"Desativar botão flutuante",false,()->{
             stopService(new Intent(this,FloatingToolsService.class));
@@ -317,7 +333,7 @@ public final class MainActivity extends Activity {
         button(help,"Abrir MLOG",true,this::openMlog);
     }
     private void about(){
-        title("Sobre","MLOG Scanner Bridge · v2.9.8 beta");
+        title("Sobre","MLOG Scanner Bridge · v2.9.9 beta");
         LinearLayout about=card();about.addView(label("Integração local",17,ink,true));
         subtitle(about,"Criado para o scanner físico CMX e o MLOG. Sem acesso à internet. Os códigos de leitura não são salvos em histórico.");
         space(about,10);
