@@ -212,7 +212,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             prefs().edit().putBoolean("prearm_field",false).apply();
             // Versoes anteriores podiam deixar o teclado oculto pelo controlador.
             restoreKeyboard();
-            status("v3.0.5: leitura normal com bloqueio ajustavel; tratador disponível.");
+            status("v3.0.6: Conferência de Venda mapeada; Apagar contínuo disponível.");
         }catch(RuntimeException e){status("Falha ao registrar o broadcast do scanner.");}
     }
 
@@ -609,6 +609,25 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             return false;
         }
 
+        // Conferência de Venda: dois layouts verificados em prints 720x1440.
+        // Antes do primeiro produto o par camera/teclado está mais acima.
+        // Com cartão do produto, o mesmo par desce. Nunca confundir com a
+        // tela antiga de busca da conferência, que usa um campo superior.
+        if(ConferenceScreenPolicy.isMapped(info.screen)){
+            AccessibilityNodeInfo target=findKeyboardTarget(info);
+            if(target!=null && clickNativeKeyboardOnTrigger(target,info.screen))return false;
+            Point size=realScreenSize();
+            if(prefs().getBoolean("guided_taps",true) && supportedAspect(size) &&
+               ConferenceScreenPolicy.isStateVerified(info.screen,
+                   info.hasConferencePageTitle,info.hasConferenceInitialPrompt,
+                   info.hasConferenceProductAction)){
+                trace("TRIGGER_CONFERENCE_GUIDED_"+info.screen);
+                triggerGesture(info.screen,size.x*ConferenceScreenPolicy.KEYBOARD_X,
+                    size.y*ConferenceScreenPolicy.keyboardY(info.screen));
+            }else trace("CONFERENCE_KEYBOARD_NOT_SAFE_"+info.screen);
+            return false;
+        }
+
         // Para separacao (inclusive Quantidade), atividades, pedidos e notas:
         // clicar no botao nativo ANTES da decodificacao. Nao esperar que a
         // fila de broadcasts fique ociosa e nao usar visibilidade do IME
@@ -778,6 +797,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         if("desconhecida".equals(i.screen) && !i.login && !i.dialog &&
            i.editors.size()==1 && SystemClock.elapsedRealtime()-preparedAt<9000 &&
            ("atividades".equals(preparedScreen) || "consulta".equals(preparedScreen) ||
+            ConferenceScreenPolicy.isMapped(preparedScreen) ||
             "conferencia_venda".equals(preparedScreen) || "separacao".equals(preparedScreen) ||
             "pedidos".equals(preparedScreen) || "notas".equals(preparedScreen))){
             // Modal sem titulo do Flutter: somente editor unico do MLOG e
@@ -837,6 +857,31 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             }
             finishQueuedScan("icone_atividade_ausente");
             status("Atividades: icone nao exposto; ative toque guiado no Bridge.");
+            return;
+        }
+
+        // Conferência de Venda: o botão nativo aparece em duas alturas.
+        // Somente clicar se o título e o estado do cartão forem reconhecidos.
+        if(ConferenceScreenPolicy.isMapped(i.screen)){
+            startPending(code,i.screen);
+            if(isImeVisible()){
+                retryFill(serial,i.screen);
+                return;
+            }
+            AccessibilityNodeInfo button=findKeyboardTarget(i);
+            if(button!=null && clickKeyboardOnce(button,i.screen)){
+                retryFill(serial,i.screen);
+                return;
+            }
+            if(prefs().getBoolean("guided_taps",true) &&
+               ConferenceScreenPolicy.isStateVerified(i.screen,
+                   i.hasConferencePageTitle,i.hasConferenceInitialPrompt,
+                   i.hasConferenceProductAction)){
+                tapKnownConferenceKeyboard(serial,i);
+            }else{
+                finishQueuedScan("conferencia_botao_nao_identificado");
+                status("Conferência: botão de teclado não identificado; envie diagnóstico.");
+            }
             return;
         }
 
@@ -1007,6 +1052,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             // do MLOG, após nosso clique na busca ou no botão de atividades.
             if(!"desconhecida".equals(i.screen) || i.editors.size()!=1 ||
                 !("atividades".equals(intendedScreen) ||
+                  ConferenceScreenPolicy.isMapped(intendedScreen) ||
                   "conferencia_venda".equals(intendedScreen) ||
                   "consulta".equals(intendedScreen) || "separacao".equals(intendedScreen) ||
                   "pedidos".equals(intendedScreen) || "notas".equals(intendedScreen)))return;
@@ -1228,6 +1274,21 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     /** Preferir rotulo acessivel; se nao houver, par de botoes de camera/teclado.
      * Nao usar clique em quantidade, iniciar ou acao sem identificacao suficiente. */
     private AccessibilityNodeInfo findKeyboardTarget(ScreenInfo info){
+        if(ConferenceScreenPolicy.isMapped(info.screen)){
+            // Prioridade ao ícone semântico, mas somente na área do botão
+            // direito do par mostrado nas capturas de Conferência de Venda.
+            if(info.keyboard!=null){
+                AccessibilityNodeInfo target=clickable(info.keyboard);
+                if(target!=null && target.isVisibleToUser() && target.isEnabled()){
+                    Rect r=new Rect();target.getBoundsInScreen(r);
+                    Point p=realScreenSize();
+                    if(supportedAspect(p) && ConferenceScreenPolicy.rightButtonCandidate(
+                        info.screen,r.centerX()/(float)p.x,r.centerY()/(float)p.y,
+                        r.width()/(float)p.x,r.height()/(float)p.y))return target;
+                }
+            }
+            return conferenceKeyboardPair(info);
+        }
         if(info.keyboard!=null){
             AccessibilityNodeInfo target=clickable(info.keyboard);
             if(target!=null && !blockedLabel(tag(target))){
@@ -1268,6 +1329,55 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         }
         return candidate;
     }
+    /** Só usa o par camera/teclado no cartão de Conferência de Venda.
+     * Cada controle deve ter dimensões plausíveis e ambos na mesma linha.
+     * Com dois pares ou sem identificação confiável, retorna null. */
+    private AccessibilityNodeInfo conferenceKeyboardPair(ScreenInfo info){
+        if(!ConferenceScreenPolicy.isMapped(info.screen))return null;
+        Point p=realScreenSize();
+        if(!supportedAspect(p))return null;
+        AccessibilityNodeInfo found=null;
+        for(AccessibilityNodeInfo node:info.clicks){
+            if(!node.isVisibleToUser() || !node.isEnabled() ||
+               node.isEditable() || blockedLabel(tag(node)))continue;
+            Rect r=new Rect();node.getBoundsInScreen(r);
+            if(!ConferenceScreenPolicy.rightButtonCandidate(info.screen,
+                r.centerX()/(float)p.x,r.centerY()/(float)p.y,
+                r.width()/(float)p.x,r.height()/(float)p.y))continue;
+            boolean cameraBeside=false;
+            for(AccessibilityNodeInfo sibling:info.clicks){
+                if(sibling==node || !sibling.isVisibleToUser() || !sibling.isEnabled())continue;
+                Rect c=new Rect();sibling.getBoundsInScreen(c);
+                if(ConferenceScreenPolicy.leftCameraCandidate(info.screen,
+                    c.centerX()/(float)p.x,c.centerY()/(float)p.y,
+                    c.width()/(float)p.x,c.height()/(float)p.y) &&
+                    Math.abs(c.centerY()-r.centerY())<p.y*.035f){
+                    cameraBeside=true;break;
+                }
+            }
+            if(!cameraBeside)continue;
+            if(found!=null && !sameBounds(found,node))return null;
+            found=node;
+        }
+        if(found!=null)trace("CONFERENCE_KEYBOARD_PAIR_FOUND_"+info.screen);
+        return found;
+    }
+
+    private void tapKnownConferenceKeyboard(int id,ScreenInfo info){
+        Point size=realScreenSize();
+        if(!supportedAspect(size) || !ConferenceScreenPolicy.isStateVerified(
+            info.screen,info.hasConferencePageTitle,info.hasConferenceInitialPrompt,
+            info.hasConferenceProductAction)){
+            finishQueuedScan("conferencia_nao_homologada");
+            status("Conferência: layout não identificado para toque guiado.");
+            return;
+        }
+        float x=size.x*ConferenceScreenPolicy.KEYBOARD_X;
+        float y=size.y*ConferenceScreenPolicy.keyboardY(info.screen);
+        trace("CONFERENCE_GUIDED_BUTTON_"+info.screen);
+        tapAt(id,x,y,info.screen);
+    }
+
     private void tapKnownSeparationKeyboard(int id,ScreenInfo info){
         Point size=realScreenSize();
         if(!supportedAspect(size) || !info.hasSeparationControls){
@@ -1393,6 +1503,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private static final class ScreenInfo{
         String screen="desconhecida";
         boolean login,hasActivitiesTitle,hasConferenceTitle,hasConsultation,dialog,noActivities,hasStart,hasQuantity,hasSeparationControls,hasOrderTitle;
+        boolean hasConferencePageTitle,hasConferenceInitialPrompt,hasConferenceProductAction;
         AccessibilityNodeInfo keyboard,searchField;
         final List<AccessibilityNodeInfo> editors=new ArrayList<>();
         final List<AccessibilityNodeInfo> clicks=new ArrayList<>();
@@ -1410,6 +1521,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             if(has(t,"nenhuma atividade registrada"))v.noActivities=true;
             if(has(t,"iniciar"))v.hasStart=true;
             if(has(t,"busca da conferencia de venda"))v.hasConferenceTitle=true;
+            if(has(t,"conferencia de venda"))v.hasConferencePageTitle=true;
+            if(has(t,"para iniciar a conferencia", "bipe qualquer produto"))v.hasConferenceInitialPrompt=true;
+            if(has(t,"bipar produtos"))v.hasConferenceProductAction=true;
             if(has(t,"bipe ou digite enderec", "bipe algum produto", "local de estoque"))consultationHint=true;
             if(has(t,"consulta"))consultationTitle=true;
             if(has(t,"bipe ou digite enderec"))v.searchField=n;
@@ -1437,6 +1551,10 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         v.hasConsultation=consultationHint && (consultationTitle || v.searchField!=null);
         v.hasSeparationControls=hasPular && hasEncerrar;
         if(v.hasConferenceTitle)v.screen="conferencia_venda";
+        else if(v.hasConferencePageTitle && v.hasConferenceProductAction)
+            v.screen="conferencia_produto";
+        else if(v.hasConferencePageTitle && v.hasConferenceInitialPrompt)
+            v.screen="conferencia_inicio";
         else if(v.hasConsultation)v.screen="consulta";
         else if(v.hasActivitiesTitle || (v.noActivities && v.hasStart)){
             v.screen="atividades";
@@ -1476,7 +1594,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             // Em atividades a entrada foi aberta pelo icone reconhecido.
             boolean expected=explicitlyOpened && ("atividades".equals(info.screen) ||
                 "conferencia_venda".equals(info.screen) || "consulta".equals(info.screen) ||
-                "notas".equals(info.screen) || "pedidos".equals(info.screen) ||
+                ConferenceScreenPolicy.isMapped(info.screen) || "notas".equals(info.screen) || "pedidos".equals(info.screen) ||
                 "separacao".equals(info.screen));
             if(named || expected)candidates.add(e);
         }

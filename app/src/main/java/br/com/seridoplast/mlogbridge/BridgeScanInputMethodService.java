@@ -13,6 +13,7 @@ import android.view.Gravity;
 import android.view.KeyCharacterMap;
 import android.view.KeyEvent;
 import android.view.View;
+import android.view.MotionEvent;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
 import android.view.inputmethod.InputMethodManager;
@@ -35,6 +36,45 @@ public final class BridgeScanInputMethodService extends InputMethodService {
     private boolean manual=false;
     private boolean numeric=false;
     private boolean upper=false;
+    // Apagar contínuo: 1 caractere imediatamente; repetição enquanto o dedo
+    // permanece pressionado. Ao soltar, não há exclusões pendentes.
+    private static final long ERASE_HOLD_DELAY_MS=350;
+    private static final long ERASE_REPEAT_MS=70;
+    private boolean eraseHeld=false;
+    private final Runnable repeatErase=new Runnable(){
+        @Override public void run(){
+            if(!eraseHeld)return;
+            type("⌫");
+            main.postDelayed(this,ERASE_REPEAT_MS);
+        }
+    };
+    private void stopErase(){
+        eraseHeld=false;
+        main.removeCallbacks(repeatErase);
+    }
+    private TextView eraseKey(String label){
+        TextView t=key(label,()->type("⌫"),1);
+        t.setOnTouchListener((v,event)->{
+            switch(event.getActionMasked()){
+                case MotionEvent.ACTION_DOWN:
+                    stopErase();
+                    eraseHeld=true;
+                    type("⌫");
+                    main.postDelayed(repeatErase,ERASE_HOLD_DELAY_MS);
+                    return true;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    stopErase();
+                    return true;
+                case MotionEvent.ACTION_MOVE:
+                    if(event.getX()<0 || event.getY()<0 ||
+                       event.getX()>v.getWidth() || event.getY()>v.getHeight())stopErase();
+                    return true;
+                default:return true;
+            }
+        });
+        return t;
+    }
 
     // O teclado Bridge continua com Enter MANUAL. Nenhum metodo externo
     // consegue acionar Enter automaticamente nesta versao.
@@ -114,7 +154,7 @@ public final class BridgeScanInputMethodService extends InputMethodService {
     }
 
     @Override public void onCreate(){super.onCreate();active=this;}
-    @Override public void onDestroy(){if(active==this)active=null;super.onDestroy();}
+    @Override public void onDestroy(){stopErase();if(active==this)active=null;super.onDestroy();}
 
     @Override public View onCreateInputView(){
         panel=new LinearLayout(this);
@@ -147,11 +187,13 @@ public final class BridgeScanInputMethodService extends InputMethodService {
     }
 
     @Override public void onFinishInputView(boolean finishingInput){
+        stopErase();
         if(targetMlog){manual=false;if(panel!=null)render();}
         super.onFinishInputView(finishingInput);
     }
 
     @Override public void onFinishInput(){
+        stopErase();
         if(targetMlog){manual=false;if(panel!=null)render();}
         super.onFinishInput();
     }
@@ -197,6 +239,7 @@ public final class BridgeScanInputMethodService extends InputMethodService {
     }
     private void render(){
         if(panel==null)return;
+        stopErase();
         panel.removeAllViews();
         int surface=dark()?0xff111111:0xfff9f9f9;
         panel.setBackgroundColor(surface);
@@ -214,7 +257,7 @@ public final class BridgeScanInputMethodService extends InputMethodService {
         TextView toggle=key(manual?"Ocultar teclas":"Digitar",()->{manual=!manual;render();},1);
         top.addView(toggle,new LinearLayout.LayoutParams(dp(100),dp(32)));
         if(targetMlog && !manual){
-            TextView erase=key("⌫ Apagar",()->type("⌫"),1);
+            TextView erase=eraseKey("⌫ Apagar");
             LinearLayout.LayoutParams ep=new LinearLayout.LayoutParams(dp(86),dp(32));
             ep.leftMargin=dp(5);
             top.addView(erase,ep);
@@ -259,7 +302,7 @@ public final class BridgeScanInputMethodService extends InputMethodService {
         LinearLayout line=new LinearLayout(this);line.setOrientation(LinearLayout.HORIZONTAL);
         line.setPadding(dp(3)+inset,dp(3),dp(3)+inset,dp(3));
         for(String n:names){
-            TextView t=key(n,()->type(n),1);
+            TextView t="⌫".equals(n)?eraseKey(n):key(n,()->type(n),1);
             float weight="Espaço".equals(n)?3.8f:("Enter ↵".equals(n)?1.5f:1f);
             LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,dp(46),weight);
             lp.leftMargin=dp(2);lp.rightMargin=dp(2);

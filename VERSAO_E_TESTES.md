@@ -1,8 +1,11 @@
-# Versão 3.0.5
+# Versão 3.0.6 — alterações isoladas
 
-- Base preservada: v3.0.4, incluindo leitura normal, abertura do teclado e Enter do CMX.
-- `ScanAssistState.AUTO_BIPS_ENABLED = false` por escolha do operador. Motor e testes mantidos para reativação futura; gaveta protegida por feature flag. Lotes persistidos são desarmados.
-- `TimedClickGate` recebe um tempo de bloqueio configurável pelo operador, default 100 ms e limites 80 a 2000 ms. O prazo de um ciclo já aberto não muda retroativamente.
-- Em Ajustes → Avançado o botão Aplicar salva o valor e atualiza imediatamente o serviço de acessibilidade; Restaurar padrão volta aos 100 ms.
-- `TRIGGER_BOUNCE_MS = 70 ms` e deduplicação de broadcasts não foram alterados.
-- O APK ainda depende de compilação em Android Gradle Plugin/GitHub Actions e validação no CMX.
+1. `BridgeScanInputMethodService.java`: `eraseKey()` com toque único e repetição sob pressão (350 ms de espera / 70 ms entre exclusões), cancelando ao soltar e ao fechar o teclado. Funciona no botão da barra compacta e no botão do QWERTY/número.
+2. `ConferenceScreenPolicy.java`: os dois layouts de Conferência de Venda são identificados separadamente (antes do primeiro produto / cartão de produto ativo). Coordenadas relativas somente para capturas 720×1440 com título e marcador comprovados.
+3. `MlogFocusAccessibilityService.java`: classificação das telas; identificação semântica ou espacial conservadora do botão nativo à direita da câmera; pré-foco no gatilho e fallback por broadcast; processamento do código e Enter do CMX preservados.
+4. `tests/ConferenceScreenPolicyTest.java`: prova de reconhecimento, bloqueio de telas incorretas, posições relativas e geometria do par de botões.
+5. `app/build.gradle`: `versionCode 43`, `versionName 3.0.6-conferencia-apagar-continuo`.
+6. `.github/workflows/gerar-apk.yml`: artefato `MLOG-Scanner-Bridge-v306-APK`.
+7. Tempo ajustável pelo operador mantido (100 ms padrão), bipes automáticos desativados internamente.
+
+A verificação de sintaxe não é equivalente à compilação com Android SDK ou teste funcional. Homologar os dois estados em coletor antes de usar em pedidos reais.

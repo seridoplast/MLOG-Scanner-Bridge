@@ -1,38 +1,57 @@
-# MLOG Scanner Bridge v3.0.5 — Tratador + Avançado
+# MLOG Scanner Bridge v3.0.6 — Conferência de Venda + Apagar contínuo
 
-Atualização a partir da **v3.0.4** (IME reaberto por repetição, leitura física 100 ms). Esta versão **mantém intacta a leitura física com Enter do CMX** e não altera o motor de repetição bem-sucedido; apenas o desabilita temporariamente.
+Base: versão **v3.0.5**. Preservados o tratador de códigos, a bolha, o menu **Ajustes → Avançado** com bloqueio regulável pelo operador (padrão 100 ms), o Enter da leitura física pelo CMX e os bipes automáticos **ocultos/desativados no código**.
 
-## Mudanças
+## 1. Apagar ao segurar
 
-1. **Bipes automáticos temporariamente desativados e ocultos:** a interface flutuante exibe só o **Tratador de códigos**. Nenhum lote anterior é restaurado. Todo o motor N−1 e os testes permanecem preservados em `MlogFocusAccessibilityService.java`, `AutoRepeatPolicy.java`, `FloatingToolsService.java` e `tests/`.
-2. **Como reativar no futuro:** em `ScanAssistState.java`, alterar `AUTO_BIPS_ENABLED = false` para `true`, revisar e testar o aplicativo e recompilar. A seção da gaveta do painel flutuante está guardada dentro de `if(ScanAssistState.AUTO_BIPS_ENABLED)`.
-3. **Ajustes → Avançado:** o tempo de bloqueio de clique entre gatilhos físicos agora é configurável, de **80 a 2000 ms**. O padrão é **100 ms**. Informar o número, tocar em **Aplicar tempo**, ou usar **Restaurar padrão (100 ms)**.
-4. O ajuste é persistido no aparelho na preferência `click_cooldown_ms` e enviado imediatamente ao serviço de acessibilidade em execução, sem necessidade de reiniciar nem gerar novo APK. Em inicialização posterior, o serviço restaura o tempo salvo.
-5. O tempo rege somente a janela de cliques do gatilho (`TimedClickGate`). **Não altera** deduplicação de broadcasts, debounce do gatilho ou Enter do CMX.
+O botão **⌫ Apagar** da barra compacta do teclado MLOG Bridge e o **⌫** do teclado expandido agora executam:
 
-**Cuidado:** reduzir demais o tempo pode permitir outro clique antes de o Flutter concluir a leitura anterior. Testar inicialmente fora dos pedidos reais.
+- toque simples: exclui imediatamente um caractere antes do cursor ou o texto selecionado;
+- ao segurar: após **350 ms**, começa a apagar a cada **70 ms**;
+- ao soltar, cancelar o toque, arrastar o dedo para fora ou fechar o teclado: exclui nada mais e remove os callbacks pendentes;
+- fora do MLOG, o teclado continua abrindo normalmente.
 
-## Atualizar pelo CMD (Windows)
+Nenhum Enter extra é enviado por esta função.
 
-Coloque `MLOG_Scanner_Bridge_v305_Avancado_Tratador.zip` em Downloads e execute:
+## 2. Mapeamento de duas telas novas — Conferência de Venda
+
+Baseado nas capturas **720×1440** fornecidas:
+
+| Tela reconhecida | Marcador do MLOG | Botão de teclado |
+| --- | --- | --- |
+| Início da conferência | `Conferência de Venda` + `Para iniciar a conferência / bipe qualquer produto` | par câmera/teclado, **x≈68,1% / y≈46,9%** |
+| Produto aberto | `Conferência de Venda` + `BIPAR PRODUTOS` | par câmera/teclado, **x≈68,1% / y≈56,4%** |
+
+**Ordem de detecção**: botão de teclado exposto com dimensão/posição compatível → candidato clicável direito do par câmera/teclado → toque guiado somente se título, marcador da tela e proporção do aparelho forem compatíveis.
+
+Os demais layouts, inclusive **Busca da Conferência de Venda**, continuam separados e intactos. Não usamos toque por coordenadas se o estado da tela for desconhecido, nem duplicamos cliques para a mesma leitura. A abertura inicia no gatilho e a inserção pelo broadcast mantém a lógica existente. O CMX permanece responsável pelo Enter.
+
+**Atenção:** as posições são específicas do layout mostrado. Se uma atualização do MLOG mudar a disposição dos botões ou a semântica acessível, o Bridge não deverá tocar na tela desconhecida. Envie diagnóstico da tela para adaptar.
+
+## 3. Atualização no CMD
+
+Baixe `MLOG_Scanner_Bridge_v306_Conferencia_Apagar_Segurar.zip` para Downloads e execute:
 
 ```bat
 cd /d "%USERPROFILE%\Downloads\MLOG-Scanner-Bridge"
-powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v305_Avancado_Tratador.zip') -DestinationPath . -Force"
+powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v306_Conferencia_Apagar_Segurar.zip') -DestinationPath . -Force"
 git add -A
-git commit -m "Bridge v305 avancado ajustar ms e bipes ocultos"
-git push origin main && del /q "%USERPROFILE%\Downloads\MLOG_Scanner_Bridge_v305_Avancado_Tratador.zip"
+git commit -m "Bridge v306 conferencia venda e apagar segurando"
+git push origin main && del /q "%USERPROFILE%\Downloads\MLOG_Scanner_Bridge_v306_Conferencia_Apagar_Segurar.zip"
 ```
 
-No GitHub Actions, baixar o artefato `MLOG-Scanner-Bridge-v305-APK`. O ZIP somente é excluído após um `git push` bem-sucedido.
+A exclusão do ZIP só ocorre se `git push` sair com sucesso. GitHub Actions: artefato `MLOG-Scanner-Bridge-v306-APK`.
 
-## Instalar o APK pelo ADB
+Instalação ADB:
 
 ```bat
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" devices
 "%USERPROFILE%\Downloads\platform-tools\adb.exe" install -r "%USERPROFILE%\Downloads\app-debug.apk"
 ```
 
-## Validação
+## 4. Validação
 
-Os testes locais Java do controle temporal, inclusive alteração dinâmica do intervalo e verificação dos limites, passaram. Sintaxe dos Java/XML e integridade do ZIP conferidas. **O APK precisa ser compilado no GitHub Actions e testado no coletor Android 14.**
+- Teste Java puro do mapeamento de ambas as telas; testes Java anteriores preservados.
+- Verificação de sintaxe de fontes Java e análise XML.
+- Arquivo ZIP verificado.
+- **Compilação Android e validação no coletor CMX dependem do GitHub Actions e do teste físico.** Teste em pedido de homologação antes de usar em operação.

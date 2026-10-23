@@ -1,8 +1,8 @@
-# Base da alteração
+# Referências de interface v3.0.6
 
-Partindo da v3.0.4, que confirmou bipes automáticos funcionando no coletor:
+Screenshots fornecidos:
 
-- Nenhuma mudança nas rotinas de preenchimento, reabertura do IME ou envio de Enter N−1.
-- Apenas desativação condicional da funcionalidade N−1 (`ScanAssistState.AUTO_BIPS_ENABLED = false`) e remoção da gaveta da interface flutuante enquanto desativada.
-- Janela de clique da leitura física passa a ser definida pela preferência local `click_cooldown_ms`, com valor inicial de 100 ms.
-- O diagnóstico `CLICK_COOLDOWN_STARTED_MS_X` passa a reportar o intervalo configurado em cada gatilho, em vez de um texto fixo antigo.
+- `Screenshot_20261015-084418.png`, 720×1440: **Conferência de Venda** antes da primeira leitura. Botão de teclado à direita da câmera perto de (490, 675) px.
+- `Screenshot_20261015-085606.png`, 720×1440: **Conferência de Venda** com item **BIPAR PRODUTOS**; botão de teclado à direita da câmera perto de (490, 812) px.
+
+Os limites são proporcionais ao tamanho real de tela e somente considerados com a tela reconhecida. Se os textos/semântica não forem expostos na acessibilidade, será necessário um diagnóstico de um coletor real para ajustar a identificação; não executar toque incerto em qualquer posição.

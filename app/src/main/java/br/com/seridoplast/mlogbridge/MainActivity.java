@@ -536,7 +536,7 @@ public final class MainActivity extends Activity {
         button(help,"Abrir MLOG",true,this::openMlog);
     }
     private void about(){
-        title("Sobre","MLOG Scanner Bridge · v3.0.5");
+        title("Sobre","MLOG Scanner Bridge · v3.0.6");
         LinearLayout about=card();about.addView(label("Integração local",17,ink,true));
         subtitle(about,"Criado para o scanner físico CMX e o MLOG. Sem acesso à internet. Os códigos de leitura não são salvos em histórico.");
         space(about,10);
