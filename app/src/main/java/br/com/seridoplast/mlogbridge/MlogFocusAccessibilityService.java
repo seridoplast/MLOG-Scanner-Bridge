@@ -120,6 +120,12 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         super.onServiceConnected();
         instance=this;
         BridgePreferences.enableOnUpgrade(prefs());
+        updateClickCooldownMs(prefs().getInt(ScanAssistState.CLICK_COOLDOWN_MS,
+                (int)TimedClickGate.COOLDOWN_MS));
+        if(!ScanAssistState.AUTO_BIPS_ENABLED){
+            prefs().edit().putBoolean(ScanAssistState.ARMED,false)
+                    .putBoolean(ScanAssistState.BATCH,false).apply();
+        }
         // v2.3: ativar uma unica vez o pre-foco que existia desligado na v2.2.
         // A preferencia continua reversivel em Ajustes.
         if(!prefs().getBoolean("prefocus_v23_migrated",false)){
@@ -206,10 +212,16 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             prefs().edit().putBoolean("prearm_field",false).apply();
             // Versoes anteriores podiam deixar o teclado oculto pelo controlador.
             restoreKeyboard();
-            status("v3.0.4: IME reaberto por bipe; modo normal 100 ms.");
+            status("v3.0.5: leitura normal com bloqueio ajustavel; tratador disponível.");
         }catch(RuntimeException e){status("Falha ao registrar o broadcast do scanner.");}
     }
 
+    /** Atualiza o bloqueio entre gatilhos sem reiniciar a acessibilidade. */
+    boolean updateClickCooldownMs(int value){
+        boolean valid=timedClickGate.setCooldownMs(value);
+        if(valid)trace("CLICK_COOLDOWN_CONFIGURED_MS_"+value);
+        return valid;
+    }
     private SharedPreferences prefs(){return getSharedPreferences(ScanCoordinator.PREFS,MODE_PRIVATE);}
     /** So acelera quando o operador optou pelo teclado proprio E pelo modo rapido. */
     private boolean fastImeMode(){
@@ -346,7 +358,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
 
 
     /** O bloqueio de clique e SOMENTE temporal. Ao chegar um novo gatilho
-     *  APOS os 150 ms, descartamos qualquer tentativa antiga ainda aberta.
+     *  APOS o tempo configurado, descartamos qualquer tentativa antiga ainda aberta.
      *  Nenhuma leitura nem gesto antigo e reexecutado depois. */
     private void discardOldCycleOnNewTrigger(){
         // O prazo temporal deve destravar mesmo se algum callback de gesto
@@ -562,15 +574,15 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             trace("AUTO_COUNT_TRIGGER_IGNORED");
             return false; // CMX hardware permanece livre; Bridge nao toca MLOG
         }
-        // A media das confirmacoes visiveis na v2.6 foi 576 ms (12 amostras).
-        // Cooldown experimental de 100 ms: nao esperamos Enter.
+        // Bloqueio configuravel nos Ajustes Avancados; default 100 ms.
+        // Continua independente do Enter do CMX.
         if(!timedClickGate.admitTrigger(now)){
             trace("CLICK_COOLDOWN_IGNORED_REMAINING_MS_"+timedClickGate.remainingMs(now));
             return false; // nunca consumir o gatilho do CMX
         }
         discardOldCycleOnNewTrigger();
         lastTriggerPrefocus=now;
-        trace("CLICK_COOLDOWN_STARTED_150_MS");
+        trace("CLICK_COOLDOWN_STARTED_MS_"+timedClickGate.getCooldownMs());
         trace("TRIGGER_OPEN_ATTEMPT_"+info.screen);
 
         // O Flutter ainda esta abrindo um campo a partir desse mesmo gatilho.
@@ -1515,7 +1527,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     }
 
     private void armAutoCount(String code){
-        if(code==null || code.isEmpty())return;
+        // Motor preservado, mas a interface desativada nao pode armar um lote.
+        if(!ScanAssistState.AUTO_BIPS_ENABLED || code==null || code.isEmpty())return;
         android.content.SharedPreferences p=prefs();
         int quantity=ScanAssistState.clamp(p.getInt(ScanAssistState.COUNT,1));
         p.edit().putBoolean(ScanAssistState.ARMED,false).apply();

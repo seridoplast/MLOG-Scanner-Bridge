@@ -34,6 +34,22 @@ public final class TimedClickGateTest {
         check(!broadcast.admitBroadcast(9090),"broadcast-only cooldown enforced");
         check(broadcast.admitBroadcast(9100),"broadcast-only auto unlock");
         check(broadcast.reserveClick(9101),"broadcast-only second cycle click");
+        TimedClickGate adjustable = new TimedClickGate();
+        check(adjustable.getCooldownMs()==100L,"default cooldown is 100ms");
+        check(adjustable.setCooldownMs(150),"150ms accepted");
+        check(adjustable.getCooldownMs()==150L,"150ms applied");
+        check(adjustable.admitTrigger(10000),"adjusted gate trigger");
+        check(!adjustable.admitTrigger(10100),"adjusted 150ms gate blocks 100ms");
+        check(adjustable.admitTrigger(10171),"adjusted 150ms gate releases after cooldown and debounce");
+        check(adjustable.setCooldownMs(200),"200ms accepted while current cycle already started");
+        check(adjustable.admitTrigger(10350),"current cycle keeps its 150ms duration");
+        check(!adjustable.admitTrigger(10480),"new cycle obeys 200ms duration");
+        check(adjustable.admitTrigger(10551),"new cycle unlocks after 200ms");
+        check(!adjustable.setCooldownMs(79),"below minimum refused");
+        check(!adjustable.setCooldownMs(2001),"above maximum refused");
+        check(adjustable.getCooldownMs()==200L,"invalid input does not change setting");
+        check(adjustable.setCooldownMs(80),"80ms minimum accepted");
+        check(adjustable.setCooldownMs(2000),"2000ms maximum accepted");
         System.out.println("TimedClickGateTest OK: "+assertions+" assertions");
     }
 }

@@ -6,7 +6,20 @@ package br.com.seridoplast.mlogbridge;
  * Todos os horarios sao SystemClock.elapsedRealtime() no Android.
  */
 final class TimedClickGate {
-    static final long COOLDOWN_MS = 100L;
+    static final long COOLDOWN_MS = 100L; // valor inicial quando nao ha ajuste salvo
+    static final long MIN_COOLDOWN_MS = 80L;
+    static final long MAX_COOLDOWN_MS = 2000L;
+    // Ajuste em memoria; alteracoes nao modificam o prazo de um ciclo ja iniciado.
+    private long cooldownMs = COOLDOWN_MS;
+    static long validatedCooldown(long ms){
+        return (ms>=MIN_COOLDOWN_MS && ms<=MAX_COOLDOWN_MS)?ms:-1L;
+    }
+    boolean setCooldownMs(long ms){
+        if(validatedCooldown(ms)<0L)return false;
+        cooldownMs=ms;
+        return true;
+    }
+    long getCooldownMs(){return cooldownMs;}
     private static final long TRIGGER_BOUNCE_MS = 70L;
     private static final long DECODE_ASSOCIATION_MS = 500L;
     private long unlockAt;
@@ -61,7 +74,7 @@ final class TimedClickGate {
     long generation(){return cycleSerial;}
 
     private void startCycle(long now){
-        unlockAt=now+COOLDOWN_MS;
+        unlockAt=now+cooldownMs;
         clicked=false;
         broadcastConsumed=false;
         cycleSerial++;

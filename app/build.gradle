@@ -6,8 +6,8 @@ android {
         applicationId 'br.com.seridoplast.mlogbridge'
         minSdk 26
         targetSdk 35
-        versionCode 41
-        versionName '3.0.4-reabrir-teclado-100ms'
+        versionCode 42
+        versionName '3.0.5-avancado-bipes-ocultos'
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17

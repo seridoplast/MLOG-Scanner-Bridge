@@ -1,9 +1,8 @@
-# v3.0.4 — Testes e alterações
+# Versão 3.0.5
 
-- Android `versionCode=41`, `versionName=3.0.4-reabrir-teclado-100ms`.
-- Cooldown de leitura física: **100 ms** (`TimedClickGate`), validado em 27 verificações locais.
-- Bipes virtuais: **900 ms mínimos** entre Enters e **180 ms** de espera após inserir o texto; os outros passos podem aumentar a duração.
-- Teste de política: NÃO permitir envio se o teclado IME estiver invisível ou se a conexão de entrada do MLOG não estiver ativa. Verificações adicionais incluídas em `AutoRepeatPolicyTest`.
-- Reabertura: uma ação de clique por repetição; aguarda teclado visível e conexão viva, com prazo de 6 s, sem fila de ações.
-- `BarcodeCleanerTest`, `ScanQueueTest`, `ScanDuplicatePolicyTest`, `BarcodeFormatLabelTest`, `BarcodeArtifactReportTest`, `EnterReadinessPolicyTest`, `SeparatedQuantityProbeTest` e testes de tempo/repetição executados localmente.
-- **Não compilado no Android SDK neste ambiente**. A compilação e o ensaio real no MLOG são essenciais para verificar se o terceiro bipe é aceito.
+- Base preservada: v3.0.4, incluindo leitura normal, abertura do teclado e Enter do CMX.
+- `ScanAssistState.AUTO_BIPS_ENABLED = false` por escolha do operador. Motor e testes mantidos para reativação futura; gaveta protegida por feature flag. Lotes persistidos são desarmados.
+- `TimedClickGate` recebe um tempo de bloqueio configurável pelo operador, default 100 ms e limites 80 a 2000 ms. O prazo de um ciclo já aberto não muda retroativamente.
+- Em Ajustes → Avançado o botão Aplicar salva o valor e atualiza imediatamente o serviço de acessibilidade; Restaurar padrão volta aos 100 ms.
+- `TRIGGER_BOUNCE_MS = 70 ms` e deduplicação de broadcasts não foram alterados.
+- O APK ainda depende de compilação em Android Gradle Plugin/GitHub Actions e validação no CMX.

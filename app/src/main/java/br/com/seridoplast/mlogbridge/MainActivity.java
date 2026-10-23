@@ -21,6 +21,8 @@ import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
 import android.widget.CheckBox;
+import android.widget.EditText;
+import android.text.InputType;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -116,6 +118,10 @@ public final class MainActivity extends Activity {
     @Override public void onCreate(Bundle saved){
         prefs=getSharedPreferences(ScanCoordinator.PREFS,MODE_PRIVATE);
         BridgePreferences.enableOnUpgrade(prefs);
+        if(!ScanAssistState.AUTO_BIPS_ENABLED){
+            prefs.edit().putBoolean(ScanAssistState.ARMED,false)
+                .putBoolean(ScanAssistState.BATCH,false).apply();
+        }
         themeChoice=prefs.getString("theme_choice","auto");
         // Corrige preferencia que podia ter sido alterada por Enter do scanner
         // em versoes antigas. A partir de agora, apenas toque real alterna tema.
@@ -411,7 +417,7 @@ public final class MainActivity extends Activity {
         space(service,8);service.addView(serviceState);
         LinearLayout tools=card();
         tools.addView(label("Ferramentas flutuantes",17,ink,true));
-        subtitle(tools,"Tratador de caracteres invisíveis e bipes automáticos (1 bipe físico + N−1 virtuais). Ambos desligados inicialmente.");
+        subtitle(tools,"Ative o tratamento de espaços e caracteres invisíveis com a engrenagem flutuante.");
         button(tools,"Ativar / abrir botão flutuante",true,this::openFloatingTools);
         button(tools,"Desativar botão flutuante",false,()->{
             stopService(new Intent(this,FloatingToolsService.class));
@@ -441,7 +447,7 @@ public final class MainActivity extends Activity {
             prefs.edit().putBoolean("learn_trigger_armed",true).apply();
             toast("Abra o MLOG e pressione o gatilho uma vez para calibrar.");
         });
-        subtitle(ime,"Abre o campo ao apertar o gatilho. Aguarda apenas 100 ms entre toques e destrava pelo relogio, sem exigir verificacao do Enter.");
+        subtitle(ime,"Abre o campo pelo gatilho; o bloqueio em milissegundos agora pode ser ajustado em Avançado abaixo, sem recompilar o APK.");
         subtitle(ime,"As opcoes comecam ativadas. Para usar o teclado Bridge, selecione-o tambem nas configuracoes de teclado do Android. O CMX continua responsavel pelo Enter.");
         subtitle(ime,"Experimento opcional. O Android exige habilitar e escolher o teclado manualmente. No MLOG, o teclado completo se recolhe apos o Enter ou ao fechar a entrada. Fora do MLOG permanece expandido. Enter automatico exclusivo do CMX.");
         button(ime,"1. Habilitar teclado no Android",false,()->startActivity(new Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)));
@@ -453,6 +459,55 @@ public final class MainActivity extends Activity {
         boolean bridgeSelected=selectedIme!=null && selectedIme.startsWith(getPackageName()+"/");
         subtitle(ime,bridgeSelected?"Teclado Bridge selecionado no Android.":"Teclado Bridge nao esta selecionado. Modo v1.8 permanece disponivel.");
         subtitle(ime,"Para retornar ao modo estavel, desmarque a opcao e selecione Gboard. Nao precisa reinstalar a v1.8.");
+        // Controle de tempo em ms, salvo localmente e aplicado ao servico em uso.
+        LinearLayout advanced=card();
+        advanced.addView(label("Avançado",17,ink,true));
+        subtitle(advanced,"Bloqueio entre gatilhos do leitor físico. Valor salvo no coletor; não interfere nos Enters do CMX.");
+        int activeMs=prefs.getInt(ScanAssistState.CLICK_COOLDOWN_MS,
+            (int)TimedClickGate.COOLDOWN_MS);
+        TextView currentMs=label("Tempo atual: "+activeMs+" ms",14,ink,true);
+        space(advanced,12);
+        advanced.addView(currentMs);
+        LinearLayout cooldownRow=row();
+        EditText cooldownInput=new EditText(this);
+        cooldownInput.setSingleLine(true);
+        cooldownInput.setSelectAllOnFocus(true);
+        cooldownInput.setInputType(InputType.TYPE_CLASS_NUMBER);
+        cooldownInput.setText(String.valueOf(activeMs));
+        cooldownInput.setTextColor(ink);
+        cooldownInput.setHintTextColor(muted);
+        cooldownInput.setTextSize(19);
+        cooldownInput.setContentDescription("Tempo de bloqueio em milissegundos");
+        cooldownRow.addView(cooldownInput,new LinearLayout.LayoutParams(0,dp(58),1));
+        TextView units=label("ms",14,muted,true);
+        units.setPadding(dp(10),0,dp(5),0);
+        cooldownRow.addView(units);
+        space(advanced,6);
+        advanced.addView(cooldownRow);
+        subtitle(advanced,"Permitido: 80 a 2000 ms. Padrão: 100 ms. Valores menores deixam a leitura mais rápida, mas podem permitir cliques antes de o MLOG terminar.");
+        button(advanced,"Aplicar tempo",true,()->{
+            String raw=cooldownInput.getText().toString().trim();
+            int ms;
+            try{ms=Integer.parseInt(raw);}
+            catch(NumberFormatException ex){toast("Digite um número de 80 a 2000 ms.");return;}
+            if(TimedClickGate.validatedCooldown(ms)<0L){
+                toast("O tempo deve ficar entre 80 e 2000 ms.");return;
+            }
+            prefs.edit().putInt(ScanAssistState.CLICK_COOLDOWN_MS,ms).apply();
+            MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
+            if(svc!=null)svc.updateClickCooldownMs(ms);
+            currentMs.setText("Tempo atual: "+ms+" ms");
+            toast("Bloqueio atualizado para "+ms+" ms.");
+        });
+        button(advanced,"Restaurar padrão (100 ms)",false,()->{
+            int ms=(int)TimedClickGate.COOLDOWN_MS;
+            cooldownInput.setText(String.valueOf(ms));
+            prefs.edit().putInt(ScanAssistState.CLICK_COOLDOWN_MS,ms).apply();
+            MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
+            if(svc!=null)svc.updateClickCooldownMs(ms);
+            currentMs.setText("Tempo atual: "+ms+" ms");
+            toast("Bloqueio restaurado para 100 ms.");
+        });
         LinearLayout appearance=card();appearance.addView(label("Aparência",17,ink,true));
         subtitle(appearance,"Seguir o sistema ou escolher manualmente.");
         LinearLayout bar=row();LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(-1,-2);bp.topMargin=dp(14);
@@ -464,7 +519,7 @@ public final class MainActivity extends Activity {
         }
         appearance.addView(bar,bp);
         LinearLayout cmx=card();cmx.addView(label("CMX Scanner",17,ink,true));
-        subtitle(cmx,"No modo normal, CMX continua responsável pelo Enter. Nas repetições armadas, o Bridge tenta Enter pelo teclado Bridge, acessibilidade Android 14 e ação de editor, conforme disponibilidade do campo MLOG.");
+        subtitle(cmx,"O CMX continua responsável pelo Enter na leitura normal.");
     }
     private void diagnostic(){
         title("Diagnóstico","Se uma tela nao funcionar, copie este resultado.");
@@ -477,11 +532,11 @@ public final class MainActivity extends Activity {
             toast("Diagnóstico copiado. Não inclui códigos.");
         });
         LinearLayout help=card();help.addView(label("O que testar",17,ink,true));
-        subtitle(help,"v3.0.2: separação acompanha contador SEPARADO. Apenas Enter enviado não conta como produto. Na ausência de contador, a operação fica marcada como não confirmada.");
+        subtitle(help,"Leitura normal: acompanhe o tempo configurado em Ajustes → Avançado.");
         button(help,"Abrir MLOG",true,this::openMlog);
     }
     private void about(){
-        title("Sobre","MLOG Scanner Bridge · v3.0.2 beta");
+        title("Sobre","MLOG Scanner Bridge · v3.0.5");
         LinearLayout about=card();about.addView(label("Integração local",17,ink,true));
         subtitle(about,"Criado para o scanner físico CMX e o MLOG. Sem acesso à internet. Os códigos de leitura não são salvos em histórico.");
         space(about,10);

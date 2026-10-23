@@ -38,8 +38,8 @@ public final class FloatingToolsService extends Service {
     private boolean expanded;
     // Persistir posição da BOLHA, não a coordenada do painel expandido.
     private int bubbleX=-1, bubbleY=-1;
-    private boolean batchDrawerOpen;
-    private String statusText="Pronto. Ative a função desejada.";
+    private boolean batchDrawerOpen; // mantida para reativacao futura
+    private String statusText="Tratador de códigos disponível.";
     private final int background=0xff161616;
     private final int text=0xffffffff;
     private final int green=0xff20c977;
@@ -65,7 +65,9 @@ public final class FloatingToolsService extends Service {
             android.content.SharedPreferences p=ScanAssistState.prefs(this);
             bubbleX=p.getInt("floating_gear_x",dp(12));
             bubbleY=p.getInt("floating_gear_y",dp(160));
-            p.edit().putBoolean(ScanAssistState.ARMED,false).apply();
+            // Versao de teste sem bipes automaticos: nunca restaurar lote antigo.
+            p.edit().putBoolean(ScanAssistState.ARMED,false)
+                .putBoolean(ScanAssistState.BATCH,false).apply();
             draw(false);
         }
         return START_NOT_STICKY;
@@ -218,6 +220,9 @@ public final class FloatingToolsService extends Service {
                 if(status!=null)status.setText(statusText);
             });
             layout.addView(featureRow("Tratador de códigos","Remove caracteres invisíveis",cleaner,null));
+            // BIPES AUTOMATICOS TEMPORARIAMENTE OCULTOS. O bloco completo
+            // da gaveta e do motor permanece logo abaixo para reativacao futura.
+            if(ScanAssistState.AUTO_BIPS_ENABLED){
             layout.addView(separator());
             Switch batch=toggle(pref.getBoolean(ScanAssistState.BATCH,false));
             batch.setOnCheckedChangeListener((v,on)->{
@@ -286,6 +291,7 @@ public final class FloatingToolsService extends Service {
                 LinearLayout.LayoutParams fl=new LinearLayout.LayoutParams(-1,-2);
                 fl.topMargin=dp(10);drawer.addView(foot,fl);
             }
+            } // fim da secao preservada de bipes automaticos
             status=muted(statusText,12);
             LinearLayout.LayoutParams sl=new LinearLayout.LayoutParams(-1,-2);
             sl.topMargin=dp(16);layout.addView(status,sl);

@@ -10,13 +10,20 @@ final class ScanAssistState {
     static final String ARMED = "scan_assist_armed";
     static final String COUNT = "scan_assist_count";
     static final int MAX_COUNT = 100;
+    // Funcao de bipes automaticos preservada integralmente no codigo, mas
+    // TEMPORARIAMENTE DESABILITADA a pedido do usuario (v3.0.5).
+    // Para reativar no futuro, revisar os testes e alterar esta flag para true.
+    static final boolean AUTO_BIPS_ENABLED = false;
+    static final String CLICK_COOLDOWN_MS = "click_cooldown_ms";
     private ScanAssistState(){}
     static SharedPreferences prefs(Context context){
         return context.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE);
     }
     static int clamp(int n){return Math.max(1,Math.min(MAX_COUNT,n));}
     static boolean isClean(Context context){return prefs(context).getBoolean(CLEAN,false);}
-    static boolean isBatch(Context context){return prefs(context).getBoolean(BATCH,false);}
+    static boolean isBatch(Context context){
+        return AUTO_BIPS_ENABLED && prefs(context).getBoolean(BATCH,false);
+    }
     static boolean isArmed(Context context){return isBatch(context) && prefs(context).getBoolean(ARMED,false);}
     static void report(String message){FloatingToolsService.report(message);}
 }
