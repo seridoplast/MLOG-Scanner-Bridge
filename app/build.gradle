@@ -1,14 +1,44 @@
 plugins { id 'com.android.application' }
+
+// A mesma chave assina todas as builds de producao.
+// NUNCA gravar senhas ou keystore neste arquivo/repositório.
 android {
     namespace 'br.com.seridoplast.mlogbridge'
     compileSdk 35
+
     defaultConfig {
         applicationId 'br.com.seridoplast.mlogbridge'
         minSdk 26
         targetSdk 35
-        versionCode 43
-        versionName '3.0.6-conferencia-apagar-continuo'
+        // No GitHub Actions, incrementa em cada execucao do workflow.
+        // O valor local serve somente para compilacoes fora do CI.
+        def runNumber = System.getenv('GITHUB_RUN_NUMBER')
+        versionCode (runNumber ? (100000 + runNumber.toInteger()) : 44)
+        versionName '3.0.7-assinatura-fixa'
     }
+
+    signingConfigs {
+        bridgeRelease {
+            // O workflow restaura a chave numa pasta temporaria do runner.
+            // As credenciais so existem como GitHub Actions Secrets.
+            def keystorePath = System.getenv('BRIDGE_SIGNING_STORE_FILE')
+            if (keystorePath) {
+                storeFile file(keystorePath)
+                storePassword System.getenv('BRIDGE_SIGNING_STORE_PASSWORD')
+                storeType 'pkcs12'
+                keyAlias 'seridoplast_bridge'
+                keyPassword System.getenv('BRIDGE_SIGNING_STORE_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.bridgeRelease
+        }
+    }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17

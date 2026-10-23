@@ -1,7 +1,11 @@
 cd /d "%USERPROFILE%\Downloads\MLOG-Scanner-Bridge"
 
-powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v306_Conferencia_Apagar_Segurar.zip') -DestinationPath . -Force"
+powershell -NoProfile -Command "Expand-Archive -LiteralPath (Join-Path $env:USERPROFILE 'Downloads\MLOG_Scanner_Bridge_v307_Assinatura_Fixa.zip') -DestinationPath . -Force"
 
 git add -A
-git commit -m "Bridge v306 conferencia venda e apagar segurando"
-git push origin main && del /q "%USERPROFILE%\Downloads\MLOG_Scanner_Bridge_v306_Conferencia_Apagar_Segurar.zip"
+git commit -m "Bridge v307 assinatura fixa para atualizacoes"
+git push origin main && del /q "%USERPROFILE%\Downloads\MLOG_Scanner_Bridge_v307_Assinatura_Fixa.zip"
+
+REM DEPOIS DE CONFIGURAR OS DOIS GITHUB ACTIONS SECRETS, BAIXE app-release.apk.
+REM APOS A MIGRACAO INICIAL, TODAS AS ATUALIZACOES:
+REM "%USERPROFILE%\Downloads\platform-tools\adb.exe" install -r "%USERPROFILE%\Downloads\app-release.apk"

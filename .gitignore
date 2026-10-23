@@ -4,3 +4,11 @@
 /app/build/
 /local.properties
 *.iml
+
+# NUNCA enviar material de assinatura para o repositorio:
+*.jks
+*.keystore
+BRIDGE_KEYSTORE_BASE64.txt
+BRIDGE_KEYSTORE_PASSWORD.txt
+Senha_Assinatura_Bridge_GUARDAR.txt
+ASSINATURA_BRIDGE_PRIVADA/

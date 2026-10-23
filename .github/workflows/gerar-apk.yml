@@ -24,43 +24,76 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # O runner ubuntu-24.04 ja possui SDK Android 35 e Build Tools 35.
-      # Nao usamos setup-android nem sdkmanager --licenses, pois foi esta
-      # configuracao que bloqueou a primeira tentativa.
       - name: Verificar Android SDK preinstalado
         shell: bash
         run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
           test -f "$ANDROID_HOME/platforms/android-35/android.jar" || {
-            echo 'ERRO: Android SDK Platform 35 indisponivel no runner.'
-            ls -la "$ANDROID_HOME/platforms" || true
+            echo '::error::Android SDK Platform 35 indisponivel no runner.'
             exit 1
           }
           test -d "$ANDROID_HOME/build-tools/35.0.0" || {
-            echo 'ERRO: Android Build Tools 35.0.0 indisponivel no runner.'
-            ls -la "$ANDROID_HOME/build-tools" || true
+            echo '::error::Android Build Tools 35.0.0 indisponivel no runner.'
             exit 1
           }
+
+      - name: Restaurar chave corporativa de assinatura
+        shell: bash
+        env:
+          BRIDGE_KEYSTORE_BASE64: ${{ secrets.BRIDGE_KEYSTORE_BASE64 }}
+          BRIDGE_KEYSTORE_PASSWORD: ${{ secrets.BRIDGE_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$BRIDGE_KEYSTORE_BASE64" || -z "$BRIDGE_KEYSTORE_PASSWORD" ]]; then
+            echo '::error::Configure os dois GitHub Actions Secrets: BRIDGE_KEYSTORE_BASE64 e BRIDGE_KEYSTORE_PASSWORD. Consulte CONFIGURAR_ASSINATURA_FIXA.md.'
+            exit 1
+          fi
+          KEYSTORE_PATH="$RUNNER_TEMP/seridoplast-bridge-release.jks"
+          printf '%s' "$BRIDGE_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          chmod 600 "$KEYSTORE_PATH"
+          keytool -list -keystore "$KEYSTORE_PATH" -alias seridoplast_bridge -storepass:env BRIDGE_KEYSTORE_PASSWORD >/dev/null || {
+            echo '::error::Chave de assinatura invalida, senha errada ou alias ausente.'
+            exit 1
+          }
+          echo "BRIDGE_SIGNING_STORE_FILE=$KEYSTORE_PATH" >> "$GITHUB_ENV"
 
       - name: Preparar Gradle 8.11.1
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
 
-      - name: Compilar APK de testes
-        run: gradle :app:assembleDebug --no-daemon --stacktrace
+      - name: Compilar APK de producao com assinatura fixa
+        env:
+          BRIDGE_SIGNING_STORE_PASSWORD: ${{ secrets.BRIDGE_KEYSTORE_PASSWORD }}
+        run: gradle :app:assembleRelease --no-daemon --stacktrace
 
-      - name: Validar APK gerado
+      - name: Verificar APK e certificado de assinatura
         shell: bash
         run: |
-          test -s app/build/outputs/apk/debug/app-debug.apk
-          unzip -t app/build/outputs/apk/debug/app-debug.apk
-          sha256sum app/build/outputs/apk/debug/app-debug.apk
+          set -euo pipefail
+          APK='app/build/outputs/apk/release/app-release.apk'
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
+          CERT=$(
+            "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$APK" |
+            awk '/Signer #1 certificate SHA-256 digest:/ {print $NF; exit}'
+          )
+          EXPECTED='8151376de33abdee4c98cda4c88c102a8b9165a0db7edc18b1ad0403a7222fae'
+          if [[ "${CERT,,}" != "$EXPECTED" ]]; then
+            echo '::error::O APK nao foi assinado com a chave corporativa esperada.'
+            exit 1
+          fi
+          echo "Assinatura verificada. SHA-256 do certificado: $CERT"
+          sha256sum "$APK"
 
-      - name: Publicar APK para download
+      - name: Publicar APK assinado para download
         uses: actions/upload-artifact@v4
         with:
-          name: MLOG-Scanner-Bridge-v306-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: MLOG-Scanner-Bridge-v307-APK-ASSINADO
+          path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Limpar chave temporaria do runner
+        if: always()
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/seridoplast-bridge-release.jks"
