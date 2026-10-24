@@ -122,7 +122,7 @@ public final class FloatingToolsService extends Service {
         LinearLayout words=new LinearLayout(this);words.setOrientation(LinearLayout.VERTICAL);
         TextView title=label(name,15,true);words.addView(title);
         if(sub!=null && !sub.isEmpty()){
-            TextView description=muted(sub,11);
+            TextView description=muted(sub,10);
             LinearLayout.LayoutParams detail=new LinearLayout.LayoutParams(-1,-2);
             detail.topMargin=dp(3);words.addView(description,detail);
         }
@@ -219,7 +219,7 @@ public final class FloatingToolsService extends Service {
                 statusText=on?"Tratador ativo":"Tratador desativado";
                 if(status!=null)status.setText(statusText);
             });
-            layout.addView(featureRow("Tratador de códigos","Remove caracteres invisíveis",cleaner,null));
+            layout.addView(featureRow("Tratador de códigos","Limpa caracteres invisíveis",cleaner,null));
             // BIPES AUTOMATICOS TEMPORARIAMENTE OCULTOS. O bloco completo
             // da gaveta e do motor permanece logo abaixo para reativacao futura.
             if(ScanAssistState.AUTO_BIPS_ENABLED){

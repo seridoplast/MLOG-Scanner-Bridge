@@ -7,12 +7,11 @@ package br.com.seridoplast.mlogbridge;
  */
 final class TimedClickGate {
     static final long COOLDOWN_MS = 100L; // valor inicial quando nao ha ajuste salvo
-    static final long MIN_COOLDOWN_MS = 80L;
-    static final long MAX_COOLDOWN_MS = 2000L;
+    // O ajuste aceita qualquer inteiro nao negativo representavel pelo Android.
     // Ajuste em memoria; alteracoes nao modificam o prazo de um ciclo ja iniciado.
     private long cooldownMs = COOLDOWN_MS;
     static long validatedCooldown(long ms){
-        return (ms>=MIN_COOLDOWN_MS && ms<=MAX_COOLDOWN_MS)?ms:-1L;
+        return (ms>=0L && ms<=Integer.MAX_VALUE)?ms:-1L;
     }
     boolean setCooldownMs(long ms){
         if(validatedCooldown(ms)<0L)return false;
@@ -23,6 +22,7 @@ final class TimedClickGate {
     private static final long TRIGGER_BOUNCE_MS = 70L;
     private static final long DECODE_ASSOCIATION_MS = 500L;
     private long unlockAt;
+    private long clickExpiresAt;
     private long physicalTriggerAt = -1L;
     private boolean physicalTriggerAllowed = true;
     private boolean broadcastConsumed;
@@ -61,10 +61,11 @@ final class TimedClickGate {
 
     /** Apenas uma tentativa nativa de clique por ciclo. */
     boolean reserveClick(long now){
-        if(clicked || cycleSerial==0 || now>=unlockAt)return false;
-        // Acao pode acontecer apos o fim do prazo se houver atraso do Flutter.
-        // Nao executar gesto velho depois da janela em que foi solicitado.
-        if(now>=unlockAt)return false;
+        if(clicked || cycleSerial==0)return false;
+        // O prazo para realizar o unico toque por leitura e independente
+        // do intervalo entre bipes. Isso permite 0/1/10 ms sem bloquear
+        // o primeiro toque, mas evita executa-lo indefinidamente depois.
+        if(now>=clickExpiresAt)return false;
         clicked=true;
         return true;
     }
@@ -75,6 +76,7 @@ final class TimedClickGate {
 
     private void startCycle(long now){
         unlockAt=now+cooldownMs;
+        clickExpiresAt=now+Math.max(COOLDOWN_MS,cooldownMs);
         clicked=false;
         broadcastConsumed=false;
         cycleSerial++;

@@ -195,7 +195,7 @@ public final class MainActivity extends Activity {
         content.addView(c,cp);return c;
     }
     private void subtitle(LinearLayout c,String value){
-        TextView t=label(value,13,muted,false);LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
+        TextView t=label(value,12,muted,false);LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
         lp.topMargin=dp(6);c.addView(t,lp);
     }
     private TextView action(String name,boolean filled,Runnable callback){
@@ -262,7 +262,7 @@ public final class MainActivity extends Activity {
     private void title(String s,String explanation){
         TextView t=label(s,27,ink,true);content.addView(t);
         if(explanation!=null && !explanation.isEmpty()){
-            TextView e=label(explanation,14,muted,false);
+            TextView e=label(explanation,12,muted,false);
             LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.topMargin=dp(5);lp.bottomMargin=dp(22);
             content.addView(e,lp);
         }else space(content,22);
@@ -362,8 +362,8 @@ public final class MainActivity extends Activity {
         boolean complete=access && enabled && selected && floating;
         setupWarningCard.setVisibility(complete?View.GONE:View.VISIBLE);
         setupWarningLabel.setText(complete?"Tudo configurado.":
-            "Concluídas: "+((access?1:0)+(enabled?1:0)+(selected?1:0)+(floating?1:0))+
-            "/4. Toque nas pendentes; cada autorização fica verde automaticamente.");
+            "Ativado: "+((access?1:0)+(enabled?1:0)+(selected?1:0)+(floating?1:0))+
+            "/4. Toque nas pendências.");
     }
     private void maybeShowFirstSetupDialog(){
         if(prefs.getBoolean("first_setup_prompt_v302",false))return;
@@ -371,10 +371,8 @@ public final class MainActivity extends Activity {
         if(missingRequiredSetup().isEmpty())return;
         new AlertDialog.Builder(this)
             .setTitle("Configurar MLOG Scanner Bridge")
-            .setMessage("Para funcionar corretamente, o Bridge precisa de três autorizações: " +
-                "acessibilidade, teclado Bridge habilitado/selecionado e exibição do botão flutuante. " +
-                "O Android precisa da sua confirmação em cada etapa. " +
-                "Um aviso vermelho continuará visível enquanto faltar alguma autorização.")
+            .setMessage("Ative Acessibilidade, Teclado Bridge e Botão flutuante. " +
+                "Confirme as permissões no Android.")
             .setPositiveButton("Começar",(dialog,which)->openAccessibilitySettings())
             .setNegativeButton("Depois",(dialog,which)->{})
             .show();
@@ -382,7 +380,7 @@ public final class MainActivity extends Activity {
 
     private void home(){
         showSetupWarning();
-        title("Leitura de códigos","Aperte o gatilho físico para ver o valor decodificado, o formato e possíveis caracteres invisíveis.");
+        title("Leitura de códigos","Bipe para testar o leitor.");
         LinearLayout sample=card();
         TextView statusLabel=label("TESTE DO SCANNER",11,muted,true);sample.addView(statusLabel);
         space(sample,20);
@@ -410,14 +408,13 @@ public final class MainActivity extends Activity {
             BarcodeArtifactReport.describe(lastSample).startsWith("Atenção:")?0xffd97706:muted);
         sample.addView(barcodeArtifactStatus);
         space(sample,18);
-        subtitle(sample,"O código acima é o conteúdo lido. Code 39, EAN, QR Code etc. só podem ser identificados com segurança se o CMX transmitir a simbologia; o mesmo texto pode existir em padrões distintos.");
         LinearLayout service=card();
         service.addView(label("Serviço",17,ink,true));
         serviceState=label("Verificando acessibilidade...",14,muted,false);
         space(service,8);service.addView(serviceState);
         LinearLayout tools=card();
         tools.addView(label("Ferramentas flutuantes",17,ink,true));
-        subtitle(tools,"Ative o tratamento de espaços e caracteres invisíveis com a engrenagem flutuante.");
+        subtitle(tools,"Tratador de caracteres e ajustes rápidos.");
         button(tools,"Ativar / abrir botão flutuante",true,this::openFloatingTools);
         button(tools,"Desativar botão flutuante",false,()->{
             stopService(new Intent(this,FloatingToolsService.class));
@@ -434,11 +431,10 @@ public final class MainActivity extends Activity {
         title("Ajustes","Preferências de leitura e aparência.");
         LinearLayout read=card();read.addView(label("Leitura",17,ink,true));
         check(read,"Leitura assistida","enabled",true);
-        subtitle(read,"O Bridge abre e preenche o campo do MLOG. O CMX faz o Enter.");
+        subtitle(read,"Abre o campo e envia o código ao MLOG.");
         // Preparacao antecipada removida: era a causa de campo abrindo antes do bipe.
         check(read,"Toque guiado (telas reconhecidas)","guided_taps",true);
         check(read,"Detectar teclado de produtos","layout_fallback",true);
-        subtitle(read,"Foco automatico da v2.3 preservado. Confirmacao automatica do Bridge removida.");
         LinearLayout ime=card(); ime.addView(label("Teclado Bridge (experimental)",17,ink,true));
         check(ime,"Usar teclado Bridge (compacto)","experimental_bridge_ime",true);
         check(ime,"Leitura rápida (teste)","fast_ime_mode",true);
@@ -447,9 +443,7 @@ public final class MainActivity extends Activity {
             prefs.edit().putBoolean("learn_trigger_armed",true).apply();
             toast("Abra o MLOG e pressione o gatilho uma vez para calibrar.");
         });
-        subtitle(ime,"Abre o campo pelo gatilho; o bloqueio em milissegundos agora pode ser ajustado em Avançado abaixo, sem recompilar o APK.");
-        subtitle(ime,"As opcoes comecam ativadas. Para usar o teclado Bridge, selecione-o tambem nas configuracoes de teclado do Android. O CMX continua responsavel pelo Enter.");
-        subtitle(ime,"Experimento opcional. O Android exige habilitar e escolher o teclado manualmente. No MLOG, o teclado completo se recolhe apos o Enter ou ao fechar a entrada. Fora do MLOG permanece expandido. Enter automatico exclusivo do CMX.");
+        subtitle(ime,"Ative e selecione o teclado Bridge nas configurações do Android.");
         button(ime,"1. Habilitar teclado no Android",false,()->startActivity(new Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)));
         button(ime,"2. Selecionar teclado / voltar ao Gboard",true,()->{
             android.view.inputmethod.InputMethodManager imm=(android.view.inputmethod.InputMethodManager)getSystemService(Context.INPUT_METHOD_SERVICE);
@@ -457,12 +451,11 @@ public final class MainActivity extends Activity {
         });
         String selectedIme=Settings.Secure.getString(getContentResolver(),Settings.Secure.DEFAULT_INPUT_METHOD);
         boolean bridgeSelected=selectedIme!=null && selectedIme.startsWith(getPackageName()+"/");
-        subtitle(ime,bridgeSelected?"Teclado Bridge selecionado no Android.":"Teclado Bridge nao esta selecionado. Modo v1.8 permanece disponivel.");
-        subtitle(ime,"Para retornar ao modo estavel, desmarque a opcao e selecione Gboard. Nao precisa reinstalar a v1.8.");
+        subtitle(ime,bridgeSelected?"Teclado Bridge selecionado.":"Teclado Bridge não selecionado.");
         // Controle de tempo em ms, salvo localmente e aplicado ao servico em uso.
         LinearLayout advanced=card();
         advanced.addView(label("Avançado",17,ink,true));
-        subtitle(advanced,"Bloqueio entre gatilhos do leitor físico. Valor salvo no coletor; não interfere nos Enters do CMX.");
+        subtitle(advanced,"Intervalo entre leituras. 0 ms desativa o bloqueio por tempo.");
         int activeMs=prefs.getInt(ScanAssistState.CLICK_COOLDOWN_MS,
             (int)TimedClickGate.COOLDOWN_MS);
         TextView currentMs=label("Tempo atual: "+activeMs+" ms",14,ink,true);
@@ -484,20 +477,20 @@ public final class MainActivity extends Activity {
         cooldownRow.addView(units);
         space(advanced,6);
         advanced.addView(cooldownRow);
-        subtitle(advanced,"Permitido: 80 a 2000 ms. Padrão: 100 ms. Valores menores deixam a leitura mais rápida, mas podem permitir cliques antes de o MLOG terminar.");
+        subtitle(advanced,"0 ou mais. Padrão: 100 ms. Valores muito baixos podem duplicar leituras.");
         button(advanced,"Aplicar tempo",true,()->{
             String raw=cooldownInput.getText().toString().trim();
             int ms;
             try{ms=Integer.parseInt(raw);}
-            catch(NumberFormatException ex){toast("Digite um número de 80 a 2000 ms.");return;}
+            catch(NumberFormatException ex){toast("Informe um número inteiro de 0 ms ou mais.");return;}
             if(TimedClickGate.validatedCooldown(ms)<0L){
-                toast("O tempo deve ficar entre 80 e 2000 ms.");return;
+                toast("Use um valor de 0 ms ou mais.");return;
             }
             prefs.edit().putInt(ScanAssistState.CLICK_COOLDOWN_MS,ms).apply();
             MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
             if(svc!=null)svc.updateClickCooldownMs(ms);
             currentMs.setText("Tempo atual: "+ms+" ms");
-            toast("Bloqueio atualizado para "+ms+" ms.");
+            toast("Tempo: "+ms+" ms.");
         });
         button(advanced,"Restaurar padrão (100 ms)",false,()->{
             int ms=(int)TimedClickGate.COOLDOWN_MS;
@@ -509,7 +502,6 @@ public final class MainActivity extends Activity {
             toast("Bloqueio restaurado para 100 ms.");
         });
         LinearLayout appearance=card();appearance.addView(label("Aparência",17,ink,true));
-        subtitle(appearance,"Seguir o sistema ou escolher manualmente.");
         LinearLayout bar=row();LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(-1,-2);bp.topMargin=dp(14);
         for(String[] option:new String[][]{{"auto","Sistema"},{"dark","Escuro"},{"light","Claro"}}){
             boolean selected=option[0].equals(themeChoice);
@@ -518,11 +510,9 @@ public final class MainActivity extends Activity {
             bar.addView(v,op);
         }
         appearance.addView(bar,bp);
-        LinearLayout cmx=card();cmx.addView(label("CMX Scanner",17,ink,true));
-        subtitle(cmx,"O CMX continua responsável pelo Enter na leitura normal.");
     }
     private void diagnostic(){
-        title("Diagnóstico","Se uma tela nao funcionar, copie este resultado.");
+        title("Diagnóstico","Copie o último evento.");
         LinearLayout card=card();card.addView(label("Último evento",17,ink,true));
         lastStatus=label(prefs.getString("last_status","Nenhum diagnóstico ainda."),14,muted,false);
         lastStatus.setTextIsSelectable(true);space(card,11);card.addView(lastStatus);
@@ -531,20 +521,16 @@ public final class MainActivity extends Activity {
             if(m!=null)m.setPrimaryClip(android.content.ClipData.newPlainText("MLOG Bridge diagnóstico",lastStatus.getText()));
             toast("Diagnóstico copiado. Não inclui códigos.");
         });
-        LinearLayout help=card();help.addView(label("O que testar",17,ink,true));
-        subtitle(help,"Leitura normal: acompanhe o tempo configurado em Ajustes → Avançado.");
-        button(help,"Abrir MLOG",true,this::openMlog);
+        button(card,"Abrir MLOG",true,this::openMlog);
     }
     private void about(){
-        title("Sobre","MLOG Scanner Bridge · v3.0.6");
+        title("Sobre","MLOG Scanner Bridge · v3.1.2");
         LinearLayout about=card();about.addView(label("Integração local",17,ink,true));
-        subtitle(about,"Criado para o scanner físico CMX e o MLOG. Sem acesso à internet. Os códigos de leitura não são salvos em histórico.");
-        space(about,10);
-        subtitle(about,"Acessibilidade limitada ao pacote do MLOG. Toques automatizados e campos Flutter exigem testes no coletor.");
+        subtitle(about,"Integração CMX + MLOG. Sem histórico dos códigos.");
         LinearLayout control=card();control.addView(label("Permissões",17,ink,true));
         button(control,"Informações do app",false,()->startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName()))));
         button(control,"Acessibilidade",false,()->startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
-        subtitle(control,"O Android precisa autorizar o serviço. Não desative o Play Protect para usar o Bridge.");
+        subtitle(control,"Autorize a acessibilidade nas configurações.");
     }
     private void check(LinearLayout dest,String text,String key,boolean fallback){
         CheckBox b=new CheckBox(this);b.setButtonTintList(android.content.res.ColorStateList.valueOf(ink));

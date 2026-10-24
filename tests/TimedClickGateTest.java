@@ -45,11 +45,28 @@ public final class TimedClickGateTest {
         check(adjustable.admitTrigger(10350),"current cycle keeps its 150ms duration");
         check(!adjustable.admitTrigger(10480),"new cycle obeys 200ms duration");
         check(adjustable.admitTrigger(10551),"new cycle unlocks after 200ms");
-        check(!adjustable.setCooldownMs(79),"below minimum refused");
-        check(!adjustable.setCooldownMs(2001),"above maximum refused");
-        check(adjustable.getCooldownMs()==200L,"invalid input does not change setting");
-        check(adjustable.setCooldownMs(80),"80ms minimum accepted");
-        check(adjustable.setCooldownMs(2000),"2000ms maximum accepted");
+        check(adjustable.setCooldownMs(79),"below old minimum accepted");
+        check(adjustable.setCooldownMs(2001),"above old maximum accepted");
+        check(adjustable.setCooldownMs(Integer.MAX_VALUE),"maximum supported int accepted");
+        check(!adjustable.setCooldownMs(-1),"negative value rejected");
+        check(adjustable.getCooldownMs()==Integer.MAX_VALUE,"invalid input does not change setting");
+        check(adjustable.setCooldownMs(0),"zero disables cooldown");
+        TimedClickGate zero = new TimedClickGate();
+        check(zero.setCooldownMs(0),"zero accepted");
+        check(zero.admitTrigger(1000),"zero trigger admitted");
+        check(zero.reserveClick(1000),"one click still possible with zero cooldown");
+        check(!zero.reserveClick(1001),"no duplicate click within same cycle");
+        check(zero.admitTrigger(1100),"next trigger admitted without cooldown");
+        check(zero.admitBroadcast(1110),"broadcast of next trigger admitted");
+        check(zero.reserveClick(1120),"click of next cycle admitted");
+        TimedClickGate one = new TimedClickGate();
+        check(one.setCooldownMs(1),"1 ms accepted");
+        check(one.admitTrigger(3000),"1 ms trigger accepted");
+        check(one.reserveClick(3050),"native click still possible within 100ms at 1ms setting");
+        check(!one.reserveClick(3051),"no second click even with 1ms setting");
+        check(adjustable.setCooldownMs(1),"1 ms accepted");
+        check(adjustable.setCooldownMs(80),"80 ms accepted");
+        check(adjustable.setCooldownMs(2000),"2000 ms accepted");
         System.out.println("TimedClickGateTest OK: "+assertions+" assertions");
     }
 }
