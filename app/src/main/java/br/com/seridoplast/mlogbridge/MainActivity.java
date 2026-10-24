@@ -597,6 +597,9 @@ public final class MainActivity extends Activity {
     private void toast(String text){Toast.makeText(this,text,Toast.LENGTH_SHORT).show();}
     @Override protected void onResume(){
         super.onResume();
+        BridgeUpdater.schedule(this);
+        new Thread(() -> BridgeUpdater.check(getApplicationContext()), "bridge-update-start").start();
+        if(Build.VERSION.SDK_INT>=33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS")!=android.content.pm.PackageManager.PERMISSION_GRANTED) requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"},778);
         IntentFilter f=new IntentFilter();for(String a:ScannerProtocol.ACTIONS)f.addAction(a);
         try{
             if(Build.VERSION.SDK_INT>=33)registerReceiver(scannerTest,f,Context.RECEIVER_EXPORTED);

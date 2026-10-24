@@ -95,6 +95,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private int workGeneration;
     private long lastEventProbe;
     private long lastEnterEventProbe;
+    private long lastHardwareEnterAt;
+    private boolean conferenceFallbackAttempted;
     private long currentScanStartedAt;
     private boolean awaitingEnterConfirmation;
     private boolean configuredFastEvents;
@@ -281,6 +283,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         // Novo gatilho admitido pode cancelar um ciclo anterior (ver onKeyEvent).
         if(!scanQueue.isIdle()){
             trace("SCAN_DISCARDED_BUSY_NO_QUEUE");
+            status("Leitura muito rapida: aguarde a confirmacao no MLOG antes do proximo bipe.");
             return;
         }
         if(ScanAssistState.isArmed(this) && !autoCountRunning)armAutoCount(code);
@@ -529,6 +532,10 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
      * o botao do MLOG pode funcionar como alternancia e fechar a entrada.
      */
     @Override protected boolean onKeyEvent(KeyEvent event){
+        if(event!=null && event.getAction()==KeyEvent.ACTION_UP &&
+           (event.getKeyCode()==KeyEvent.KEYCODE_ENTER ||
+            event.getKeyCode()==KeyEvent.KEYCODE_NUMPAD_ENTER))
+            lastHardwareEnterAt=SystemClock.elapsedRealtime();
         // O CMX pode entregar Enter ao Android em separado do broadcast.
         // NUNCA consumimos essa tecla; servira para diagnosticar a primeira
         // confirmacao sem reemitir Enter.
@@ -1170,6 +1177,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         final long token=++enterAttempt;
         awaitingEnterConfirmation=true;
         directEnterSent=false;
+        conferenceFallbackAttempted=false;
         confirmStartedAt=SystemClock.elapsedRealtime();
         trace("CMX_ENTER_PASSIVE_WAIT");
         main.postDelayed(()->observeCmxConfirmation(expected,token),40);
@@ -1201,7 +1209,25 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             finishQueuedScan("campo_mudou");return;
         }
         long waited=SystemClock.elapsedRealtime()-confirmStartedAt;
-        if(waited>=1100){
+        // Conferencia: recuperacao unica se o CMX nao enviou Enter e o
+        // codigo continua no mesmo editor. Nunca repetir automaticamente.
+        // Aguardar o wedge fisico antes de tentar, evitando dois Enters.
+        if(!conferenceFallbackAttempted && waited>=650 &&
+           ConferenceScreenPolicy.isMapped(info.screen) &&
+           lastHardwareEnterAt<confirmStartedAt && editor.isFocused()){
+            conferenceFallbackAttempted=true;
+            boolean sent=BridgeScanInputMethodService.sendEnterForAutoCount();
+            if(!sent)sent=sendAutoEnterByAccessibility();
+            if(!sent && Build.VERSION.SDK_INT>=30 &&
+               supports(editor,AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.getId())){
+                try{sent=editor.performAction(
+                    AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.getId());}
+                catch(RuntimeException ignored){}
+            }
+            trace(sent?"CONFERENCE_ENTER_FALLBACK_SENT":"CONFERENCE_ENTER_FALLBACK_UNAVAILABLE");
+            if(sent)status("Enter da conferencia enviado pelo Bridge; verificando MLOG.");
+        }
+        if(waited>=1500){
             trace("CMX_ENTER_NOT_OBSERVED");
             status("Codigo preenchido; Enter do CMX nao confirmado. Confira no MLOG.");
             finishQueuedScan("sem_confirmacao_cmx");return;
