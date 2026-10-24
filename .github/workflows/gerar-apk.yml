@@ -70,9 +70,12 @@ jobs:
             app/src/main/java/br/com/seridoplast/mlogbridge/ConferenceScreenPolicy.java \
             app/src/main/java/br/com/seridoplast/mlogbridge/BridgeEnterPolicy.java \
             tests/ConferenceScreenPolicyTest.java \
-            tests/BridgeEnterPolicyTest.java
+            tests/BridgeEnterPolicyTest.java \
+            app/src/main/java/br/com/seridoplast/mlogbridge/DirectScanPolicy.java \
+            tests/DirectScanPolicyTest.java
           java -cp /tmp/bridge-test br.com.seridoplast.mlogbridge.ConferenceScreenPolicyTest
           java -cp /tmp/bridge-test br.com.seridoplast.mlogbridge.BridgeEnterPolicyTest
+          java -cp /tmp/bridge-test br.com.seridoplast.mlogbridge.DirectScanPolicyTest
 
       - name: Compilar APK de producao com assinatura fixa
         env:

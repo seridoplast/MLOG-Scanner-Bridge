@@ -437,15 +437,19 @@ public final class MainActivity extends Activity {
         check(read,"Detectar teclado de produtos","layout_fallback",true);
         LinearLayout enter=card();
         enter.addView(label("Enter da conferência",17,ink,true));
+        final boolean[] updatingEnterToggle={false};
         CheckBox ownEnter=new CheckBox(this);
         ownEnter.setButtonTintList(android.content.res.ColorStateList.valueOf(ink));
         ownEnter.setText("Enviar Enter pelo Bridge (teste)");
         ownEnter.setTextColor(ink);
         ownEnter.setTextSize(14);
         ownEnter.setChecked(prefs.getBoolean(BridgeEnterPolicy.PREFERENCE,false));
+        ownEnter.setEnabled(!prefs.getBoolean(DirectScanPolicy.PREF,false));
         ownEnter.setOnCheckedChangeListener((button,checked)->{
+            if(updatingEnterToggle[0])return;
             if(!checked){
-                prefs.edit().putBoolean(BridgeEnterPolicy.PREFERENCE,false).apply();
+                prefs.edit().putBoolean(BridgeEnterPolicy.PREFERENCE,false)
+                    .putBoolean(DirectScanPolicy.PREF,false).apply();
                 MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
                 if(svc!=null)svc.refreshEventThrottle();
                 toast("Enter próprio desativado.");
@@ -465,7 +469,53 @@ public final class MainActivity extends Activity {
                 .show();
         });
         enter.addView(ownEnter);
-        subtitle(enter,"CMX em broadcast puro; acessibilidade do Bridge ativa.");
+        subtitle(enter,"Use sem sufixo Enter no CMX/assistente.");
+        LinearLayout directCard=card();
+        directCard.addView(label("Leitor direto (experimental)",17,ink,true));
+        CheckBox direct=new CheckBox(this);
+        direct.setButtonTintList(android.content.res.ColorStateList.valueOf(ink));
+        direct.setText("Somente transmissão do scanner");
+        direct.setTextColor(ink);
+        direct.setTextSize(14);
+        direct.setChecked(prefs.getBoolean(DirectScanPolicy.PREF,false));
+        direct.setOnCheckedChangeListener((button,checked)->{
+            if(!checked){
+                prefs.edit().putBoolean(DirectScanPolicy.PREF,false)
+                    .putBoolean(BridgeEnterPolicy.PREFERENCE,false).apply();
+                updatingEnterToggle[0]=true;
+                ownEnter.setChecked(false);
+                updatingEnterToggle[0]=false;
+                ownEnter.setEnabled(true);
+                toast("Modo direto desligado.");
+                return;
+            }
+            new AlertDialog.Builder(this)
+                .setTitle("Leitor direto - teste")
+                .setMessage("No Assistente de Digitalizacao: DESLIGUE Saida de Foco e Cobertura de Foco; mantenha Saida por Transmissao LIGADA; configure a Acao de Transmissao para " +
+                    DirectScanPolicy.ACTION + " e o rotulo do codigo para " + DirectScanPolicy.EXTRA +
+                    ". Desligue tambem Enter/sufixo do CMX. Sem estes ajustes o Bridge nao recebe dados ou pode duplicar. Teste fora de pedidos reais.")
+                .setPositiveButton("Ativar teste",(dialog,which)->{
+                    prefs.edit().putBoolean(DirectScanPolicy.PREF,true)
+                        .putBoolean(BridgeEnterPolicy.PREFERENCE,true).apply();
+                    updatingEnterToggle[0]=true;
+                    ownEnter.setChecked(true);
+                    updatingEnterToggle[0]=false;
+                    ownEnter.setEnabled(false);
+                    MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
+                    if(svc!=null)svc.refreshEventThrottle();
+                    toast("Somente canal direto; Enter do Bridge.");
+                })
+                .setNegativeButton("Cancelar",(dialog,which)->direct.setChecked(false))
+                .setOnCancelListener(dialog->direct.setChecked(false))
+                .show();
+        });
+        directCard.addView(direct);
+        subtitle(directCard,"Broadcast exclusivo, sem digitacao do fabricante.");
+        button(directCard,"Abrir Assistente de Digitalizacao",false,()->{
+            Intent launch=getPackageManager().getLaunchIntentForPackage("com.pda.scanassist");
+            if(launch!=null)startActivity(launch);
+            else toast("Abra o Assistente de Digitalizacao manualmente.");
+        });
         LinearLayout ime=card(); ime.addView(label("Teclado Bridge (experimental)",17,ink,true));
         check(ime,"Usar teclado Bridge (compacto)","experimental_bridge_ime",true);
         check(ime,"Leitura rápida (teste)","fast_ime_mode",true);

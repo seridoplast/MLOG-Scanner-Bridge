@@ -8,7 +8,7 @@ final class BridgeEnterPolicy {
     static boolean active(boolean setting){return setting;}
     static boolean shouldAttempt(boolean ownMode,String screen,long elapsed,
         boolean cmxEnterObserved,boolean editorFocused,boolean verified){
-        return ownMode && ConferenceScreenPolicy.isMapped(screen) && verified &&
+        return ownMode && (ConferenceScreenPolicy.isMapped(screen) || "separacao".equals(screen)) && verified &&
             elapsed>=DELAY_MS && !cmxEnterObserved && editorFocused;
     }
 }

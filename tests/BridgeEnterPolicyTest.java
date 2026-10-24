@@ -10,7 +10,8 @@ public final class BridgeEnterPolicyTest {
         ok(!BridgeEnterPolicy.shouldAttempt(true,c,200,true,true,true),"CMX observed");
         ok(!BridgeEnterPolicy.shouldAttempt(true,c,200,false,false,true),"focus required");
         ok(!BridgeEnterPolicy.shouldAttempt(true,c,200,false,true,false),"screen verified");
-        ok(!BridgeEnterPolicy.shouldAttempt(true,"separacao",200,false,true,true),"unmapped screen");
+        ok(BridgeEnterPolicy.shouldAttempt(true,"separacao",200,false,true,true),"separation verified direct");
+        ok(!BridgeEnterPolicy.shouldAttempt(true,"separacao",200,false,true,false),"separation not verified");
         ok(ConferenceScreenPolicy.isMapped(c),"entry recognized");
         ok(ConferenceScreenPolicy.isStateVerified(c,true,false,true),"entry title + bipar");
         ok(!ConferenceScreenPolicy.isStateVerified(c,false,false,true),"entry no title");

@@ -176,7 +176,15 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 if(!ScanCoordinator.isActive(MlogFocusAccessibilityService.this))return;
                 // Logar apenas a ORIGEM do broadcast, nunca o codigo lido.
                 final String action=intent==null?null:intent.getAction();
-                final String source=ScannerProtocol.ACTION_CMX.equals(action)?"CMX":
+                final boolean directMode=prefs().getBoolean(DirectScanPolicy.PREF,false);
+                if(!DirectScanPolicy.accept(action,directMode)){
+                    // Descartar CMX/HIK quando o operador habilitou o canal
+                    // exclusivo: nunca deixar duas fontes escreverem no Flutter.
+                    trace("SCAN_SOURCE_IGNORED_NON_EXCLUSIVE");
+                    return;
+                }
+                final String source=ScannerProtocol.ACTION_DIRECT.equals(action)?"DIRECT":
+                        ScannerProtocol.ACTION_CMX.equals(action)?"CMX":
                         ScannerProtocol.ACTION_HIK.equals(action)?"HIK":
                         ScannerProtocol.ACTION_GENERIC.equals(action)?"GENERIC":"UNKNOWN";
                 // Cada gatilho admitido permite apenas UMA leitura decodificada.
@@ -190,8 +198,11 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 // Se o hardware nao expuser o KeyEvent do gatilho, o broadcast
                 // inicia um ciclo novo. Nao deixar pendente um ciclo antigo.
                 if(timedClickGate.generation()!=previousGateGeneration){
-                    discardOldCycleOnNewTrigger();
-                    trace("BROADCAST_REARM_NEW_CYCLE");
+                    // O modo exclusivo nao pode cancelar um Enter pendente
+                    // apenas porque chegou novo bipe. Descarta o bipe ocupado
+                    // com aviso em vez de interromper/duplicar a confirmacao.
+                    if(!directMode)discardOldCycleOnNewTrigger();
+                    trace(directMode?"DIRECT_BROADCAST_NEW_CYCLE":"BROADCAST_REARM_NEW_CYCLE");
                 }
                 if(!ScanCoordinator.accept(code,fastImeMode())){
                     if(code!=null && !code.isEmpty()) trace("BROADCAST_SUPPRESSED_"+source);
@@ -598,13 +609,20 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             trace("AUTO_COUNT_TRIGGER_IGNORED");
             return false; // CMX hardware permanece livre; Bridge nao toca MLOG
         }
+        // No modo direto, o disparo e tratado SOMENTE quando chega o codigo.
+        // Nao clicar nem rearmar duas vezes no botao antes da decodificacao.
+        if(prefs().getBoolean(DirectScanPolicy.PREF,false)){
+            trace("DIRECT_TRIGGER_PASSIVE_HARDWARE");
+            return false;
+        }
         // Bloqueio configuravel nos Ajustes Avancados; default 100 ms.
         // Continua independente do Enter do CMX.
         if(!timedClickGate.admitTrigger(now)){
             trace("CLICK_COOLDOWN_IGNORED_REMAINING_MS_"+timedClickGate.remainingMs(now));
             return false; // nunca consumir o gatilho do CMX
         }
-        discardOldCycleOnNewTrigger();
+        if(!prefs().getBoolean(DirectScanPolicy.PREF,false))
+            discardOldCycleOnNewTrigger();
         lastTriggerPrefocus=now;
         trace("CLICK_COOLDOWN_STARTED_MS_"+timedClickGate.getCooldownMs());
         trace("TRIGGER_OPEN_ATTEMPT_"+info.screen);
@@ -1123,9 +1141,15 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         // Se o MLOG ja recebeu algo, nao sobrescrever nem duplicar o codigo.
         CharSequence existing=editor.getText();
         if(existing!=null && existing.length()>0){
+            if(DirectScanPolicy.barcodeRepeatedInField(code,existing.toString().trim())){
+                trace("DIRECT_DUPLICATE_TEXT_DETECTED");
+                status("Codigo duplicado no campo: corrija a Saida de Foco do scanner.");
+                finishQueuedScan("campo_concatenado");
+                return;
+            }
             if(code.equals(existing.toString().trim())){
                 cancelPending();
-                status("Codigo ja no campo: aguardando Enter do CMX.");
+                status("Codigo ja no campo: aguardando confirmacao.");
                 awaitCmxConfirmation(code,0);
                 return;
             }
@@ -1174,7 +1198,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             lastEnteredScreen=currentInfo==null?"":currentInfo.screen;
             cancelPending();
             trace("SET_TEXT_OK");
-            status("Leitura inserida: aguardando Enter do CMX.");
+            status(prefs().getBoolean(DirectScanPolicy.PREF,false)?
+                "Codigo inserido: confirmacao pelo Bridge.":
+                "Leitura inserida: aguardando Enter do CMX.");
             // O estado preparado sera limpo ao terminar ESTA leitura;
             // nao usar timer que possa apagar o estado da leitura seguinte.
             awaitCmxConfirmation(code,0);
@@ -1226,52 +1252,46 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         // Conferencia: recuperacao unica se o CMX nao enviou Enter e o
         // codigo continua no mesmo editor. Nunca repetir automaticamente.
         // Aguardar o wedge fisico antes de tentar, evitando dois Enters.
+        boolean directMode=prefs().getBoolean(DirectScanPolicy.PREF,false);
         boolean bridgeMode=prefs().getBoolean(BridgeEnterPolicy.PREFERENCE,false);
+        boolean screenVerified=mappedConferenceVerified(info) ||
+            (directMode && "separacao".equals(info.screen) && info.hasSeparationControls);
         // Em modo Bridge, Enter do CMX deve estar OFF no CMXScanner. Sem
         // isso o firmware pode confirmar fora dos KeyEvents observaveis.
         // Nunca enviar duas vezes para o mesmo ciclo/mesmo codigo.
         if(!conferenceFallbackAttempted &&
            BridgeEnterPolicy.shouldAttempt(bridgeMode,info.screen,waited,
               lastHardwareEnterAt>=confirmStartedAt,editor.isFocused(),
-              mappedConferenceVerified(info))) {
+              screenVerified)) {
             conferenceFallbackAttempted=true;
             // MESMO mecanismo primario observado no APK do CMXScanner:
             // getRootInActiveWindow().findFocus(FOCUS_INPUT)
             // .performAction(0x01020054 / ACTION_IME_ENTER).
             // Nosso editor ja foi verificado por origem, foco e conteudo.
-            boolean sent=false;
-            if(Build.VERSION.SDK_INT>=30){
+            // No video o Android utiliza o IME do Bridge e o Flutter possui
+            // InputConnection ativa. Priorizar DOWN/UP no IME: ACTION_IME_ENTER
+            // do no de acessibilidade pode devolver true SEM o Flutter registrar.
+            boolean sent=BridgeScanInputMethodService.sendEnterForAutoCount();
+            if(sent)trace("DIRECT_ENTER_IME_KEYPAIR_SENT");
+            if(!sent)sent=sendAutoEnterByAccessibility();
+            if(sent && !BridgeScanInputMethodService.hasLiveInputForMlog())
+                trace("DIRECT_ENTER_ACCESSIBILITY_INPUT_METHOD_SENT");
+            // Ultima opcao somente se NENHUMA InputConnection aceitou o Enter.
+            if(!sent && Build.VERSION.SDK_INT>=30){
                 try{sent=editor.performAction(
                     AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.getId());}
                 catch(RuntimeException ignored){}
-                if(sent)trace("BRIDGE_CMX_STYLE_ACTION_IME_ENTER_OK");
+                if(sent)trace("DIRECT_ENTER_ACTION_IME_ENTER_SENT");
             }
-            // Alternativas somente se o Android RECUSOU a acao primária.
-            if(!sent)sent=BridgeScanInputMethodService.sendEnterForAutoCount();
-            if(!sent)sent=sendAutoEnterByAccessibility();
             if(sent)lastBridgeEnterAt=SystemClock.elapsedRealtime();
             trace(sent?"BRIDGE_ENTER_SENT_ONCE":"BRIDGE_ENTER_UNAVAILABLE");
             if(sent)status("Enter do Bridge enviado. Verifique o registro no MLOG.");
             else status("Sem conexao para Enter do Bridge. Confira teclado/acessibilidade.");
-        }else if(!bridgeMode && !conferenceFallbackAttempted && waited>=650 &&
-           ConferenceScreenPolicy.isMapped(info.screen) &&
-           lastHardwareEnterAt<confirmStartedAt && editor.isFocused()){
-            // Modo legado: CMX principal, Bridge apenas fallback atrasado.
-            conferenceFallbackAttempted=true;
-            boolean sent=BridgeScanInputMethodService.sendEnterForAutoCount();
-            if(!sent)sent=sendAutoEnterByAccessibility();
-            if(!sent && Build.VERSION.SDK_INT>=30 &&
-               supports(editor,AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.getId())){
-                try{sent=editor.performAction(
-                    AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.getId());}
-                catch(RuntimeException ignored){}
-            }
-            trace(sent?"CONFERENCE_ENTER_FALLBACK_SENT":"CONFERENCE_ENTER_FALLBACK_UNAVAILABLE");
-            if(sent)status("Enter de recuperacao enviado; verifique MLOG.");
         }
         if(waited>=1500){
-            trace("CMX_ENTER_NOT_OBSERVED");
-            status("Codigo preenchido; Enter do CMX nao confirmado. Confira no MLOG.");
+            trace(directMode?"DIRECT_ENTER_UNVERIFIED":"CMX_ENTER_NOT_OBSERVED");
+            status(directMode?"Enter enviado ou indisponivel; confira se o MLOG registrou.":
+                "Codigo preenchido; Enter do CMX nao confirmado. Confira no MLOG.");
             finishQueuedScan("sem_confirmacao_cmx");return;
         }
         main.postDelayed(()->observeCmxConfirmation(expected,token),

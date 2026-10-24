@@ -11,7 +11,8 @@ public final class ScannerProtocol {
     public static final String ACTION_CMX = "com.cmx.scanner.DATA";
     public static final String ACTION_HIK = "com.hikvision.ACTION_INPUT";
     public static final String ACTION_GENERIC = "com.service.scanner.data";
-    public static final String[] ACTIONS = {ACTION_CMX,ACTION_HIK,ACTION_GENERIC};
+    public static final String ACTION_DIRECT = DirectScanPolicy.ACTION;
+    public static final String[] ACTIONS = {ACTION_CMX,ACTION_HIK,ACTION_GENERIC,ACTION_DIRECT};
 
     private ScannerProtocol() {}
 
