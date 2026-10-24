@@ -97,6 +97,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private long lastEnterEventProbe;
     private long lastHardwareEnterAt;
     private boolean conferenceFallbackAttempted;
+    private boolean nativeRefocusAttempted;
     private long lastBridgeEnterAt;
     private long currentScanStartedAt;
     private boolean awaitingEnterConfirmation;
@@ -201,7 +202,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                     // O modo exclusivo nao pode cancelar um Enter pendente
                     // apenas porque chegou novo bipe. Descarta o bipe ocupado
                     // com aviso em vez de interromper/duplicar a confirmacao.
-                    if(!directMode)discardOldCycleOnNewTrigger();
+                    if(!directMode && !prefs().getBoolean(NativeScannerController.PREF,false))
+                        discardOldCycleOnNewTrigger();
                     trace(directMode?"DIRECT_BROADCAST_NEW_CYCLE":"BROADCAST_REARM_NEW_CYCLE");
                 }
                 if(!ScanCoordinator.accept(code,fastImeMode())){
@@ -209,6 +211,10 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                     return;
                 }
                 trace("BROADCAST_ACCEPTED_"+source);
+                if(prefs().getBoolean(NativeScannerController.PREF,false)){
+                    trace("NATIVE_SCANNER_DELIVERY_OK");
+                    prefs().edit().putBoolean("native_first_broadcast_seen",true).apply();
+                }
                 if(lastTriggerPrefocus>0){
                     long delta=SystemClock.elapsedRealtime()-lastTriggerPrefocus;
                     if(delta>=0 && delta<1200)trace("TRIGGER_TO_DECODE_MS_"+delta);
@@ -226,7 +232,12 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             prefs().edit().putBoolean("prearm_field",false).apply();
             // Versoes anteriores podiam deixar o teclado oculto pelo controlador.
             restoreKeyboard();
-            status("v3.0.6: Conferência de Venda mapeada; Apagar contínuo disponível.");
+            status("Bridge conectado: aguardando leitura do MLOG.");
+            if(prefs().getBoolean(NativeScannerController.PREF,false)){
+                boolean applied=NativeScannerController.configure(this);
+                trace(applied?"NATIVE_SCANNER_RECONFIG_SENT":"NATIVE_SCANNER_RECONFIG_FAILED");
+                if(!applied)status("Leitor nativo indisponivel; verifique o servico Hikrobot.");
+            }
         }catch(RuntimeException e){status("Falha ao registrar o broadcast do scanner.");}
     }
 
@@ -295,6 +306,19 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         // Sem fila: nao executar posteriormente uma leitura antiga.
         // Novo gatilho admitido pode cancelar um ciclo anterior (ver onKeyEvent).
         if(!scanQueue.isIdle()){
+            // So no modo nativo: reter eventos curtos, mas NAO tratar
+            // nenhuma leitura como conferida ate a anterior ser concluida.
+            if(prefs().getBoolean(NativeScannerController.PREF,false)){
+                if(scanQueue.waitingCount()>=8 || !scanQueue.offer(code)){
+                    trace("NATIVE_QUEUE_FULL");
+                    status("Fila de bipes cheia. Pare e confira as quantidades no MLOG.");
+                    return;
+                }
+                queuedAt.addLast(now);
+                trace("NATIVE_SCAN_QUEUED");
+                status("Bipe recebido: aguardando a leitura anterior terminar.");
+                return;
+            }
             trace("SCAN_DISCARDED_BUSY_NO_QUEUE");
             status("Leitura muito rapida: aguarde a confirmacao no MLOG antes do proximo bipe.");
             return;
@@ -342,6 +366,16 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         ++serial; // cancelar tentativas de foco da leitura anterior
         ++enterAttempt; // cancelar espera passiva da leitura anterior
         if(!queuedAt.isEmpty())queuedAt.pollFirst();
+        if(prefs().getBoolean(NativeScannerController.PREF,false) &&
+           !"campo_mudou".equals(reason) && !"campo_saiu".equals(reason) &&
+           scanQueue.waitingCount()>0){
+            trace("NATIVE_QUEUE_HALTED_UNVERIFIED_"+reason);
+            status("Confirmacao nao verificada: fila interrompida. Confira o MLOG.");
+            scanQueue.clear();
+            queuedAt.clear();
+            ++workGeneration;
+            return;
+        }
         boolean more=scanQueue.complete();
         // O primeiro bipe segue confirmado pelo processamento normal do CMX.
         // Repeticoes posteriores sao opt-in e contam envios, nao registros gravados.
@@ -852,6 +886,18 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         // botao de teclado do MLOG. Antes, um editor desfocado bloqueava o
         // clique no botao e somente fazia o Gboard aparecer.
         AccessibilityNodeInfo ready=safeEditor(i,true);
+        if(ready!=null && prefs().getBoolean(NativeScannerController.PREF,false) &&
+           ConferenceScreenPolicy.isMapped(i.screen) && ready.isEditable() &&
+           ready.isVisibleToUser() && !ready.isFocused()){
+            // Se o Flutter deixou o editor visivel mas desfocado depois do
+            // Enter anterior, focar o MESMO campo, nao tocar no botao que
+            // pode alternar/fechar o input. Nao perde um segundo bipe.
+            startPending(code,i.screen);
+            focusOrClick(ready);
+            retryFill(serial,i.screen);
+            trace("NATIVE_NEXT_SCAN_REFOCUS_EDITOR");
+            return;
+        }
         if(ready!=null && nativeEntryReady(i,ready)){
             if(("consulta".equals(i.screen) || "conferencia_venda".equals(i.screen))
                     && !ready.isFocused()){
@@ -1158,7 +1204,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             AccessibilityNodeInfo root=mlogRoot();
             ScreenInfo info=root==null?null:inspect(root);
             boolean newSearch=info!=null &&
-                ("consulta".equals(info.screen) || "conferencia_venda".equals(info.screen));
+                ("consulta".equals(info.screen) || "conferencia_venda".equals(info.screen) ||
+                 (prefs().getBoolean(NativeScannerController.PREF,false) &&
+                  ConferenceScreenPolicy.isMapped(info.screen)));
             boolean previouslyInserted=info!=null &&
                 ("atividades".equals(info.screen) || "separacao".equals(info.screen)) &&
                 existing.toString().trim().equals(lastEnteredByBridge) &&
@@ -1207,7 +1255,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
 
         }catch(RuntimeException e){status("Falha de acessibilidade ao inserir o codigo.");finishQueuedScan("erro_set_text");}
     }
-    // v2.5: o Bridge NAO envia Enter. Apenas observa se o CMX concluiu.
+    // Envio de Enter proprio e opt-in. Sem modo proprio, observa o CMX.
     // MLOG pode atualizar o editor em outro frame depois do Enter do CMX.
     private long confirmStartedAt;
     private boolean directEnterSent; // sempre false nesta versao; preserva evento legado sem acao
@@ -1217,6 +1265,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         awaitingEnterConfirmation=true;
         directEnterSent=false;
         conferenceFallbackAttempted=false;
+        nativeRefocusAttempted=false;
         confirmStartedAt=SystemClock.elapsedRealtime();
         trace(prefs().getBoolean(BridgeEnterPolicy.PREFERENCE,false)?
             "BRIDGE_ENTER_ARMED":"CMX_ENTER_PASSIVE_WAIT");
@@ -1253,15 +1302,26 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         // codigo continua no mesmo editor. Nunca repetir automaticamente.
         // Aguardar o wedge fisico antes de tentar, evitando dois Enters.
         boolean directMode=prefs().getBoolean(DirectScanPolicy.PREF,false);
-        boolean bridgeMode=prefs().getBoolean(BridgeEnterPolicy.PREFERENCE,false);
+        boolean nativeMode=prefs().getBoolean(NativeScannerController.PREF,false);
+        boolean bridgeMode=prefs().getBoolean(BridgeEnterPolicy.PREFERENCE,false) || nativeMode;
         boolean screenVerified=mappedConferenceVerified(info) ||
             (directMode && "separacao".equals(info.screen) && info.hasSeparationControls);
+        // No modo nativo, o Flutter pode desfocar a entrada apos SET_TEXT;
+        // recuperar o campo sem consumir um SEGUNDO bipe fisico.
+        if(nativeMode && !editor.isFocused() && !nativeRefocusAttempted &&
+           waited>=90 && waited<700 && !conferenceFallbackAttempted && screenVerified){
+            nativeRefocusAttempted=true;
+            boolean refocused=focusOrClick(editor);
+            trace(refocused?"NATIVE_REFOCUS_REQUESTED":"NATIVE_REFOCUS_FAILED");
+            main.postDelayed(()->observeCmxConfirmation(expected,token),90);
+            return;
+        }
         // Em modo Bridge, Enter do CMX deve estar OFF no CMXScanner. Sem
         // isso o firmware pode confirmar fora dos KeyEvents observaveis.
         // Nunca enviar duas vezes para o mesmo ciclo/mesmo codigo.
         if(!conferenceFallbackAttempted &&
            BridgeEnterPolicy.shouldAttempt(bridgeMode,info.screen,waited,
-              lastHardwareEnterAt>=confirmStartedAt,editor.isFocused(),
+              !nativeMode && lastHardwareEnterAt>=confirmStartedAt,editor.isFocused(),
               screenVerified)) {
             conferenceFallbackAttempted=true;
             // MESMO mecanismo primario observado no APK do CMXScanner:
@@ -1271,13 +1331,26 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             // No video o Android utiliza o IME do Bridge e o Flutter possui
             // InputConnection ativa. Priorizar DOWN/UP no IME: ACTION_IME_ENTER
             // do no de acessibilidade pode devolver true SEM o Flutter registrar.
-            boolean sent=BridgeScanInputMethodService.sendEnterForAutoCount();
-            if(sent)trace("DIRECT_ENTER_IME_KEYPAIR_SENT");
+            boolean sent=false;
+            // Modo nativo: o CMXScanner usava ACTION_IME_ENTER na propria
+            // AccessibilityNodeInfo do Flutter. Nao depender de um teclado
+            // ainda aberto de uma leitura anterior (causa do 'segundo bipe').
+            if(nativeMode && Build.VERSION.SDK_INT>=30 && editor.isFocused()){
+                try{
+                    sent=editor.performAction(
+                        AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.getId());
+                }catch(RuntimeException ignored){}
+                if(sent)trace("NATIVE_ENTER_ACTION_IME_ENTER_SENT");
+            }
+            if(!sent && BridgeScanInputMethodService.hasLiveInputForMlog()){
+                sent=BridgeScanInputMethodService.sendEnterForAutoCount();
+                if(sent)trace("DIRECT_ENTER_IME_KEYPAIR_SENT");
+            }
             if(!sent)sent=sendAutoEnterByAccessibility();
             if(sent && !BridgeScanInputMethodService.hasLiveInputForMlog())
                 trace("DIRECT_ENTER_ACCESSIBILITY_INPUT_METHOD_SENT");
-            // Ultima opcao somente se NENHUMA InputConnection aceitou o Enter.
-            if(!sent && Build.VERSION.SDK_INT>=30){
+            // Modo legado: ACTION_IME_ENTER continua como ultima opcao.
+            if(!sent && Build.VERSION.SDK_INT>=30 && !nativeMode){
                 try{sent=editor.performAction(
                     AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.getId());}
                 catch(RuntimeException ignored){}
@@ -1285,12 +1358,17 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             }
             if(sent)lastBridgeEnterAt=SystemClock.elapsedRealtime();
             trace(sent?"BRIDGE_ENTER_SENT_ONCE":"BRIDGE_ENTER_UNAVAILABLE");
-            if(sent)status("Enter do Bridge enviado. Verifique o registro no MLOG.");
+            if(sent)status(nativeMode?
+                "Enter nativo enviado; aguardando o MLOG atualizar.":
+                "Enter do Bridge enviado. Verifique o registro no MLOG.");
             else status("Sem conexao para Enter do Bridge. Confira teclado/acessibilidade.");
         }
         if(waited>=1500){
-            trace(directMode?"DIRECT_ENTER_UNVERIFIED":"CMX_ENTER_NOT_OBSERVED");
-            status(directMode?"Enter enviado ou indisponivel; confira se o MLOG registrou.":
+            if(nativeMode)trace(conferenceFallbackAttempted?
+                    "NATIVE_ENTER_UNVERIFIED_AFTER_ATTEMPT":"NATIVE_ENTER_NOT_AVAILABLE");
+            else trace(directMode?"DIRECT_ENTER_UNVERIFIED":"CMX_ENTER_NOT_OBSERVED");
+            status(nativeMode?"MLOG nao confirmou visualmente o Enter; confira antes de continuar.":
+                directMode?"Enter enviado ou indisponivel; confira se o MLOG registrou.":
                 "Codigo preenchido; Enter do CMX nao confirmado. Confira no MLOG.");
             finishQueuedScan("sem_confirmacao_cmx");return;
         }

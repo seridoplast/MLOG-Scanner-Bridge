@@ -14,7 +14,7 @@ android {
         // O valor local serve somente para compilacoes fora do CI.
         def runNumber = System.getenv('GITHUB_RUN_NUMBER')
         versionCode (runNumber ? (100000 + runNumber.toInteger()) : 45)
-        versionName '3.1.4-broadcast-exclusivo'
+        versionName '3.1.5-controle-nativo-experimental'
     }
 
     signingConfigs {

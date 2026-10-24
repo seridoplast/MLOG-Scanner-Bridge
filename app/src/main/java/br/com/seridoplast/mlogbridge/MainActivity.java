@@ -478,6 +478,7 @@ public final class MainActivity extends Activity {
         direct.setTextColor(ink);
         direct.setTextSize(14);
         direct.setChecked(prefs.getBoolean(DirectScanPolicy.PREF,false));
+        direct.setEnabled(!prefs.getBoolean(NativeScannerController.PREF,false));
         direct.setOnCheckedChangeListener((button,checked)->{
             if(!checked){
                 prefs.edit().putBoolean(DirectScanPolicy.PREF,false)
@@ -511,6 +512,61 @@ public final class MainActivity extends Activity {
         });
         directCard.addView(direct);
         subtitle(directCard,"Broadcast exclusivo, sem digitacao do fabricante.");
+        LinearLayout nativeCard=card();
+        nativeCard.addView(label("Leitor do coletor (novo)",17,ink,true));
+        CheckBox nativeCheck=new CheckBox(this);
+        nativeCheck.setButtonTintList(android.content.res.ColorStateList.valueOf(ink));
+        nativeCheck.setText("Controlar leitor pelo Bridge (teste)");
+        nativeCheck.setTextColor(ink);
+        nativeCheck.setTextSize(14);
+        nativeCheck.setChecked(prefs.getBoolean(NativeScannerController.PREF,false));
+        nativeCheck.setOnCheckedChangeListener((button,checked)->{
+            if(!checked){
+                prefs.edit().putBoolean(NativeScannerController.PREF,false)
+                    .putBoolean(DirectScanPolicy.PREF,false)
+                    .putBoolean(BridgeEnterPolicy.PREFERENCE,false).apply();
+                toast("Controle desligado no Bridge. Ajustes do scanner permanecem; restaure no Assistente se necessario.");
+                displayPage();
+                return;
+            }
+            if(!NativeScannerController.isInstalled(this)){
+                toast("Servico nativo Hikrobot nao encontrado. Nao alterei o leitor.");
+                nativeCheck.setChecked(false);
+                return;
+            }
+            new AlertDialog.Builder(this)
+                .setTitle("Bridge controla o scanner")
+                .setMessage("Teste APENAS em um coletor e pedido de treinamento. O Bridge enviara comandos ao servico nativo para retirar a digitacao/Enter do fabricante e receber apenas broadcast. Isso muda configuracoes globais do leitor; desligar este controle no Bridge nao restaura automaticamente os parametros anteriores. Fotografe as configuracoes atuais para poder reverter.")
+                .setPositiveButton("Ativar teste",(dialog,which)->{
+                    if(!NativeScannerController.configure(this)){
+                        toast("Falha ao enviar configuracao ao servico nativo.");
+                        nativeCheck.setChecked(false);
+                        return;
+                    }
+                    prefs.edit().putBoolean(NativeScannerController.PREF,true)
+                        .putBoolean(DirectScanPolicy.PREF,true)
+                        .putBoolean(BridgeEnterPolicy.PREFERENCE,true)
+                        .putBoolean("native_first_broadcast_seen",false).apply();
+                    MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
+                    if(svc!=null)svc.refreshEventThrottle();
+                    toast("Comandos enviados. Bipe um codigo e confira o diagnostico.");
+                    displayPage();
+                })
+                .setNegativeButton("Cancelar",(dialog,which)->nativeCheck.setChecked(false))
+                .setOnCancelListener(dialog->nativeCheck.setChecked(false))
+                .show();
+        });
+        nativeCard.addView(nativeCheck);
+        subtitle(nativeCard,"Sem CMXScanner aberto. Requer servico do hardware e acessibilidade.");
+        button(nativeCard,"Reaplicar comando no scanner",false,()->{
+            if(!prefs.getBoolean(NativeScannerController.PREF,false)){
+                toast("Ative primeiro o controle nativo.");return;
+            }
+            boolean ok=NativeScannerController.configure(this);
+            toast(ok?"Comandos enviados (aguardando teste de bipe).":"Servico nativo indisponivel.");
+        });
+        subtitle(nativeCard,prefs.getBoolean("native_first_broadcast_seen",false)?
+            "Recepcao nativa observada neste teste.":"Ainda sem leitura confirmada pelo canal nativo.");
         button(directCard,"Abrir Assistente de Digitalizacao",false,()->{
             Intent launch=getPackageManager().getLaunchIntentForPackage("com.pda.scanassist");
             if(launch!=null)startActivity(launch);
