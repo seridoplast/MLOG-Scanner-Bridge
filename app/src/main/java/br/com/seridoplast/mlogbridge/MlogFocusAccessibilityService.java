@@ -97,6 +97,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private long lastEnterEventProbe;
     private long lastHardwareEnterAt;
     private boolean conferenceFallbackAttempted;
+    private long lastBridgeEnterAt;
     private long currentScanStartedAt;
     private boolean awaitingEnterConfirmation;
     private boolean configuredFastEvents;
@@ -233,7 +234,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     /** O usuario pode alternar sem reiniciar a acessibilidade. */
     void refreshEventThrottle(){
         boolean fast=fastImeMode();
-        boolean trigger=prefs().getBoolean("trigger_prefocus",false);
+        boolean trigger=prefs().getBoolean("trigger_prefocus",false) ||
+            prefs().getBoolean(BridgeEnterPolicy.PREFERENCE,false);
         if(fast==configuredFastEvents && trigger==configuredTriggerEvents)return;
         AccessibilityServiceInfo info=getServiceInfo();
         if(info==null)return;
@@ -532,6 +534,21 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
      * o botao do MLOG pode funcionar como alternancia e fechar a entrada.
      */
     @Override protected boolean onKeyEvent(KeyEvent event){
+        if(event!=null && BridgeEnterPolicy.active(prefs().getBoolean(
+                BridgeEnterPolicy.PREFERENCE,false)) &&
+           (event.getKeyCode()==KeyEvent.KEYCODE_ENTER ||
+            event.getKeyCode()==KeyEvent.KEYCODE_NUMPAD_ENTER) &&
+           awaitingEnterConfirmation && !scanQueue.isIdle() &&
+           event.getDeviceId()!=KeyCharacterMap.VIRTUAL_KEYBOARD &&
+           (event.getFlags() & KeyEvent.FLAG_SOFT_KEYBOARD)==0 &&
+           SystemClock.elapsedRealtime()-confirmStartedAt<1800 &&
+           mlogRoot()!=null){
+            // Um Enter fisico do CMX recebido DURANTE a leitura e consumido
+            // no modo Bridge. Alguns CMX usam injecao por IME/sistema e nao
+            // passam pelo filtro: sufixo OFF continua obrigatorio no CMX.
+            trace("CMX_ENTER_FILTERED_IN_BRIDGE_MODE");
+            return true;
+        }
         if(event!=null && event.getAction()==KeyEvent.ACTION_UP &&
            (event.getKeyCode()==KeyEvent.KEYCODE_ENTER ||
             event.getKeyCode()==KeyEvent.KEYCODE_NUMPAD_ENTER))
@@ -625,11 +642,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             if(target!=null && clickNativeKeyboardOnTrigger(target,info.screen))return false;
             Point size=realScreenSize();
             if(prefs().getBoolean("guided_taps",true) && supportedAspect(size) &&
-               ConferenceScreenPolicy.isStateVerified(info.screen,
-                   info.hasConferencePageTitle,info.hasConferenceInitialPrompt,
-                   info.hasConferenceProductAction)){
+               mappedConferenceVerified(info)){
                 trace("TRIGGER_CONFERENCE_GUIDED_"+info.screen);
-                triggerGesture(info.screen,size.x*ConferenceScreenPolicy.KEYBOARD_X,
+                triggerGesture(info.screen,size.x*ConferenceScreenPolicy.keyboardX(info.screen),
                     size.y*ConferenceScreenPolicy.keyboardY(info.screen));
             }else trace("CONFERENCE_KEYBOARD_NOT_SAFE_"+info.screen);
             return false;
@@ -881,9 +896,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 return;
             }
             if(prefs().getBoolean("guided_taps",true) &&
-               ConferenceScreenPolicy.isStateVerified(i.screen,
-                   i.hasConferencePageTitle,i.hasConferenceInitialPrompt,
-                   i.hasConferenceProductAction)){
+               mappedConferenceVerified(i)){
                 tapKnownConferenceKeyboard(serial,i);
             }else{
                 finishQueuedScan("conferencia_botao_nao_identificado");
@@ -1179,7 +1192,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         directEnterSent=false;
         conferenceFallbackAttempted=false;
         confirmStartedAt=SystemClock.elapsedRealtime();
-        trace("CMX_ENTER_PASSIVE_WAIT");
+        trace(prefs().getBoolean(BridgeEnterPolicy.PREFERENCE,false)?
+            "BRIDGE_ENTER_ARMED":"CMX_ENTER_PASSIVE_WAIT");
         main.postDelayed(()->observeCmxConfirmation(expected,token),40);
     }
 
@@ -1212,9 +1226,37 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         // Conferencia: recuperacao unica se o CMX nao enviou Enter e o
         // codigo continua no mesmo editor. Nunca repetir automaticamente.
         // Aguardar o wedge fisico antes de tentar, evitando dois Enters.
-        if(!conferenceFallbackAttempted && waited>=650 &&
+        boolean bridgeMode=prefs().getBoolean(BridgeEnterPolicy.PREFERENCE,false);
+        // Em modo Bridge, Enter do CMX deve estar OFF no CMXScanner. Sem
+        // isso o firmware pode confirmar fora dos KeyEvents observaveis.
+        // Nunca enviar duas vezes para o mesmo ciclo/mesmo codigo.
+        if(!conferenceFallbackAttempted &&
+           BridgeEnterPolicy.shouldAttempt(bridgeMode,info.screen,waited,
+              lastHardwareEnterAt>=confirmStartedAt,editor.isFocused(),
+              mappedConferenceVerified(info))) {
+            conferenceFallbackAttempted=true;
+            // MESMO mecanismo primario observado no APK do CMXScanner:
+            // getRootInActiveWindow().findFocus(FOCUS_INPUT)
+            // .performAction(0x01020054 / ACTION_IME_ENTER).
+            // Nosso editor ja foi verificado por origem, foco e conteudo.
+            boolean sent=false;
+            if(Build.VERSION.SDK_INT>=30){
+                try{sent=editor.performAction(
+                    AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.getId());}
+                catch(RuntimeException ignored){}
+                if(sent)trace("BRIDGE_CMX_STYLE_ACTION_IME_ENTER_OK");
+            }
+            // Alternativas somente se o Android RECUSOU a acao primária.
+            if(!sent)sent=BridgeScanInputMethodService.sendEnterForAutoCount();
+            if(!sent)sent=sendAutoEnterByAccessibility();
+            if(sent)lastBridgeEnterAt=SystemClock.elapsedRealtime();
+            trace(sent?"BRIDGE_ENTER_SENT_ONCE":"BRIDGE_ENTER_UNAVAILABLE");
+            if(sent)status("Enter do Bridge enviado. Verifique o registro no MLOG.");
+            else status("Sem conexao para Enter do Bridge. Confira teclado/acessibilidade.");
+        }else if(!bridgeMode && !conferenceFallbackAttempted && waited>=650 &&
            ConferenceScreenPolicy.isMapped(info.screen) &&
            lastHardwareEnterAt<confirmStartedAt && editor.isFocused()){
+            // Modo legado: CMX principal, Bridge apenas fallback atrasado.
             conferenceFallbackAttempted=true;
             boolean sent=BridgeScanInputMethodService.sendEnterForAutoCount();
             if(!sent)sent=sendAutoEnterByAccessibility();
@@ -1225,7 +1267,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 catch(RuntimeException ignored){}
             }
             trace(sent?"CONFERENCE_ENTER_FALLBACK_SENT":"CONFERENCE_ENTER_FALLBACK_UNAVAILABLE");
-            if(sent)status("Enter da conferencia enviado pelo Bridge; verificando MLOG.");
+            if(sent)status("Enter de recuperacao enviado; verifique MLOG.");
         }
         if(waited>=1500){
             trace("CMX_ENTER_NOT_OBSERVED");
@@ -1391,14 +1433,12 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
 
     private void tapKnownConferenceKeyboard(int id,ScreenInfo info){
         Point size=realScreenSize();
-        if(!supportedAspect(size) || !ConferenceScreenPolicy.isStateVerified(
-            info.screen,info.hasConferencePageTitle,info.hasConferenceInitialPrompt,
-            info.hasConferenceProductAction)){
+        if(!supportedAspect(size) || !mappedConferenceVerified(info)){
             finishQueuedScan("conferencia_nao_homologada");
             status("Conferência: layout não identificado para toque guiado.");
             return;
         }
-        float x=size.x*ConferenceScreenPolicy.KEYBOARD_X;
+        float x=size.x*ConferenceScreenPolicy.keyboardX(info.screen);
         float y=size.y*ConferenceScreenPolicy.keyboardY(info.screen);
         trace("CONFERENCE_GUIDED_BUTTON_"+info.screen);
         tapAt(id,x,y,info.screen);
@@ -1529,10 +1569,16 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private static final class ScreenInfo{
         String screen="desconhecida";
         boolean login,hasActivitiesTitle,hasConferenceTitle,hasConsultation,dialog,noActivities,hasStart,hasQuantity,hasSeparationControls,hasOrderTitle;
-        boolean hasConferencePageTitle,hasConferenceInitialPrompt,hasConferenceProductAction;
+        boolean hasConferencePageTitle,hasConferenceInitialPrompt,hasConferenceProductAction,hasEntryConferenceTitle;
         AccessibilityNodeInfo keyboard,searchField;
         final List<AccessibilityNodeInfo> editors=new ArrayList<>();
         final List<AccessibilityNodeInfo> clicks=new ArrayList<>();
+    }
+    private static boolean mappedConferenceVerified(ScreenInfo info){
+        boolean title=ConferenceScreenPolicy.ENTRY_PRODUCT.equals(info.screen)
+            ?info.hasEntryConferenceTitle:info.hasConferencePageTitle;
+        return ConferenceScreenPolicy.isStateVerified(info.screen,title,
+            info.hasConferenceInitialPrompt,info.hasConferenceProductAction);
     }
     private ScreenInfo inspect(AccessibilityNodeInfo root){
         ScreenInfo v=new ScreenInfo();
@@ -1548,6 +1594,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             if(has(t,"iniciar"))v.hasStart=true;
             if(has(t,"busca da conferencia de venda"))v.hasConferenceTitle=true;
             if(has(t,"conferencia de venda"))v.hasConferencePageTitle=true;
+            if(has(t,"conf. de entrada", "conf de entrada", "conferencia de entrada"))v.hasEntryConferenceTitle=true;
             if(has(t,"para iniciar a conferencia", "bipe qualquer produto"))v.hasConferenceInitialPrompt=true;
             if(has(t,"bipar produtos"))v.hasConferenceProductAction=true;
             if(has(t,"bipe ou digite enderec", "bipe algum produto", "local de estoque"))consultationHint=true;
@@ -1576,7 +1623,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         // "Bipe ou digite enderecos..." disponivel para a proxima leitura.
         v.hasConsultation=consultationHint && (consultationTitle || v.searchField!=null);
         v.hasSeparationControls=hasPular && hasEncerrar;
-        if(v.hasConferenceTitle)v.screen="conferencia_venda";
+        if(v.hasEntryConferenceTitle && v.hasConferenceProductAction)
+            v.screen=ConferenceScreenPolicy.ENTRY_PRODUCT;
+        else if(v.hasConferenceTitle)v.screen="conferencia_venda";
         else if(v.hasConferencePageTitle && v.hasConferenceProductAction)
             v.screen="conferencia_produto";
         else if(v.hasConferencePageTitle && v.hasConferenceInitialPrompt)

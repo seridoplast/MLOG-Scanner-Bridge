@@ -435,6 +435,37 @@ public final class MainActivity extends Activity {
         // Preparacao antecipada removida: era a causa de campo abrindo antes do bipe.
         check(read,"Toque guiado (telas reconhecidas)","guided_taps",true);
         check(read,"Detectar teclado de produtos","layout_fallback",true);
+        LinearLayout enter=card();
+        enter.addView(label("Enter da conferência",17,ink,true));
+        CheckBox ownEnter=new CheckBox(this);
+        ownEnter.setButtonTintList(android.content.res.ColorStateList.valueOf(ink));
+        ownEnter.setText("Enviar Enter pelo Bridge (teste)");
+        ownEnter.setTextColor(ink);
+        ownEnter.setTextSize(14);
+        ownEnter.setChecked(prefs.getBoolean(BridgeEnterPolicy.PREFERENCE,false));
+        ownEnter.setOnCheckedChangeListener((button,checked)->{
+            if(!checked){
+                prefs.edit().putBoolean(BridgeEnterPolicy.PREFERENCE,false).apply();
+                MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
+                if(svc!=null)svc.refreshEventThrottle();
+                toast("Enter próprio desativado.");
+                return;
+            }
+            new AlertDialog.Builder(this)
+                .setTitle("Enter do Bridge")
+                .setMessage("No CMXScanner, use Modo B (broadcast puro), se disponível, e desligue o sufixo Enter. Não deixe dois serviços confirmando o mesmo bipe. Teste um produto por vez.")
+                .setPositiveButton("Ativar teste",(dialog,which)->{
+                    prefs.edit().putBoolean(BridgeEnterPolicy.PREFERENCE,true).apply();
+                    MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
+                    if(svc!=null)svc.refreshEventThrottle();
+                    toast("Enter do Bridge ativo nas conferências.");
+                })
+                .setNegativeButton("Cancelar",(dialog,which)->ownEnter.setChecked(false))
+                .setOnCancelListener(dialog->ownEnter.setChecked(false))
+                .show();
+        });
+        enter.addView(ownEnter);
+        subtitle(enter,"CMX em broadcast puro; acessibilidade do Bridge ativa.");
         LinearLayout ime=card(); ime.addView(label("Teclado Bridge (experimental)",17,ink,true));
         check(ime,"Usar teclado Bridge (compacto)","experimental_bridge_ime",true);
         check(ime,"Leitura rápida (teste)","fast_ime_mode",true);
@@ -524,7 +555,7 @@ public final class MainActivity extends Activity {
         button(card,"Abrir MLOG",true,this::openMlog);
     }
     private void about(){
-        title("Sobre","MLOG Scanner Bridge · v3.1.2");
+        title("Sobre","MLOG Scanner Bridge · v3.1.3");
         LinearLayout about=card();about.addView(label("Integração local",17,ink,true));
         subtitle(about,"Integração CMX + MLOG. Sem histórico dos códigos.");
         LinearLayout control=card();control.addView(label("Permissões",17,ink,true));

@@ -61,6 +61,19 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
+      - name: Testar regra de Enter e mapeamento de conferencia
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bridge-test
+          javac -d /tmp/bridge-test \
+            app/src/main/java/br/com/seridoplast/mlogbridge/ConferenceScreenPolicy.java \
+            app/src/main/java/br/com/seridoplast/mlogbridge/BridgeEnterPolicy.java \
+            tests/ConferenceScreenPolicyTest.java \
+            tests/BridgeEnterPolicyTest.java
+          java -cp /tmp/bridge-test br.com.seridoplast.mlogbridge.ConferenceScreenPolicyTest
+          java -cp /tmp/bridge-test br.com.seridoplast.mlogbridge.BridgeEnterPolicyTest
+
       - name: Compilar APK de producao com assinatura fixa
         env:
           BRIDGE_SIGNING_STORE_PASSWORD: ${{ secrets.BRIDGE_KEYSTORE_PASSWORD }}
@@ -88,7 +101,7 @@ jobs:
       - name: Publicar APK assinado para download
         uses: actions/upload-artifact@v4
         with:
-          name: MLOG-Scanner-Bridge-tempo-livre-APK-ASSINADO
+          name: MLOG-Scanner-Bridge-enter-proprio-APK-ASSINADO
           path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 14
