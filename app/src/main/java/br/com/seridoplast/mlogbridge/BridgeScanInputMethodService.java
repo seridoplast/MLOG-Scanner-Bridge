@@ -92,6 +92,35 @@ public final class BridgeScanInputMethodService extends InputMethodService {
         return info!=null && ScanCoordinator.TARGET.equals(info.packageName) &&
             !isPassword(info.inputType) && ime.getCurrentInputConnection()!=null;
     }
+    /** Usar SOMENTE apos o Bridge verificar tela, editor focado e texto exato.
+     * Flutter pode esconder a interface visual do IME enquanto mantem uma
+     * InputConnection valida. Nao depender de isInputViewShown neste fluxo.
+     */
+    static boolean sendEnterForVerifiedScan(){
+        BridgeScanInputMethodService ime=active;
+        if(ime==null || !ime.targetMlog)return false;
+        EditorInfo info=ime.getCurrentInputEditorInfo();
+        InputConnection connection=ime.getCurrentInputConnection();
+        if(info==null || connection==null ||
+           !ScanCoordinator.TARGET.equals(info.packageName) ||
+           isPassword(info.inputType))return false;
+        long now=SystemClock.uptimeMillis();
+        int flags=KeyEvent.FLAG_SOFT_KEYBOARD;
+        int device=KeyCharacterMap.VIRTUAL_KEYBOARD;
+        boolean down=connection.sendKeyEvent(new KeyEvent(now,now,
+            KeyEvent.ACTION_DOWN,KeyEvent.KEYCODE_ENTER,0,0,device,0,flags));
+        boolean up=connection.sendKeyEvent(new KeyEvent(now,now+7,
+            KeyEvent.ACTION_UP,KeyEvent.KEYCODE_ENTER,0,0,device,0,flags));
+        if(down || up){
+            android.util.Log.i("MLOGBridge",down&&up?
+                "ENTER_VERIFIED_IME_KEYPAIR":"ENTER_VERIFIED_IME_PARTIAL");
+            // Se somente um evento foi aceito, nao tentar outro Enter:
+            // seu resultado e ambiguo e requer verificacao visual.
+            return true;
+        }
+        android.util.Log.i("MLOGBridge","ENTER_VERIFIED_IME_REJECTED");
+        return false;
+    }
     static boolean sendEnterForAutoCount(){
         BridgeScanInputMethodService ime=active;
         if(!hasLiveInputForMlog()){

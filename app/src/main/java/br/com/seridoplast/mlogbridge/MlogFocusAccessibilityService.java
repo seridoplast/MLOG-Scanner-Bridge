@@ -309,14 +309,14 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             // So no modo nativo: reter eventos curtos, mas NAO tratar
             // nenhuma leitura como conferida ate a anterior ser concluida.
             if(prefs().getBoolean(NativeScannerController.PREF,false)){
-                if(scanQueue.waitingCount()>=8 || !scanQueue.offer(code)){
+                if(scanQueue.waitingCount()>=24 || !scanQueue.offer(code)){
                     trace("NATIVE_QUEUE_FULL");
                     status("Fila de bipes cheia. Pare e confira as quantidades no MLOG.");
                     return;
                 }
                 queuedAt.addLast(now);
-                trace("NATIVE_SCAN_QUEUED");
-                status("Bipe recebido: aguardando a leitura anterior terminar.");
+                trace("NATIVE_SCAN_QUEUED_DEPTH_"+scanQueue.waitingCount());
+                status("Bipes aguardando: "+scanQueue.waitingCount()+". Sem confirmacao, fila sera suspensa.");
                 return;
             }
             trace("SCAN_DISCARDED_BUSY_NO_QUEUE");
@@ -1269,7 +1269,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         confirmStartedAt=SystemClock.elapsedRealtime();
         trace(prefs().getBoolean(BridgeEnterPolicy.PREFERENCE,false)?
             "BRIDGE_ENTER_ARMED":"CMX_ENTER_PASSIVE_WAIT");
-        main.postDelayed(()->observeCmxConfirmation(expected,token),40);
+        main.postDelayed(()->observeCmxConfirmation(expected,token),
+                prefs().getBoolean(NativeScannerController.PREF,false)?20:40);
     }
 
     /** Observacao passiva. NUNCA envia teclas, clique no Gboard ou acao IME. */
@@ -1309,11 +1310,11 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         // No modo nativo, o Flutter pode desfocar a entrada apos SET_TEXT;
         // recuperar o campo sem consumir um SEGUNDO bipe fisico.
         if(nativeMode && !editor.isFocused() && !nativeRefocusAttempted &&
-           waited>=90 && waited<700 && !conferenceFallbackAttempted && screenVerified){
+           waited>=45 && waited<700 && !conferenceFallbackAttempted && screenVerified){
             nativeRefocusAttempted=true;
             boolean refocused=focusOrClick(editor);
             trace(refocused?"NATIVE_REFOCUS_REQUESTED":"NATIVE_REFOCUS_FAILED");
-            main.postDelayed(()->observeCmxConfirmation(expected,token),90);
+            main.postDelayed(()->observeCmxConfirmation(expected,token),45);
             return;
         }
         // Em modo Bridge, Enter do CMX deve estar OFF no CMXScanner. Sem
@@ -1322,7 +1323,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         if(!conferenceFallbackAttempted &&
            BridgeEnterPolicy.shouldAttempt(bridgeMode,info.screen,waited,
               !nativeMode && lastHardwareEnterAt>=confirmStartedAt,editor.isFocused(),
-              screenVerified)) {
+              screenVerified,nativeMode?BridgeEnterPolicy.NATIVE_DELAY_MS:
+              BridgeEnterPolicy.DELAY_MS)) {
             conferenceFallbackAttempted=true;
             // MESMO mecanismo primario observado no APK do CMXScanner:
             // getRootInActiveWindow().findFocus(FOCUS_INPUT)
@@ -1332,29 +1334,28 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             // InputConnection ativa. Priorizar DOWN/UP no IME: ACTION_IME_ENTER
             // do no de acessibilidade pode devolver true SEM o Flutter registrar.
             boolean sent=false;
-            // Modo nativo: o CMXScanner usava ACTION_IME_ENTER na propria
-            // AccessibilityNodeInfo do Flutter. Nao depender de um teclado
-            // ainda aberto de uma leitura anterior (causa do 'segundo bipe').
-            if(nativeMode && Build.VERSION.SDK_INT>=30 && editor.isFocused()){
-                try{
-                    sent=editor.performAction(
-                        AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.getId());
-                }catch(RuntimeException ignored){}
-                if(sent)trace("NATIVE_ENTER_ACTION_IME_ENTER_SENT");
-            }
-            if(!sent && BridgeScanInputMethodService.hasLiveInputForMlog()){
+            // O diagnostico de 24/10 mostrou que o par DOWN/UP emitido
+            // pela InputConnection concluiu ciclos que o fallback de
+            // acessibilidade declarava enviados, mas sem mudar o Flutter.
+            // O caller verificou a tela, o campo focado e o codigo exato.
+            if(nativeMode){
+                sent=BridgeScanInputMethodService.sendEnterForVerifiedScan();
+                if(sent)trace("NATIVE_ENTER_VERIFIED_IME_SENT");
+            } else if(BridgeScanInputMethodService.hasLiveInputForMlog()){
                 sent=BridgeScanInputMethodService.sendEnterForAutoCount();
                 if(sent)trace("DIRECT_ENTER_IME_KEYPAIR_SENT");
             }
-            if(!sent)sent=sendAutoEnterByAccessibility();
-            if(sent && !BridgeScanInputMethodService.hasLiveInputForMlog())
-                trace("DIRECT_ENTER_ACCESSIBILITY_INPUT_METHOD_SENT");
-            // Modo legado: ACTION_IME_ENTER continua como ultima opcao.
-            if(!sent && Build.VERSION.SDK_INT>=30 && !nativeMode){
+            // Se a InputConnection nao esta disponivel, usar a mesma acao
+            // do CMX no editor focado; somente UMA tentativa por leitura.
+            if(!sent && Build.VERSION.SDK_INT>=30 && editor.isFocused()){
                 try{sent=editor.performAction(
                     AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.getId());}
                 catch(RuntimeException ignored){}
-                if(sent)trace("DIRECT_ENTER_ACTION_IME_ENTER_SENT");
+                if(sent)trace("ENTER_ACTION_IME_ENTER_SENT");
+            }
+            if(!sent){
+                sent=sendAutoEnterByAccessibility();
+                if(sent)trace("ENTER_ACCESSIBILITY_INPUT_METHOD_SENT");
             }
             if(sent)lastBridgeEnterAt=SystemClock.elapsedRealtime();
             trace(sent?"BRIDGE_ENTER_SENT_ONCE":"BRIDGE_ENTER_UNAVAILABLE");

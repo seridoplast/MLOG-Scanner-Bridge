@@ -7,6 +7,10 @@ public final class BridgeEnterPolicyTest {
         ok(!BridgeEnterPolicy.shouldAttempt(false,c,250,false,true,true),"opt-in");
         ok(!BridgeEnterPolicy.shouldAttempt(true,c,40,false,true,true),"wait for IME");
         ok(BridgeEnterPolicy.shouldAttempt(true,c,180,false,true,true),"entry supported");
+        ok(!BridgeEnterPolicy.shouldAttempt(true,"separacao",40,false,true,true,
+            BridgeEnterPolicy.NATIVE_DELAY_MS),"native premature");
+        ok(BridgeEnterPolicy.shouldAttempt(true,"separacao",60,false,true,true,
+            BridgeEnterPolicy.NATIVE_DELAY_MS),"native fast path");
         ok(!BridgeEnterPolicy.shouldAttempt(true,c,200,true,true,true),"CMX observed");
         ok(!BridgeEnterPolicy.shouldAttempt(true,c,200,false,false,true),"focus required");
         ok(!BridgeEnterPolicy.shouldAttempt(true,c,200,false,true,false),"screen verified");
