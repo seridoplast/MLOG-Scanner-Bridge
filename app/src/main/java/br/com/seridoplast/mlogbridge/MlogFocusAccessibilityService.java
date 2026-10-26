@@ -336,20 +336,17 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             status("Janela de informacoes/cancelamento: leitura nao executada.");
             return;
         }
-        AccessibilityNodeInfo currentRoot=mlogRoot();
-        if(currentRoot==null || isBlockingOverlay(currentRoot)){
-            trace("SCAN_BLOCKED_BY_OVERLAY");
-            status("Feche informacoes/aviso antes da proxima leitura.");
-            return;
-        }
-        // Depois que o MLOG muda de produto, a etiqueta antiga pode seguir
-        // no alcance do scanner. Nao enviar codigo repetido do item anterior.
-        SeparatedQuantityProbe.Result currentProduct=separatedOnScreen();
-        if(prefs().getBoolean(NativeScannerController.PREF,false) &&
-            currentProduct!=null && productGuard.rejects(currentProduct.product,code)){
-            trace("PREVIOUS_PRODUCT_BARCODE_BLOCKED");
-            status("O MLOG mudou de produto. Bipe a etiqueta do novo item.");
-            return;
+        // Modo nativo: NAO percorrer a arvore inteira ANTES de enfileirar.
+        // A validacao de app/modal ocorre em onBarcode() e imediatamente
+        // antes do Enter; o antigo caminho fazia duas ou tres visitas extras
+        // a cada bipe, atrasando inclusive os broadcasts que ja aguardavam.
+        if(!prefs().getBoolean(NativeScannerController.PREF,false)){
+            AccessibilityNodeInfo currentRoot=mlogRoot();
+            if(currentRoot==null || isBlockingOverlay(currentRoot)){
+                trace("SCAN_BLOCKED_BY_OVERLAY");
+                status("Feche informacoes/aviso antes da proxima leitura.");
+                return;
+            }
         }
         // Sem fila: nao executar posteriormente uma leitura antiga.
         // Novo gatilho admitido pode cancelar um ciclo anterior (ver onKeyEvent).
@@ -566,7 +563,15 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         }
         // Verificacao custosa da arvore somente durante uma leitura ativa.
         // Sem leitura, a proxima tentativa ja verifica a tela antes de agir.
-        if((event.getEventType()==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+        // O Flutter emite muitas mudanças do campo durante SET_TEXT e Enter.
+        // No modo nativo, se o Enter ja foi agendado, a checagem de modal
+        // ocorre no callback do proprio Enter. Evita varrer a mesma arvore
+        // em cada CONTENT_CHANGED, mantendo WINDOW_STATE_CHANGED protegido.
+        boolean nativeEnterContentEvent = fixedEnterScheduled &&
+            prefs().getBoolean(NativeScannerController.PREF,false) &&
+            event.getEventType()==AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED;
+        if(!nativeEnterContentEvent &&
+           (event.getEventType()==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
             event.getEventType()==AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) &&
            (!scanQueue.isIdle() || pendingCode!=null)){
             long overlayNow=SystemClock.elapsedRealtime();
@@ -648,7 +653,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 ++longHoldGeneration;
                 currentLongHoldKey=-1;
                 if(wasActive){NativeScannerController.stopContinuous(this);trace("LONG_HOLD_RELEASE_STOPPED");}
-                else trace("LONG_HOLD_RELEASE_BEFORE_2S");
+                else trace("LONG_HOLD_RELEASE_BEFORE_1500MS");
             }
             return;
         }
@@ -667,7 +672,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         if(!longHoldPolicy.down(key,now))return;
         currentLongHoldKey=key;
         int generation=++longHoldGeneration;
-        trace("LONG_HOLD_ARMED_2S");
+        trace("LONG_HOLD_ARMED_1500MS");
         main.postDelayed(()->{
             if(generation!=longHoldGeneration || !longHoldPolicy.shouldStart(SystemClock.elapsedRealtime()) ||
                 !prefs().getBoolean(NativeScannerController.LONG_HOLD_PREF,false))return;
@@ -675,24 +680,53 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             if(visible==null || isBlockingOverlay(visible)){
                 longHoldPolicy.reset();currentLongHoldKey=-1;return;
             }
-            boolean sent=NativeScannerController.startContinuous(this,
-                Math.max(250,(int)timedClickGate.getCooldownMs()));
-            if(sent){
-                longHoldPolicy.started();
-                trace("LONG_HOLD_CONTINUOUS_STARTED");
-                main.postDelayed(()->{
-                    if(generation==longHoldGeneration && longHoldPolicy.isContinuous()){
-                        NativeScannerController.stopContinuous(this);
-                        longHoldPolicy.reset();currentLongHoldKey=-1;
-                        ++longHoldGeneration;
-                        trace("LONG_HOLD_SAFETY_STOP_30S");
-                    }
-                },LONG_HOLD_MAX_MS);
-            } else {
-                longHoldPolicy.reset();currentLongHoldKey=-1;
-                trace("LONG_HOLD_START_UNAVAILABLE");
-            }
+            // Depois dos 1,5 s: solicitar NOVOS acionamentos um por vez,
+            // em vez de alterar o firmware para modo continuous. O bip
+            // fisico inicial ja foi entregue pelo proprio gatilho.
+            longHoldPolicy.started();
+            trace("LONG_HOLD_REPEAT_STARTED");
+            scheduleLongHoldPulse(generation);
+            main.postDelayed(()->{
+                if(generation==longHoldGeneration && longHoldPolicy.isContinuous()){
+                    stopLongHold();
+                    trace("LONG_HOLD_SAFETY_STOP_30S");
+                }
+            },LONG_HOLD_MAX_MS);
         },LongHoldScanPolicy.HOLD_MS);
+    }
+
+
+    /** Repeticoes do hardware enquanto o botao estiver fisicamente segurado.
+     * Nao inventa codigos e nao envia Enter artificial para a mesma etiqueta.
+     * Se o MLOG acumular leituras, adia novos acionamentos ao inves de encher
+     * indefinidamente a fila. A opcao fica desligada por padrao.
+     */
+    private void scheduleLongHoldPulse(int generation){
+        if(generation!=longHoldGeneration || !longHoldPolicy.isContinuous())return;
+        long interval=LongHoldScanPolicy.pulseInterval(timedClickGate.getCooldownMs());
+        main.postDelayed(()->{
+            if(generation!=longHoldGeneration || !longHoldPolicy.isContinuous() ||
+               !prefs().getBoolean(NativeScannerController.LONG_HOLD_PREF,false) ||
+               !ScanCoordinator.isActive(this)){
+                if(generation==longHoldGeneration)stopLongHold();
+                return;
+            }
+            // Sem novas leituras ao sair do MLOG ou abrir um aviso.
+            AccessibilityNodeInfo root=mlogRoot();
+            if(root==null || isBlockingOverlay(root)){
+                stopLongHold();
+                trace("LONG_HOLD_STOPPED_MLOG_NOT_READY");
+                return;
+            }
+            if(LongHoldScanPolicy.canPulse(scanQueue.waitingCount(),pendingCode!=null)){
+                if(!NativeScannerController.pulseTrigger(this)){
+                    stopLongHold();
+                    trace("LONG_HOLD_PULSE_UNAVAILABLE");
+                    return;
+                }
+            }else trace("LONG_HOLD_PULSE_BACKPRESSURE");
+            scheduleLongHoldPulse(generation);
+        },interval);
     }
 
     void stopLongHold(){
@@ -1554,7 +1588,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         }
         // Captura leve ANTES do Enter; protege a transicao de um item
         // para o seguinte sem aguardar contagem ou retorno do servidor.
-        SeparatedQuantityProbe.Result productNow=separatedOnScreen();
+        SeparatedQuantityProbe.Result productNow=separatedOnScreen(root);
         if(prefs().getBoolean(NativeScannerController.PREF,false) &&
             productNow!=null && productGuard.rejects(productNow.product,expected)){
             trace("PREVIOUS_PRODUCT_ENTER_BLOCKED");
@@ -2143,7 +2177,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         return null;
     }
     private SeparatedQuantityProbe.Result separatedOnScreen(){
-        AccessibilityNodeInfo root=mlogRoot();
+        return separatedOnScreen(mlogRoot());
+    }
+    private SeparatedQuantityProbe.Result separatedOnScreen(AccessibilityNodeInfo root){
         if(root==null)return null;
         java.util.ArrayList<AccessibilityNodeInfo> nodes=new java.util.ArrayList<>();
         visit(root,nodes,0);

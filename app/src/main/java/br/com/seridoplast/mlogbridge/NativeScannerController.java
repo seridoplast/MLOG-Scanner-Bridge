@@ -62,29 +62,29 @@ final class NativeScannerController {
         }
     }
 
-    // Comandos usados pelo assistente Hikrobot. Somente no modo longo opt-in.
-    // Enviados diretamente ao servico do hardware, sem abrir app auxiliar.
-    static boolean startContinuous(Context context,int intervalMs) {
-        if(!isInstalled(context))return false;
+    // Emular novos acionamentos pelo comando do servico nativo, SEM sintetizar
+    // KeyEvent privilegiado e SEM mudar o scanMode global para continuous.
+    // O comando apenas solicita ao firmware uma captura. O hardware pode nao
+    // obedecer; o teste fisico e indispensavel.
+    static boolean pulseTrigger(Context context) {
+        if (!isInstalled(context)) return false;
         try {
-            sendString(context,"com.service.scanner.scanmode","scanMode","continuous");
-            Intent cfg=target("com.service.scanner.scan.continuous.interval");
-            cfg.putExtra("intervalTime",Math.max(250,intervalMs));
-            context.sendBroadcast(cfg);
+            // Cada pulso inicia uma tentativa; sem ACTION_STOP a cada ciclo,
+            // pois alguns firmwares cancelam a decodificacao ao receber STOP
+            // antes do broadcast resultante.
             context.sendBroadcast(new Intent("com.service.scanner.start.scanning"));
-            Log.i("MLOGBridge","LONG_HOLD_NATIVE_START_SENT");
+            Log.i("MLOGBridge", "LONG_HOLD_PULSE_SENT");
             return true;
-        } catch(RuntimeException ex) {
-            Log.e("MLOGBridge","LONG_HOLD_START_FAILED",ex);
-            stopContinuous(context);
+        } catch (RuntimeException exception) {
+            Log.e("MLOGBridge", "LONG_HOLD_PULSE_FAILED", exception);
             return false;
         }
     }
+
     static void stopContinuous(Context context) {
         try {context.sendBroadcast(new Intent("com.service.scanner.stop.scanning"));}
         catch(RuntimeException ex){Log.w("MLOGBridge","LONG_HOLD_STOP_FAILED",ex);}
-        try {sendString(context,"com.service.scanner.scanmode","scanMode","trigger");}
-        catch(RuntimeException ex){Log.w("MLOGBridge","LONG_HOLD_RESTORE_FAILED",ex);}
+        // Nao alterar scanMode: agora os pulsos sao independentes.
     }
     static final String LONG_HOLD_PREF="long_hold_trigger_v320";
 

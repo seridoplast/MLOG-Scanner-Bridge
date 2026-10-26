@@ -26,7 +26,7 @@ public final class GitHubReleaseUpdater {
     private static final String REPOSITORY = "seridoplast/MLOG-Scanner-Bridge";
     private static final String API = "https://api.github.com/repos/" + REPOSITORY + "/releases/latest";
     private static final String RELEASE_ASSET_PREFIX = "https://github.com/" + REPOSITORY + "/releases/download/";
-    private static final String APK_NAME = "app-release.apk";
+    private static final String LEGACY_APK_NAME = "app-release.apk";
     // Matches the verified corporate release certificate in .github/workflows/gerar-apk.yml.
     private static final String TRUSTED_CERT = "8151376de33abdee4c98cda4c88c102a8b9165a0db7edc18b1ad0403a7222fae";
     private static final long MAX_BYTES = 120L * 1024L * 1024L;
@@ -63,11 +63,15 @@ public final class GitHubReleaseUpdater {
                 JSONObject apkAsset = null;
                 if (assets != null) for (int index = 0; index < assets.length(); index++) {
                     JSONObject asset = assets.optJSONObject(index);
-                    if (asset != null && APK_NAME.equals(asset.optString("name"))) { apkAsset = asset; break; }
+                    if (asset != null && (LEGACY_APK_NAME.equals(asset.optString("name")) ||
+                            ("MLOG-Scanner-Bridge-" + tag + ".apk").equals(asset.optString("name")))) {
+                        apkAsset = asset; break;
+                    }
                 }
-                if (apkAsset == null) throw new IOException("Release encontrada, mas sem app-release.apk.");
+                if (apkAsset == null) throw new IOException("Release encontrada, mas sem APK da versão " + tag + ".");
+                String apkName = apkAsset.optString("name", "");
                 String downloadUrl = apkAsset.optString("browser_download_url", "");
-                if (!downloadUrl.startsWith(RELEASE_ASSET_PREFIX) || !downloadUrl.endsWith("/" + APK_NAME)) {
+                if (!downloadUrl.startsWith(RELEASE_ASSET_PREFIX) || !downloadUrl.endsWith("/" + apkName)) {
                     throw new IOException("Endereço do APK não corresponde ao repositório esperado.");
                 }
                 String digest = apkAsset.optString("digest", "");
@@ -81,7 +85,7 @@ public final class GitHubReleaseUpdater {
                 temp = new File(dir, "github-download-temp.apk");
                 String actualHash = downloadApk(downloadUrl, temp);
                 if (!expectedHash.equals(actualHash)) throw new IOException("Hash do APK divergente; arquivo rejeitado.");
-                verifyApk(pm, context.getPackageName(), temp, availableCode);
+                verifyApk(pm, context.getPackageName(), temp, availableCode, tag.substring(1));
                 File completed = new File(dir, "bridge-github.apk");
                 if (completed.exists() && !completed.delete()) throw new IOException("Não foi possível substituir o APK de atualização anterior.");
                 if (!temp.renameTo(completed)) throw new IOException("Não foi possível finalizar o download.");
@@ -173,12 +177,15 @@ public final class GitHubReleaseUpdater {
                 || h.endsWith(".githubusercontent.com");
     }
 
-    private static void verifyApk(PackageManager pm, String packageName, File file, long expectedVersion) throws Exception {
+    private static void verifyApk(PackageManager pm, String packageName, File file,
+                                  long expectedVersion, String expectedVersionName) throws Exception {
         final int flags = Build.VERSION.SDK_INT >= 28 ? PackageManager.GET_SIGNING_CERTIFICATES : PackageManager.GET_SIGNATURES;
         PackageInfo info = pm.getPackageArchiveInfo(file.getAbsolutePath(), flags);
         if (info == null) throw new IOException("APK não reconhecido pelo Android.");
         if (!packageName.equals(info.packageName)) throw new IOException("O APK não pertence ao Scanner Bridge.");
-        if (code(info) != expectedVersion) throw new IOException("A versão do APK não corresponde à Release.");
+        if (code(info) != expectedVersion) throw new IOException("O versionCode do APK não corresponde à Release.");
+        if (!expectedVersionName.equals(info.versionName))
+            throw new IOException("O versionName do APK não corresponde à Release.");
         Signature[] sigs;
         if (Build.VERSION.SDK_INT >= 28) {
             if (info.signingInfo == null) throw new IOException("APK sem assinatura verificável.");

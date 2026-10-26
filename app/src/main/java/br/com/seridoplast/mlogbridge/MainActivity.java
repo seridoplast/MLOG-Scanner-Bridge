@@ -571,9 +571,9 @@ public final class MainActivity extends Activity {
             boolean ok=NativeScannerController.configure(this);
             toast(ok?"Comandos enviados (aguardando teste de bipe).":"Servico nativo indisponivel.");
         });
-        check(nativeCard,"Segurar gatilho 2 s = leitura continua (teste)",
+        check(nativeCard,"Segurar gatilho 1,5 s = repetir acionamentos (teste)",
             NativeScannerController.LONG_HOLD_PREF,false);
-        subtitle(nativeCard,"Desligado por padrão. Soltar interrompe; limite de segurança: 30 s. Requer botão reconhecido.");
+        subtitle(nativeCard,"Desligado por padrão. Repete o comando de leitura a cada 250 ms ou mais; soltar interrompe (máx. 30 s).");
         subtitle(nativeCard,prefs.getBoolean("native_first_broadcast_seen",false)?
             "Recepcao nativa observada neste teste.":"Ainda sem leitura confirmada pelo canal nativo.");
         button(directCard,"Abrir Assistente de Digitalizacao",false,()->{
@@ -672,7 +672,7 @@ public final class MainActivity extends Activity {
     private void about(){
         String installedVersion="";
         try{installedVersion=getPackageManager().getPackageInfo(getPackageName(),0).versionName;}
-        catch(Exception ignored){installedVersion="3.2.2";}
+        catch(Exception ignored){installedVersion="3.2.3";}
         title("Sobre","MLOG Scanner Bridge · v"+installedVersion);
         LinearLayout updates=card();updates.addView(label("Atualização",17,ink,true));
         subtitle(updates,"Verifica a última versão assinada no GitHub Releases.");

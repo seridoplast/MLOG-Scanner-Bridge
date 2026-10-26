@@ -150,30 +150,44 @@ jobs:
             tests/GitHubReleaseVersionTest.java
           java -cp /tmp/bridge-release-test br.com.seridoplast.mlogbridge.GitHubReleaseVersionTest
 
-      - name: Publicar release para atualização pelo aplicativo (somente repositório público)
+      - name: Nomear APK assinado no padrao vN.N.N
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(sed -n "s/^def bridgeVersion = '\([^']*\)'.*/\1/p" app/build.gradle | head -n1)
+          test -n "$VERSION"
+          cp app/build/outputs/apk/release/app-release.apk \
+             "app/build/outputs/apk/release/MLOG-Scanner-Bridge-v${VERSION}.apk"
+
+      - name: Publicar Release vN.N.N com APK assinado
         if: github.event.repository.private == false
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG="bridge-build-${GITHUB_RUN_NUMBER}"
-          APK='app/build/outputs/apk/release/app-release.apk'
-          test -s "$APK"
+          VERSION=$(sed -n "s/^def bridgeVersion = '\([^']*\)'.*/\1/p" app/build.gradle | head -n1)
+          [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
+            echo '::error::versionName precisa seguir N.N.N, ex.: 3.2.3'
+            exit 1
+          }
+          TAG="v${VERSION}"
+          ASSET="app/build/outputs/apk/release/MLOG-Scanner-Bridge-${TAG}.apk"
+          test -s "$ASSET"
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$APK" --clobber --repo "$GITHUB_REPOSITORY"
+            echo "::warning::Release $TAG ja existe. Atualize bridgeVersion antes de publicar outra; nao substituiremos um APK ja distribuido."
           else
-            gh release create "$TAG" "$APK" --repo "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" --title "Scanner Bridge build ${GITHUB_RUN_NUMBER}" \
-              --notes "APK assinado para atualização interna. versionCode: $((100000 + GITHUB_RUN_NUMBER))" \
+            gh release create "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" --title "MLOG Scanner Bridge ${TAG}" \
+              --notes "Versao ${TAG}: leitor otimizado, gatilho longo opcional e atualizador pelo GitHub. APK assinado." \
               --latest
           fi
 
       - name: Publicar APK assinado para download
         uses: actions/upload-artifact@v4
         with:
-          name: MLOG-Scanner-Bridge-enter-proprio-APK-ASSINADO
-          path: app/build/outputs/apk/release/app-release.apk
+          name: MLOG-Scanner-Bridge-APK-ASSINADO
+          path: app/build/outputs/apk/release/MLOG-Scanner-Bridge-v*.apk
           if-no-files-found: error
           retention-days: 14
 

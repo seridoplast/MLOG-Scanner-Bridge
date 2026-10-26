@@ -2,6 +2,13 @@ plugins { id 'com.android.application' }
 
 // A mesma chave assina todas as builds de producao.
 // NUNCA gravar senhas ou keystore neste arquivo/repositório.
+// ALTERAR SOMENTE ESTA LINHA para a proxima versao (ex.: 3.2.4).
+def bridgeVersion = '3.2.3'
+def bridgeParts = bridgeVersion.tokenize('.').collect { it.toInteger() }
+if (bridgeParts.size() != 3 || bridgeParts.any { it < 0 || it > 99 }) {
+    throw new GradleException('bridgeVersion precisa estar em N.N.N, com cada parte entre 0 e 99')
+}
+def bridgeCode = 1000000 + bridgeParts[0] * 10000 + bridgeParts[1] * 100 + bridgeParts[2]
 android {
     namespace 'br.com.seridoplast.mlogbridge'
     compileSdk 35
@@ -10,11 +17,10 @@ android {
         applicationId 'br.com.seridoplast.mlogbridge'
         minSdk 26
         targetSdk 35
-        // No GitHub Actions, incrementa em cada execucao do workflow.
-        // O valor local serve somente para compilacoes fora do CI.
-        def runNumber = System.getenv('GITHUB_RUN_NUMBER')
-        versionCode (runNumber ? (100000 + runNumber.toInteger()) : 45)
-        versionName '3.2.2-atualizacao-github'
+        // Versao semantica estavel: app local e release CI usam o mesmo codigo.
+        // Maior que o legado de 100000+numero da execucao (evita downgrade).
+        versionCode bridgeCode
+        versionName bridgeVersion
     }
 
     signingConfigs {
