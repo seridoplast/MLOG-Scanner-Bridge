@@ -62,6 +62,32 @@ final class NativeScannerController {
         }
     }
 
+    // Comandos usados pelo assistente Hikrobot. Somente no modo longo opt-in.
+    // Enviados diretamente ao servico do hardware, sem abrir app auxiliar.
+    static boolean startContinuous(Context context,int intervalMs) {
+        if(!isInstalled(context))return false;
+        try {
+            sendString(context,"com.service.scanner.scanmode","scanMode","continuous");
+            Intent cfg=target("com.service.scanner.scan.continuous.interval");
+            cfg.putExtra("intervalTime",Math.max(250,intervalMs));
+            context.sendBroadcast(cfg);
+            context.sendBroadcast(new Intent("com.service.scanner.start.scanning"));
+            Log.i("MLOGBridge","LONG_HOLD_NATIVE_START_SENT");
+            return true;
+        } catch(RuntimeException ex) {
+            Log.e("MLOGBridge","LONG_HOLD_START_FAILED",ex);
+            stopContinuous(context);
+            return false;
+        }
+    }
+    static void stopContinuous(Context context) {
+        try {context.sendBroadcast(new Intent("com.service.scanner.stop.scanning"));}
+        catch(RuntimeException ex){Log.w("MLOGBridge","LONG_HOLD_STOP_FAILED",ex);}
+        try {sendString(context,"com.service.scanner.scanmode","scanMode","trigger");}
+        catch(RuntimeException ex){Log.w("MLOGBridge","LONG_HOLD_RESTORE_FAILED",ex);}
+    }
+    static final String LONG_HOLD_PREF="long_hold_trigger_v320";
+
     private static Intent target(String action) {
         Intent intent = new Intent(action);
         intent.setComponent(new ComponentName(PACKAGE, RECEIVER));

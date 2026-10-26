@@ -15,7 +15,7 @@ final class SeparatedQuantityProbe {
     }
     private static final Pattern PRODUCT=Pattern.compile("(?s)^\\s*([0-9]{2,})\\s*[-–]");
     private static final Pattern SEPARATED=Pattern.compile(
-        "(?is)([0-9]+)\\s*(PC|UN|UND|UNID|PÇ|PÇS)\\s*SEPARADO(?:S|AS)?");
+        "(?is)([0-9]+)\\s*(FD|CX|PC|UN|UND|UNID|PÇ|PÇS)\\s*SEPARADO(?:S|AS)?");
     private SeparatedQuantityProbe(){}
     static Result parse(CharSequence text){
         if(text==null)return null;

@@ -85,6 +85,24 @@ jobs:
             tests/BarcodePreEnterGuardTest.java
           java -cp /tmp/bridge-test br.com.seridoplast.mlogbridge.BarcodePreEnterGuardTest
 
+      - name: Testar validação de GTIN, transição de produto e gatilho longo
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bridge-test-320
+          javac -d /tmp/bridge-test-320 \
+            app/src/main/java/br/com/seridoplast/mlogbridge/BarcodeIntegrityPolicy.java \
+            app/src/main/java/br/com/seridoplast/mlogbridge/SeparationProductGuard.java \
+            app/src/main/java/br/com/seridoplast/mlogbridge/LongHoldScanPolicy.java \
+            app/src/main/java/br/com/seridoplast/mlogbridge/SeparatedQuantityProbe.java \
+            tests/BarcodeIntegrityPolicyTest.java \
+            tests/SeparationProductGuardTest.java \
+            tests/LongHoldScanPolicyTest.java \
+            tests/SeparatedQuantityProbeTest.java
+          for test in BarcodeIntegrityPolicyTest SeparationProductGuardTest LongHoldScanPolicyTest SeparatedQuantityProbeTest; do
+            java -cp /tmp/bridge-test-320 br.com.seridoplast.mlogbridge.$test
+          done
+
       - name: Compilar APK de producao com assinatura fixa
         env:
           BRIDGE_SIGNING_STORE_PASSWORD: ${{ secrets.BRIDGE_KEYSTORE_PASSWORD }}

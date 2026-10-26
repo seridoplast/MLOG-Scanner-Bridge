@@ -565,6 +565,9 @@ public final class MainActivity extends Activity {
             boolean ok=NativeScannerController.configure(this);
             toast(ok?"Comandos enviados (aguardando teste de bipe).":"Servico nativo indisponivel.");
         });
+        check(nativeCard,"Segurar gatilho 2 s = leitura continua (teste)",
+            NativeScannerController.LONG_HOLD_PREF,false);
+        subtitle(nativeCard,"Desligado por padrão. Soltar interrompe; limite de segurança: 30 s. Requer botão reconhecido.");
         subtitle(nativeCard,prefs.getBoolean("native_first_broadcast_seen",false)?
             "Recepcao nativa observada neste teste.":"Ainda sem leitura confirmada pelo canal nativo.");
         button(directCard,"Abrir Assistente de Digitalizacao",false,()->{
@@ -661,7 +664,7 @@ public final class MainActivity extends Activity {
         button(card,"Abrir MLOG",true,this::openMlog);
     }
     private void about(){
-        title("Sobre","MLOG Scanner Bridge · v3.1.3");
+        title("Sobre","MLOG Scanner Bridge · v3.2.0");
         LinearLayout about=card();about.addView(label("Integração local",17,ink,true));
         subtitle(about,"Integração CMX + MLOG. Sem histórico dos códigos.");
         LinearLayout control=card();control.addView(label("Permissões",17,ink,true));
@@ -675,7 +678,12 @@ public final class MainActivity extends Activity {
         b.setPadding(0,dp(5),0,dp(5));b.setChecked(prefs.getBoolean(key,fallback));
         b.setOnCheckedChangeListener((control,on)->{
             prefs.edit().putBoolean(key,on).apply();
-            if("fast_ime_mode".equals(key) || "experimental_bridge_ime".equals(key) || "trigger_prefocus".equals(key)){
+            if("fast_ime_mode".equals(key) || "experimental_bridge_ime".equals(key) ||
+                "trigger_prefocus".equals(key) || NativeScannerController.LONG_HOLD_PREF.equals(key)){
+                if(NativeScannerController.LONG_HOLD_PREF.equals(key) && !on){
+                    MlogFocusAccessibilityService active=MlogFocusAccessibilityService.current();
+                    if(active!=null)active.stopLongHold();
+                }
                 MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
                 if(svc!=null)svc.refreshEventThrottle();
             }

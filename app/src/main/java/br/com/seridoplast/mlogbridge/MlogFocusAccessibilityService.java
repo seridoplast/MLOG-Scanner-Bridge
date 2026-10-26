@@ -43,6 +43,13 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     static MlogFocusAccessibilityService current(){return instance;}
 
     private final Handler main=new Handler(Looper.getMainLooper());
+    private final SeparationProductGuard productGuard=new SeparationProductGuard();
+    private final LongHoldScanPolicy longHoldPolicy=new LongHoldScanPolicy();
+    private int currentLongHoldKey=-1;
+    private int longHoldGeneration;
+    // Protecao adicional se o Android nao entregar ACTION_UP (ex.: bloqueio da tela).
+    private static final long LONG_HOLD_MAX_MS=30000L;
+
     private BroadcastReceiver receiver;
     private boolean receiverRegistered;
     // Confirmar uma vez POR LEITURA, nunca bloquear pelo valor do codigo.
@@ -145,7 +152,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                       AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS |
                       AccessibilityServiceInfo.FLAG_INPUT_METHOD_EDITOR;
             configuredFastEvents=fastImeMode();
-            configuredTriggerEvents=prefs().getBoolean("trigger_prefocus",false);
+            configuredTriggerEvents=prefs().getBoolean("trigger_prefocus",false) ||
+                prefs().getBoolean(NativeScannerController.LONG_HOLD_PREF,false);
             if(configuredTriggerEvents)
                 si.flags|=AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS;
             else si.flags&=~AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS;
@@ -165,6 +173,16 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                                 (code.length()-cleaned.length())+" caracteres invisíveis.");
                     }
                     code=cleaned;
+                }
+                // O codigo decodificado nao deve ser alterado nem confirmado
+                // quando vier vazio, com controle ou checksum GS1 invalido.
+                // O tipo declarado pelo hardware nao e uma prova de que todo
+                // numero de 13 digitos e EAN: preservamos os codigos internos.
+                if(prefs().getBoolean(NativeScannerController.PREF,false) &&
+                   !BarcodeIntegrityPolicy.isValid(code,ScannerProtocol.type(intent))){
+                    trace("SCAN_INTEGRITY_REJECTED");
+                    status("Leitura invalida: aproxime a etiqueta e bipe novamente.");
+                    return;
                 }
                 // Leitura que contem SOMENTE artefatos nao pode ser inserida.
                 if(code!=null && BarcodeCleaner.clean(code).isEmpty()){
@@ -260,6 +278,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     void refreshEventThrottle(){
         boolean fast=fastImeMode();
         boolean trigger=prefs().getBoolean("trigger_prefocus",false) ||
+            prefs().getBoolean(NativeScannerController.LONG_HOLD_PREF,false) ||
             prefs().getBoolean(BridgeEnterPolicy.PREFERENCE,false);
         if(fast==configuredFastEvents && trigger==configuredTriggerEvents)return;
         AccessibilityServiceInfo info=getServiceInfo();
@@ -304,6 +323,15 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         if(currentRoot==null || isBlockingOverlay(currentRoot)){
             trace("SCAN_BLOCKED_BY_OVERLAY");
             status("Feche informacoes/aviso antes da proxima leitura.");
+            return;
+        }
+        // Depois que o MLOG muda de produto, a etiqueta antiga pode seguir
+        // no alcance do scanner. Nao enviar codigo repetido do item anterior.
+        SeparatedQuantityProbe.Result currentProduct=separatedOnScreen();
+        if(prefs().getBoolean(NativeScannerController.PREF,false) &&
+            currentProduct!=null && productGuard.rejects(currentProduct.product,code)){
+            trace("PREVIOUS_PRODUCT_BARCODE_BLOCKED");
+            status("O MLOG mudou de produto. Bipe a etiqueta do novo item.");
             return;
         }
         // Sem fila: nao executar posteriormente uma leitura antiga.
@@ -574,7 +602,70 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
      * Nao clicar novamente quando um editor de codigo ja estiver focado:
      * o botao do MLOG pode funcionar como alternancia e fechar a entrada.
      */
+    private void observeLongHold(KeyEvent event) {
+        if(event==null)return;
+        int key=event.getKeyCode();
+        if(event.getAction()==KeyEvent.ACTION_UP){
+            if(longHoldPolicy.holdingKey(key)){
+                boolean wasActive=longHoldPolicy.up(key);
+                ++longHoldGeneration;
+                currentLongHoldKey=-1;
+                if(wasActive){NativeScannerController.stopContinuous(this);trace("LONG_HOLD_RELEASE_STOPPED");}
+                else trace("LONG_HOLD_RELEASE_BEFORE_2S");
+            }
+            return;
+        }
+        if(!prefs().getBoolean(NativeScannerController.LONG_HOLD_PREF,false) ||
+            !prefs().getBoolean(NativeScannerController.PREF,false) ||
+            !ScanCoordinator.isActive(this) || event.getAction()!=KeyEvent.ACTION_DOWN ||
+            event.getRepeatCount()!=0)return;
+        int learned=prefs().getInt("learned_trigger_key",-1);
+        // O firmware deste coletor expôs 277 no diagnostico do gatilho.
+        if(!(isScannerTriggerKey(key) || key==277 || key==learned))return;
+        AccessibilityNodeInfo root=mlogRoot();
+        if(root==null || isBlockingOverlay(root))return;
+        ScreenInfo info=inspect(root);
+        if(info.login || info.dialog || "desconhecida".equals(info.screen))return;
+        long now=SystemClock.elapsedRealtime();
+        if(!longHoldPolicy.down(key,now))return;
+        currentLongHoldKey=key;
+        int generation=++longHoldGeneration;
+        trace("LONG_HOLD_ARMED_2S");
+        main.postDelayed(()->{
+            if(generation!=longHoldGeneration || !longHoldPolicy.shouldStart(SystemClock.elapsedRealtime()) ||
+                !prefs().getBoolean(NativeScannerController.LONG_HOLD_PREF,false))return;
+            AccessibilityNodeInfo visible=mlogRoot();
+            if(visible==null || isBlockingOverlay(visible)){
+                longHoldPolicy.reset();currentLongHoldKey=-1;return;
+            }
+            boolean sent=NativeScannerController.startContinuous(this,
+                Math.max(250,(int)timedClickGate.getCooldownMs()));
+            if(sent){
+                longHoldPolicy.started();
+                trace("LONG_HOLD_CONTINUOUS_STARTED");
+                main.postDelayed(()->{
+                    if(generation==longHoldGeneration && longHoldPolicy.isContinuous()){
+                        NativeScannerController.stopContinuous(this);
+                        longHoldPolicy.reset();currentLongHoldKey=-1;
+                        ++longHoldGeneration;
+                        trace("LONG_HOLD_SAFETY_STOP_30S");
+                    }
+                },LONG_HOLD_MAX_MS);
+            } else {
+                longHoldPolicy.reset();currentLongHoldKey=-1;
+                trace("LONG_HOLD_START_UNAVAILABLE");
+            }
+        },LongHoldScanPolicy.HOLD_MS);
+    }
+
+    void stopLongHold(){
+        ++longHoldGeneration;
+        if(longHoldPolicy.isContinuous())NativeScannerController.stopContinuous(this);
+        longHoldPolicy.reset();currentLongHoldKey=-1;
+    }
+
     @Override protected boolean onKeyEvent(KeyEvent event){
+        observeLongHold(event);
         if(event!=null && BridgeEnterPolicy.active(prefs().getBoolean(
                 BridgeEnterPolicy.PREFERENCE,false)) &&
            (event.getKeyCode()==KeyEvent.KEYCODE_ENTER ||
@@ -1354,6 +1445,16 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             finishQueuedScan("codigo_incompleto_sem_enter");
             return;
         }
+        // Captura leve ANTES do Enter; protege a transicao de um item
+        // para o seguinte sem aguardar contagem ou retorno do servidor.
+        SeparatedQuantityProbe.Result productNow=separatedOnScreen();
+        if(prefs().getBoolean(NativeScannerController.PREF,false) &&
+            productNow!=null && productGuard.rejects(productNow.product,expected)){
+            trace("PREVIOUS_PRODUCT_ENTER_BLOCKED");
+            status("Produto mudou. Confira a nova etiqueta antes de continuar.");
+            finishQueuedScan("produto_anterior_sem_enter");
+            return;
+        }
         trace("PRE_ENTER_CODE_EXACT_MATCH");
         trace("FIXED_ENTER_TIMER_FIRED");
         boolean sent=BridgeScanInputMethodService.sendEnterForVerifiedScan();
@@ -1371,6 +1472,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 if(sent)trace("FIXED_ENTER_ACCESSIBILITY_FALLBACK");
             }
         }
+        if(sent && productNow!=null && prefs().getBoolean(NativeScannerController.PREF,false))
+            productGuard.sent(productNow.product,expected);
         lastFixedEnterAt=SystemClock.elapsedRealtime();
         trace(sent?"FIXED_ENTER_SENT_NO_VISUAL_WAIT":"FIXED_ENTER_UNAVAILABLE");
         if(!sent)status("Enter nao enviado. Confira o teclado Bridge e a acessibilidade.");
@@ -2320,8 +2423,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         scheduleAutoRepeat();
     }
 
-    @Override public void onInterrupt(){cancelAutoCount("Acessibilidade interrompida; contador cancelado.");cancelPending();scanQueue.clear();++workGeneration;restoreKeyboard();status("Acessibilidade interrompida.");}
+    @Override public void onInterrupt(){stopLongHold();cancelAutoCount("Acessibilidade interrompida; contador cancelado.");cancelPending();scanQueue.clear();++workGeneration;restoreKeyboard();status("Acessibilidade interrompida.");}
     @Override public void onDestroy(){
+        stopLongHold();
         cancelAutoCount("Acessibilidade encerrada; contador cancelado.");
         if(receiverRegistered)try{unregisterReceiver(receiver);}catch(RuntimeException ignored){}
         main.removeCallbacksAndMessages(null);
