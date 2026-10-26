@@ -1659,7 +1659,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 return;
             }
             // No maximo UMA correcao de ACTION_SET_TEXT. Sem loop de 1,5 s.
-            if(!wasRepaired && focused){
+            if(!wasRepaired && focused && BarcodePreEnterGuard.canRepairPrefix(expected,actual)){
                 try{
                     Bundle data=new Bundle();
                     data.putCharSequence(
@@ -1672,6 +1672,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                     }
                 }catch(RuntimeException ignored){}
             }
+            if(focused && !BarcodePreEnterGuard.canRepairPrefix(expected,actual))
+                trace("PRE_ENTER_FOREIGN_TEXT_BLOCKED");
             trace(focused?"PRE_ENTER_INCOMPLETE_BLOCKED":"PRE_ENTER_EDITOR_NOT_READY_BLOCKED");
             status("Codigo incompleto no campo: Enter bloqueado. Bipe novamente.");
             // Nao confirmar textos parciais nem executar Enter para uma fila antiga.
