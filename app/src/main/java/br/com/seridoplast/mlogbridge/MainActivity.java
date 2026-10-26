@@ -436,281 +436,138 @@ public final class MainActivity extends Activity {
         button(service,"Abrir MLOG",true,this::openMlog);
         button(service,"Acessibilidade do Android",false,()->startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
     }
+    /** Dois modos exclusivos: antigo por acessibilidade ou Zebra por IME.
+     * Ambos utilizam a mesma decodificacao nativa, nunca digitam simultaneamente. */
+    private void selectReadMode(boolean zebra){
+        boolean current=prefs.getBoolean(ZebraImeMode.PREF,false);
+        if(current==zebra){
+            String key=zebra?"zebra_options_expanded_v327":"legacy_options_expanded_v327";
+            prefs.edit().putBoolean(key,!prefs.getBoolean(key,true)).apply();
+            displayPage();return;
+        }
+        if(zebra && !NativeScannerController.isInstalled(this)){
+            toast("Servico nativo do leitor nao encontrado. Modo antigo preservado.");return;
+        }
+        if(zebra && !NativeScannerController.configure(this)){
+            toast("Nao foi possivel enviar configuracao ao leitor.");return;
+        }
+        prefs.edit()
+            .putBoolean(ZebraImeMode.PREF,zebra)
+            .putBoolean(NativeScannerController.PREF,true)
+            .putBoolean(DirectScanPolicy.PREF,true)
+            .putBoolean(BridgeEnterPolicy.PREFERENCE,!zebra)
+            .putBoolean("enabled",true)
+            .putBoolean(zebra?"zebra_options_expanded_v327":"legacy_options_expanded_v327",true)
+            .apply();
+        BridgeScanInputMethodService.resetForModeChange();
+        MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
+        if(svc!=null)svc.refreshEventThrottle();
+        displayPage();
+        if(zebra && !keyboardSelected()){
+            new AlertDialog.Builder(this)
+                .setTitle("Selecionar teclado Bridge")
+                .setMessage("O modo Zebra exige selecionar MLOG Bridge como teclado no Android e abrir o campo de leitura no MLOG. O teclado nao pode criar foco sozinho sem acessibilidade.")
+                .setPositiveButton("Escolher teclado",(dialog,which)->{
+                    if(!keyboardEnabled())startActivity(new Intent(Settings.ACTION_INPUT_METHOD_SETTINGS));
+                    else{
+                        InputMethodManager im=(InputMethodManager)getSystemService(Context.INPUT_METHOD_SERVICE);
+                        if(im!=null)im.showInputMethodPicker();
+                    }
+                })
+                .setNegativeButton("Depois",null).show();
+        }
+    }
     private void settings(){
-        title("Ajustes","Preferências de leitura e aparência.");
-        LinearLayout read=card();read.addView(label("Leitura",17,ink,true));
-        check(read,"Leitura assistida","enabled",true);
-        subtitle(read,"Abre o campo e envia o código ao MLOG.");
-        // Preparacao antecipada removida: era a causa de campo abrindo antes do bipe.
-        check(read,"Toque guiado (telas reconhecidas)","guided_taps",true);
-        check(read,"Detectar teclado de produtos","layout_fallback",true);
-        LinearLayout enter=card();
-        enter.addView(label("Enter da conferência",17,ink,true));
-        final boolean[] updatingEnterToggle={false};
-        CheckBox ownEnter=new CheckBox(this);
-        ownEnter.setButtonTintList(android.content.res.ColorStateList.valueOf(ink));
-        ownEnter.setText("Enviar Enter pelo Bridge (teste)");
-        ownEnter.setTextColor(ink);
-        ownEnter.setTextSize(14);
-        ownEnter.setChecked(prefs.getBoolean(BridgeEnterPolicy.PREFERENCE,false));
-        ownEnter.setEnabled(!prefs.getBoolean(DirectScanPolicy.PREF,false));
-        ownEnter.setOnCheckedChangeListener((button,checked)->{
-            if(updatingEnterToggle[0])return;
-            if(!checked){
-                prefs.edit().putBoolean(BridgeEnterPolicy.PREFERENCE,false)
-                    .putBoolean(DirectScanPolicy.PREF,false).apply();
-                MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
-                if(svc!=null)svc.refreshEventThrottle();
-                toast("Enter próprio desativado.");
-                return;
-            }
-            new AlertDialog.Builder(this)
-                .setTitle("Enter do Bridge")
-                .setMessage("No CMXScanner, use Modo B (broadcast puro), se disponível, e desligue o sufixo Enter. Não deixe dois serviços confirmando o mesmo bipe. Teste um produto por vez.")
-                .setPositiveButton("Ativar teste",(dialog,which)->{
-                    prefs.edit().putBoolean(BridgeEnterPolicy.PREFERENCE,true).apply();
-                    MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
-                    if(svc!=null)svc.refreshEventThrottle();
-                    toast("Enter do Bridge ativo nas conferências.");
-                })
-                .setNegativeButton("Cancelar",(dialog,which)->ownEnter.setChecked(false))
-                .setOnCancelListener(dialog->ownEnter.setChecked(false))
-                .show();
-        });
-        enter.addView(ownEnter);
-        subtitle(enter,"Use sem sufixo Enter no CMX/assistente.");
-        LinearLayout directCard=card();
-        directCard.addView(label("Leitor direto (experimental)",17,ink,true));
-        CheckBox direct=new CheckBox(this);
-        direct.setButtonTintList(android.content.res.ColorStateList.valueOf(ink));
-        direct.setText("Somente transmissão do scanner");
-        direct.setTextColor(ink);
-        direct.setTextSize(14);
-        direct.setChecked(prefs.getBoolean(DirectScanPolicy.PREF,false));
-        direct.setEnabled(!prefs.getBoolean(NativeScannerController.PREF,false));
-        direct.setOnCheckedChangeListener((button,checked)->{
-            if(!checked){
-                prefs.edit().putBoolean(DirectScanPolicy.PREF,false)
-                    .putBoolean(BridgeEnterPolicy.PREFERENCE,false).apply();
-                updatingEnterToggle[0]=true;
-                ownEnter.setChecked(false);
-                updatingEnterToggle[0]=false;
-                ownEnter.setEnabled(true);
-                toast("Modo direto desligado.");
-                return;
-            }
-            new AlertDialog.Builder(this)
-                .setTitle("Leitor direto - teste")
-                .setMessage("No Assistente de Digitalizacao: DESLIGUE Saida de Foco e Cobertura de Foco; mantenha Saida por Transmissao LIGADA; configure a Acao de Transmissao para " +
-                    DirectScanPolicy.ACTION + " e o rotulo do codigo para " + DirectScanPolicy.EXTRA +
-                    ". Desligue tambem Enter/sufixo do CMX. Sem estes ajustes o Bridge nao recebe dados ou pode duplicar. Teste fora de pedidos reais.")
-                .setPositiveButton("Ativar teste",(dialog,which)->{
-                    prefs.edit().putBoolean(DirectScanPolicy.PREF,true)
-                        .putBoolean(BridgeEnterPolicy.PREFERENCE,true).apply();
-                    updatingEnterToggle[0]=true;
-                    ownEnter.setChecked(true);
-                    updatingEnterToggle[0]=false;
-                    ownEnter.setEnabled(false);
-                    MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
-                    if(svc!=null)svc.refreshEventThrottle();
-                    toast("Somente canal direto; Enter do Bridge.");
-                })
-                .setNegativeButton("Cancelar",(dialog,which)->direct.setChecked(false))
-                .setOnCancelListener(dialog->direct.setChecked(false))
-                .show();
-        });
-        directCard.addView(direct);
-        subtitle(directCard,"Broadcast exclusivo, sem digitacao do fabricante.");
-        LinearLayout nativeCard=card();
-        nativeCard.addView(label("Leitor do coletor (novo)",17,ink,true));
-        CheckBox nativeCheck=new CheckBox(this);
-        nativeCheck.setButtonTintList(android.content.res.ColorStateList.valueOf(ink));
-        nativeCheck.setText("Controlar leitor pelo Bridge (teste)");
-        nativeCheck.setTextColor(ink);
-        nativeCheck.setTextSize(14);
-        nativeCheck.setChecked(prefs.getBoolean(NativeScannerController.PREF,false));
-        nativeCheck.setOnCheckedChangeListener((button,checked)->{
-            if(!checked){
-                prefs.edit().putBoolean(NativeScannerController.PREF,false)
-                    .putBoolean(ZebraImeMode.PREF,false)
-                    .putBoolean(DirectScanPolicy.PREF,false)
-                    .putBoolean(BridgeEnterPolicy.PREFERENCE,false).apply();
-                toast("Controle desligado no Bridge. Ajustes do scanner permanecem; restaure no Assistente se necessario.");
-                displayPage();
-                return;
-            }
-            if(!NativeScannerController.isInstalled(this)){
-                toast("Servico nativo Hikrobot nao encontrado. Nao alterei o leitor.");
-                nativeCheck.setChecked(false);
-                return;
-            }
-            new AlertDialog.Builder(this)
-                .setTitle("Bridge controla o scanner")
-                .setMessage("Teste APENAS em um coletor e pedido de treinamento. O Bridge enviara comandos ao servico nativo para retirar a digitacao/Enter do fabricante e receber apenas broadcast. Isso muda configuracoes globais do leitor; desligar este controle no Bridge nao restaura automaticamente os parametros anteriores. Fotografe as configuracoes atuais para poder reverter.")
-                .setPositiveButton("Ativar teste",(dialog,which)->{
-                    if(!NativeScannerController.configure(this)){
-                        toast("Falha ao enviar configuracao ao servico nativo.");
-                        nativeCheck.setChecked(false);
-                        return;
-                    }
-                    prefs.edit().putBoolean(NativeScannerController.PREF,true)
-                        .putBoolean(DirectScanPolicy.PREF,true)
-                        .putBoolean(BridgeEnterPolicy.PREFERENCE,true)
-                        .putBoolean("native_first_broadcast_seen",false).apply();
-                    MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
-                    if(svc!=null)svc.refreshEventThrottle();
-                    toast("Comandos enviados. Bipe um codigo e confira o diagnostico.");
-                    displayPage();
-                })
-                .setNegativeButton("Cancelar",(dialog,which)->nativeCheck.setChecked(false))
-                .setOnCancelListener(dialog->nativeCheck.setChecked(false))
-                .show();
-        });
-        nativeCard.addView(nativeCheck);
-        subtitle(nativeCard,"Sem CMXScanner aberto. Requer servico do hardware e acessibilidade.");
-        button(nativeCard,"Reaplicar comando no scanner",false,()->{
-            if(!prefs.getBoolean(NativeScannerController.PREF,false)){
-                toast("Ative primeiro o controle nativo.");return;
-            }
-            boolean ok=NativeScannerController.configure(this);
-            toast(ok?"Comandos enviados (aguardando teste de bipe).":"Servico nativo indisponivel.");
-        });
-        if(!prefs.getBoolean(ZebraImeMode.PREF,false)){
-            check(nativeCard,"Segurar gatilho 1 s = repetir leituras (teste)",
+        title("Ajustes","Selecione um modo de leitura.");
+        final boolean zebra=prefs.getBoolean(ZebraImeMode.PREF,false);
+        LinearLayout modeOld=card();
+        modeOld.addView(label(zebra?"Bipe antigo":"✓ Bipe antigo · Ativo",18,ink,true));
+        subtitle(modeOld,"Leitor nativo + foco e Enter pela acessibilidade.");
+        button(modeOld,zebra?"Ativar bipe antigo":
+            (prefs.getBoolean("legacy_options_expanded_v327",true)?"Ocultar ajustes":"Configurar bipe antigo"),
+            !zebra,()->selectReadMode(false));
+        if(!zebra && prefs.getBoolean("legacy_options_expanded_v327",true)){
+            space(modeOld,8);
+            check(modeOld,"Leitura assistida","enabled",true);
+            check(modeOld,"Detectar botao de teclado","layout_fallback",true);
+            check(modeOld,"Toques guiados em telas reconhecidas","guided_taps",true);
+            check(modeOld,"Enter pelo Bridge",BridgeEnterPolicy.PREFERENCE,true);
+            check(modeOld,"Repetir ao segurar gatilho 1 s (teste)",
                 NativeScannerController.LONG_HOLD_PREF,false);
-            subtitle(nativeCard,"Desligado por padrão. Repete no intervalo de ms configurado (mín. 40 ms); soltar interrompe (máx. 30 s).");
-        }else{
-            subtitle(nativeCard,"Gatilho longo indisponível no modo Zebra (sem acessibilidade). Use bipes normais.");
+            button(modeOld,"Reaplicar configuracao do leitor",false,()->{
+                boolean ok=NativeScannerController.configure(this);
+                toast(ok?"Comandos enviados ao scanner.":"Nao foi possivel configurar scanner.");
+            });
+            button(modeOld,"Abrir Acessibilidade",false,this::openAccessibilitySettings);
         }
-        subtitle(nativeCard,prefs.getBoolean("native_first_broadcast_seen",false)?
-            "Recepcao nativa observada neste teste.":"Ainda sem leitura confirmada pelo canal nativo.");
-        LinearLayout zebraCard=card();
-        zebraCard.addView(label("Modo Zebra — teclado direto (teste)",17,ink,true));
-        CheckBox zebraMode=new CheckBox(this);
-        zebraMode.setButtonTintList(android.content.res.ColorStateList.valueOf(ink));
-        zebraMode.setText("Enviar codigo e Enter pelo teclado Bridge");
-        zebraMode.setTextColor(ink);
-        zebraMode.setTextSize(14);
-        zebraMode.setChecked(prefs.getBoolean(ZebraImeMode.PREF,false));
-        zebraMode.setOnCheckedChangeListener((button,checked)->{
-            if(!checked){
-                prefs.edit().putBoolean(ZebraImeMode.PREF,false).apply();
-                toast("Modo Zebra desligado. O fluxo antigo continua disponivel.");
-                displayPage();return;
-            }
-            if(!NativeScannerController.isInstalled(this)){
-                toast("Servico nativo do leitor nao encontrado.");
-                zebraMode.setChecked(false);return;
-            }
-            new AlertDialog.Builder(this)
-                .setTitle("Testar teclado direto")
-                .setMessage("O Bridge recebera o codigo por broadcast nativo e o enviara pela InputConnection do teclado, sem busca de tela por acessibilidade. Teste em um pedido de treinamento; o MLOG ainda pode rejeitar um Enter e as leituras nao sao comprovantes de gravacao. Selecione o teclado Bridge no Android antes de testar. O controle do scanner e global e pode precisar ser restaurado manualmente.")
-                .setPositiveButton("Ativar teste",(dialog,which)->{
-                    if(!NativeScannerController.configure(this)){
-                        toast("Nao foi possivel configurar o scanner nativo.");
-                        zebraMode.setChecked(false);return;
-                    }
-                    prefs.edit().putBoolean(NativeScannerController.PREF,true)
-                        .putBoolean(DirectScanPolicy.PREF,true)
-                        .putBoolean(ZebraImeMode.PREF,true)
-                        .putBoolean(BridgeEnterPolicy.PREFERENCE,false)
-                        .putBoolean(NativeScannerController.LONG_HOLD_PREF,false)
-                        .apply();
-                    toast("Modo ativado. Selecione o teclado Bridge e abra o campo do MLOG.");
-                    InputMethodManager imm=(InputMethodManager)getSystemService(Context.INPUT_METHOD_SERVICE);
-                    if(imm!=null)imm.showInputMethodPicker();
-                    displayPage();
-                })
-                .setNegativeButton("Cancelar",(dialog,which)->zebraMode.setChecked(false))
-                .setOnCancelListener(dialog->zebraMode.setChecked(false))
-                .show();
-        });
-        zebraCard.addView(zebraMode);
-        subtitle(zebraCard,"Experimental. Requer teclado Bridge selecionado e o campo de leitura do MLOG aberto. Nao precisa de acessibilidade por bipe.");
-        button(zebraCard,"Selecionar teclado Bridge",false,()->{
-            InputMethodManager imm=(InputMethodManager)getSystemService(Context.INPUT_METHOD_SERVICE);
-            if(imm!=null)imm.showInputMethodPicker();
-        });
-        button(directCard,"Abrir Assistente de Digitalizacao",false,()->{
-            Intent launch=getPackageManager().getLaunchIntentForPackage("com.pda.scanassist");
-            if(launch!=null)startActivity(launch);
-            else toast("Abra o Assistente de Digitalizacao manualmente.");
-        });
-        LinearLayout ime=card(); ime.addView(label("Teclado Bridge (experimental)",17,ink,true));
-        check(ime,"Usar teclado Bridge (compacto)","experimental_bridge_ime",true);
-        check(ime,"Leitura rápida (teste)","fast_ime_mode",true);
-        check(ime,"Pré-foco pelo gatilho físico","trigger_prefocus",true);
-        button(ime,"Aprender botão do coletor",false,()->{
-            prefs.edit().putBoolean("learn_trigger_armed",true).apply();
-            toast("Abra o MLOG e pressione o gatilho uma vez para calibrar.");
-        });
-        subtitle(ime,"Ative e selecione o teclado Bridge nas configurações do Android.");
-        button(ime,"1. Habilitar teclado no Android",false,()->startActivity(new Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)));
-        button(ime,"2. Selecionar teclado / voltar ao Gboard",true,()->{
-            android.view.inputmethod.InputMethodManager imm=(android.view.inputmethod.InputMethodManager)getSystemService(Context.INPUT_METHOD_SERVICE);
-            if(imm!=null)imm.showInputMethodPicker();
-        });
-        String selectedIme=Settings.Secure.getString(getContentResolver(),Settings.Secure.DEFAULT_INPUT_METHOD);
-        boolean bridgeSelected=selectedIme!=null && selectedIme.startsWith(getPackageName()+"/");
-        subtitle(ime,bridgeSelected?"Teclado Bridge selecionado.":"Teclado Bridge não selecionado.");
-        // Controle de tempo em ms, salvo localmente e aplicado ao servico em uso.
-        LinearLayout advanced=card();
-        advanced.addView(label("Tempo do ciclo (ms)",17,ink,true));
-        subtitle(advanced,"No modo nativo, o tempo controla bipes e Enter.");
-        int activeMs=prefs.getInt(ScanAssistState.CLICK_COOLDOWN_MS,
-            (int)TimedClickGate.COOLDOWN_MS);
-        TextView currentMs=label("Tempo atual: "+activeMs+" ms",14,ink,true);
-        space(advanced,12);
-        advanced.addView(currentMs);
-        LinearLayout cooldownRow=row();
-        EditText cooldownInput=new EditText(this);
-        cooldownInput.setSingleLine(true);
-        cooldownInput.setSelectAllOnFocus(true);
-        cooldownInput.setInputType(InputType.TYPE_CLASS_NUMBER);
-        cooldownInput.setText(String.valueOf(activeMs));
-        cooldownInput.setTextColor(ink);
-        cooldownInput.setHintTextColor(muted);
-        cooldownInput.setTextSize(19);
-        cooldownInput.setContentDescription("Intervalo dos bipes e do Enter em milissegundos");
-        cooldownRow.addView(cooldownInput,new LinearLayout.LayoutParams(0,dp(58),1));
-        TextView units=label("ms",14,muted,true);
-        units.setPadding(dp(10),0,dp(5),0);
-        cooldownRow.addView(units);
-        space(advanced,6);
-        advanced.addView(cooldownRow);
-        subtitle(advanced,"Sem conferir a tela apos o Enter. Tempos baixos podem perder ou duplicar produtos.");
-        button(advanced,"Aplicar tempo",true,()->{
-            String raw=cooldownInput.getText().toString().trim();
+        LinearLayout modeZebra=card();
+        modeZebra.addView(label(zebra?"✓ Bipe Zebra · Ativo":"Bipe Zebra",18,ink,true));
+        subtitle(modeZebra,"Codigo e Enter pelo teclado Android do Bridge (IME).");
+        button(modeZebra,zebra?
+            (prefs.getBoolean("zebra_options_expanded_v327",true)?"Ocultar ajustes":"Configurar bipe Zebra"):
+            "Ativar bipe Zebra",zebra,()->selectReadMode(true));
+        if(zebra && prefs.getBoolean("zebra_options_expanded_v327",true)){
+            space(modeZebra,8);
+            check(modeZebra,"Enter depois do codigo",ZebraImeMode.ENTER_PREF,true);
+            check(modeZebra,"Caracteres como teclas (teste DataWedge)",
+                ZebraImeMode.CHAR_EVENTS_PREF,false);
+            check(modeZebra,"Mostrar barra do teclado",ZebraImeMode.SHOW_PREF,true);
+            check(modeZebra,"Abrir campo pelo Bridge (precisa acessibilidade)",
+                ZebraImeMode.AUTO_FOCUS_PREF,true);
+            check(modeZebra,"Ação IME se nenhum Enter for aceito (teste)",
+                ZebraImeMode.ACTION_FALLBACK_PREF,false);
+            button(modeZebra,"1. Habilitar teclado no Android",false,
+                ()->startActivity(new Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)));
+            button(modeZebra,"2. Selecionar teclado Bridge",true,()->{
+                InputMethodManager im=(InputMethodManager)getSystemService(Context.INPUT_METHOD_SERVICE);
+                if(im!=null)im.showInputMethodPicker();
+            });
+            subtitle(modeZebra,"Teclado: "+(keyboardSelected()?"selecionado ✓":
+                keyboardEnabled()?"habilitado, mas nao selecionado":"nao habilitado"));
+            subtitle(modeZebra,"Campo do MLOG: "+
+                (BridgeScanInputMethodService.hasMlogInput()?"conectado ✓":"sem foco / desconectado"));
+            button(modeZebra,"3. Abrir MLOG e tocar no icone de teclado",false,this::openMlog);
+            button(modeZebra,"Reaplicar configuracao do leitor",false,()->{
+                toast(NativeScannerController.configure(this)?
+                    "Comandos enviados. Teste o bipe no MLOG.":"Scanner indisponivel.");
+            });
+            subtitle(modeZebra,"Se o Android nao abriu o campo, toque no icone de teclado do proprio MLOG. " +
+                "A abertura automatica opcional usa acessibilidade apenas para foco; codigo e Enter continuam pelo IME.");
+        }
+        LinearLayout tempo=card();
+        tempo.addView(label("Intervalo entre leituras (ms)",17,ink,true));
+        int current=prefs.getInt(ScanAssistState.CLICK_COOLDOWN_MS,100);
+        TextView timeLabel=label("Atual: "+current+" ms",14,ink,true);
+        space(tempo,8);tempo.addView(timeLabel);
+        LinearLayout rowTime=row();
+        EditText value=new EditText(this);
+        value.setInputType(InputType.TYPE_CLASS_NUMBER);
+        value.setSingleLine(true);
+        value.setText(String.valueOf(current));
+        value.setTextColor(ink);
+        rowTime.addView(value,new LinearLayout.LayoutParams(0,dp(54),1));
+        rowTime.addView(label(" ms",13,muted,false));
+        tempo.addView(rowTime);
+        button(tempo,"Aplicar intervalo",true,()->{
             int ms;
-            try{ms=Integer.parseInt(raw);}
-            catch(NumberFormatException ex){toast("Informe um número inteiro de 0 ms ou mais.");return;}
-            if(TimedClickGate.validatedCooldown(ms)<0L){
-                toast("Use um valor de 0 ms ou mais.");return;
-            }
+            try{ms=Integer.parseInt(value.getText().toString().trim());}
+            catch(NumberFormatException ex){toast("Informe um inteiro de 0 ms ou mais.");return;}
+            if(ms<0){toast("Valor nao pode ser negativo.");return;}
             prefs.edit().putInt(ScanAssistState.CLICK_COOLDOWN_MS,ms).apply();
             MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
             if(svc!=null)svc.updateClickCooldownMs(ms);
-            currentMs.setText("Tempo atual: "+ms+" ms");
-            toast("Tempo: "+ms+" ms.");
+            timeLabel.setText("Atual: "+ms+" ms");
+            toast("Intervalo aplicado: "+ms+" ms");
         });
-        button(advanced,"Restaurar padrão (100 ms)",false,()->{
-            int ms=(int)TimedClickGate.COOLDOWN_MS;
-            cooldownInput.setText(String.valueOf(ms));
-            prefs.edit().putInt(ScanAssistState.CLICK_COOLDOWN_MS,ms).apply();
-            MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
-            if(svc!=null)svc.updateClickCooldownMs(ms);
-            currentMs.setText("Tempo atual: "+ms+" ms");
-            toast("Bloqueio restaurado para 100 ms.");
-        });
-        LinearLayout appearance=card();appearance.addView(label("Aparência",17,ink,true));
-        LinearLayout bar=row();LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(-1,-2);bp.topMargin=dp(14);
-        for(String[] option:new String[][]{{"auto","Sistema"},{"dark","Escuro"},{"light","Claro"}}){
-            boolean selected=option[0].equals(themeChoice);
-            TextView v=action(option[1],selected,()->chooseTheme(option[0]));
-            LinearLayout.LayoutParams op=new LinearLayout.LayoutParams(0,-2,1);op.leftMargin=dp(4);
-            bar.addView(v,op);
+        LinearLayout appearance=card();
+        appearance.addView(label("Aparencia",17,ink,true));
+        LinearLayout themes=row();
+        for(String[] opt:new String[][]{{"auto","Sistema"},{"dark","Escuro"},{"light","Claro"}}){
+            TextView choice=action(opt[1],opt[0].equals(themeChoice),()->chooseTheme(opt[0]));
+            LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(0,-2,1);
+            p.leftMargin=dp(4);themes.addView(choice,p);
         }
-        appearance.addView(bar,bp);
+        space(appearance,10);appearance.addView(themes);
     }
     private void diagnostic(){
         title("Diagnóstico","Copie o último evento.");

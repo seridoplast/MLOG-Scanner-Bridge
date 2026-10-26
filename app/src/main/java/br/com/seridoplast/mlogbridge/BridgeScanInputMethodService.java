@@ -65,6 +65,43 @@ public final class BridgeScanInputMethodService extends InputMethodService {
         return zebraPrefs().getBoolean(ZebraImeMode.PREF,false) &&
                ScanCoordinator.isActive(this);
     }
+    /** IME so consegue digitar depois que o MLOG criou uma InputConnection.
+     * Teclado selecionado nao significa campo focado. */
+    static boolean hasMlogInput(){
+        BridgeScanInputMethodService ime=active;
+        return ime!=null && ime.zebraEditorReady();
+    }
+    static boolean isRunning(){return active!=null;}
+    static void resetForModeChange(){
+        BridgeScanInputMethodService ime=active;
+        if(ime==null)return;
+        ime.main.post(()->{
+            ++ime.zebraGeneration;
+            ime.zebraQueue.clear();
+            ime.zebraBusy=false;
+            ime.zebraFirstWaitAt=0;
+            ime.zebraReport("MODE_CHANGE_QUEUE_CLEARED");
+        });
+    }
+    /** Receber o primeiro bipe retido enquanto o teclado ainda iniciava.
+     * So vale no MLOG com a conexao ja ativa; sem buffers persistentes. */
+    private void acceptInitialFocusScan(){
+        MlogFocusAccessibilityService helper=MlogFocusAccessibilityService.current();
+        if(helper==null || !zebraEditorReady())return;
+        String initial=helper.consumeZebraInitialScan();
+        if(initial==null)return;
+        if(zebraQueue.size()>=ZebraImeMode.MAX_WAITING){
+            zebraReport("INITIAL_QUEUE_FULL");return;
+        }
+        zebraQueue.addFirst(initial);
+        zebraReport("INITIAL_SCAN_RECOVERED_AFTER_FOCUS");
+        main.post(this::zebraPump);
+    }
+    @Override public boolean onEvaluateInputViewShown(){
+        // Em coletores com teclado/gatilho fisico, Android pode esconder um IME.
+        // Forcar apenas a barra compacta quando o modo Zebra esta selecionado.
+        return zebraEnabled() || super.onEvaluateInputViewShown();
+    }
     private boolean zebraEditorReady(){
         if(!zebraEnabled() || !targetMlog)return false;
         EditorInfo info=getCurrentInputEditorInfo();
@@ -104,9 +141,19 @@ public final class BridgeScanInputMethodService extends InputMethodService {
                 }
                 zebraLastValue=code;zebraLastAt=now;
                 if(!zebraEditorReady()){
-                    zebraReport("NO_MLOG_INPUT_IGNORED");
-                    zebraStatus("Leitura nao enviada: abra o campo de codigo no MLOG.");
-                    return;
+                    // O Zebra DataWedge tambem precisa de um editor ativo.
+                    // Com acessibilidade opcional, tocar APENAS no botao de
+                    // teclado do MLOG; IME continua responsavel por codigo/Enter.
+                    MlogFocusAccessibilityService helper=MlogFocusAccessibilityService.current();
+                    boolean opening=helper!=null &&
+                        zebraPrefs().getBoolean(ZebraImeMode.AUTO_FOCUS_PREF,true) &&
+                        helper.requestZebraKeyboardFocus();
+                    if(!opening){
+                        zebraReport("NO_MLOG_INPUT_IGNORED");
+                        zebraStatus("Sem campo do MLOG. Abra o icone de teclado e selecione o teclado Bridge.");
+                        return;
+                    }
+                    zebraReport("OPENING_MLOG_EDITOR_WITH_OPTIONAL_ACCESSIBILITY");
                 }
                 if(zebraQueue.size()>=ZebraImeMode.MAX_WAITING){
                     zebraReport("QUEUE_FULL_IGNORED");
@@ -166,7 +213,19 @@ public final class BridgeScanInputMethodService extends InputMethodService {
         boolean written=false;
         try{
             conn.beginBatchEdit();
-            written=conn.commitText(code,1);
+            if(zebraPrefs().getBoolean(ZebraImeMode.CHAR_EVENTS_PREF,false)){
+                // Opcao semelhante ao DataWedge "Send Characters as Events".
+                // OFF (padrao): commitText em bloco, mais rapido.
+                // ON: eventos fisicos emulados pelo IME, mais custosos.
+                KeyEvent[] sequence=KeyCharacterMap.load(
+                    KeyCharacterMap.VIRTUAL_KEYBOARD).getEvents(code.toCharArray());
+                written=sequence!=null && sequence.length>0;
+                if(written){
+                    for(KeyEvent event:sequence){
+                        if(!conn.sendKeyEvent(event)){written=false;break;}
+                    }
+                }
+            }else written=conn.commitText(code,1);
         }catch(RuntimeException ex){zebraReport("COMMIT_EXCEPTION");}
         finally{try{conn.endBatchEdit();}catch(RuntimeException ignored){}}
         if(!written){
@@ -205,6 +264,11 @@ public final class BridgeScanInputMethodService extends InputMethodService {
             zebraStatus("Campo mudou antes do Enter. Confira a leitura.");
             zebraDropHead("EDITOR_CHANGED_NO_ENTER");return;
         }
+        if(!zebraPrefs().getBoolean(ZebraImeMode.ENTER_PREF,true)){
+            zebraReport("ENTER_DISABLED_BY_OPERATOR");
+            zebraDropHead("CYCLE_WITHOUT_ENTER");
+            return;
+        }
         long now=SystemClock.uptimeMillis();
         int dev=KeyCharacterMap.VIRTUAL_KEYBOARD;
         int flags=KeyEvent.FLAG_SOFT_KEYBOARD;
@@ -216,7 +280,7 @@ public final class BridgeScanInputMethodService extends InputMethodService {
                 KeyEvent.KEYCODE_ENTER,0,0,dev,0,flags));
         }catch(RuntimeException ex){zebraReport("ENTER_EXCEPTION");}
         boolean sent=down||up;
-        if(!sent){
+        if(!sent && zebraPrefs().getBoolean(ZebraImeMode.ACTION_FALLBACK_PREF,false)){
             EditorInfo info=getCurrentInputEditorInfo();
             int action=info==null?EditorInfo.IME_ACTION_NONE:
                     info.imeOptions&EditorInfo.IME_MASK_ACTION;
@@ -405,13 +469,26 @@ public final class BridgeScanInputMethodService extends InputMethodService {
         targetMlog=info!=null && ScanCoordinator.TARGET.equals(info.packageName);
         // Campo novo / nova app => compacto no MLOG. Se o Flutter reiniciar
         // o input do MESMO campo durante digitacao, manter QWERTY aberto.
-        if(!targetMlog)manual=true;
-        else if(!restarting || !wasTargetMlog)manual=false;
+        if(!targetMlog){
+            manual=true;
+            if(!zebraQueue.isEmpty()){
+                zebraReport("LEFT_MLOG_PENDING_CLEARED");
+                ++zebraGeneration;zebraQueue.clear();zebraBusy=false;
+                zebraFirstWaitAt=0;
+            }
+        }else if(!restarting || !wasTargetMlog)manual=false;
         numeric=info!=null && ((info.inputType&InputType.TYPE_MASK_CLASS)==InputType.TYPE_CLASS_NUMBER);
         upper=false;
         if(panel!=null)render();
         if(zebraEnabled()){
             configureNativeIfNeeded();
+            if(targetMlog)acceptInitialFocusScan();
+            if(zebraEditorReady() && !isInputViewShown() &&
+               zebraPrefs().getBoolean(ZebraImeMode.SHOW_PREF,true)){
+                // Com campo ativo, pede a barra pequena do Bridge mesmo em
+                // equipamentos que reportam teclado fisico.
+                main.post(()->{try{requestShowSelf(0);}catch(RuntimeException ignored){}});
+            }
             main.post(this::zebraPump);
         }
     }
@@ -485,6 +562,11 @@ public final class BridgeScanInputMethodService extends InputMethodService {
         panel.removeAllViews();
         int surface=dark()?0xff111111:0xfff9f9f9;
         panel.setBackgroundColor(surface);
+        if(targetMlog && zebraEnabled() &&
+           !zebraPrefs().getBoolean(ZebraImeMode.SHOW_PREF,true)){
+            // A conexao de entrada continua ativa, somente a barra some.
+            return;
+        }
         // Tela MLOG: uma barra pequena em vez do Gboard de tela cheia.
         LinearLayout top=new LinearLayout(this);
         top.setOrientation(LinearLayout.HORIZONTAL);

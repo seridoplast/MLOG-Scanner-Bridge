@@ -184,8 +184,26 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         }
         receiver=new BroadcastReceiver(){
             @Override public void onReceive(Context context,Intent intent){
-                // IME tipo Zebra e receptor exclusivo; nenhuma acessibilidade por bipe.
-                if(prefs().getBoolean(ZebraImeMode.PREF,false))return;
+                // Modo Zebra: acessibilidade NUNCA escreve codigo nem envia Enter.
+                // Caso o IME ainda nao tenha iniciado, recuperar APENAS o
+                // primeiro bipe utilizado para abrir o campo do MLOG.
+                if(prefs().getBoolean(ZebraImeMode.PREF,false)){
+                    if(intent!=null && DirectScanPolicy.ACTION.equals(intent.getAction()) &&
+                       !BridgeScanInputMethodService.isRunning() &&
+                       prefs().getBoolean(ZebraImeMode.AUTO_FOCUS_PREF,true)){
+                        String code=BarcodeCleaner.clean(ScannerProtocol.barcodeRaw(intent));
+                        if(ZebraImeMode.isValidCode(code,ScannerProtocol.type(intent))){
+                            zebraInitialScan=code;
+                            zebraInitialScanAt=SystemClock.elapsedRealtime();
+                            if(!requestZebraKeyboardFocus())zebraInitialScan=null;
+                        }
+                    }else if(intent!=null && DirectScanPolicy.ACTION.equals(intent.getAction()) &&
+                             !BridgeScanInputMethodService.hasMlogInput() &&
+                             prefs().getBoolean(ZebraImeMode.AUTO_FOCUS_PREF,true)){
+                        requestZebraKeyboardFocus();
+                    }
+                    return;
+                }
                 boolean treat=ScanAssistState.isClean(MlogFocusAccessibilityService.this);
                 String code=treat?ScannerProtocol.barcodeRaw(intent):ScannerProtocol.barcode(intent);
                 if(treat){
@@ -1078,6 +1096,46 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                code==KeyEvent.KEYCODE_BUTTON_L1 || code==KeyEvent.KEYCODE_BUTTON_R1 ||
                code==KeyEvent.KEYCODE_CAMERA || code==KeyEvent.KEYCODE_FOCUS ||
                (code>=KeyEvent.KEYCODE_PROG_RED && code<=KeyEvent.KEYCODE_PROG_BLUE);
+    }
+
+    private String zebraInitialScan;
+    private long zebraInitialScanAt;
+    /** Um bipe durante a abertura do primeiro campo, valido por no maximo 900ms. */
+    String consumeZebraInitialScan(){
+        String c=zebraInitialScan;
+        long age=SystemClock.elapsedRealtime()-zebraInitialScanAt;
+        zebraInitialScan=null;
+        return c!=null && age>=0 && age<=900L?c:null;
+    }
+    private long lastZebraFocusRequestAt;
+    /** Auxilio OPCIONAL de foco: jamais digita codigo nem envia Enter.
+     * Funciona so em telas do MLOG reconhecidas; sem servico habilitado,
+     * o operador toca no icone de teclado manualmente. */
+    boolean requestZebraKeyboardFocus(){
+        if(!prefs().getBoolean(ZebraImeMode.PREF,false) ||
+           !prefs().getBoolean(ZebraImeMode.AUTO_FOCUS_PREF,true))return false;
+        if(BridgeScanInputMethodService.hasMlogInput())return true;
+        long now=SystemClock.elapsedRealtime();
+        if(now-lastZebraFocusRequestAt<650L)return true;
+        AccessibilityNodeInfo root=mlogRoot();
+        if(root==null)return false;
+        ScreenInfo info=inspect(root);
+        if(info.login || info.dialog || "desconhecida".equals(info.screen) ||
+           isBlockingOverlay(root))return false;
+        lastZebraFocusRequestAt=now;
+        AccessibilityNodeInfo editor=safeEditor(info,true);
+        if(editor!=null && editor.isEditable() && editor.isVisibleToUser() &&
+           !editor.isPassword()){
+            boolean focused=editor.isFocused() || focusOrClick(editor);
+            trace(focused?"ZEBRA_FOCUS_EDITOR_REQUESTED":"ZEBRA_EDITOR_NOT_FOCUSABLE");
+            return focused;
+        }
+        AccessibilityNodeInfo button="atividades".equals(info.screen)?
+            activityKeyboard(info):findKeyboardTarget(info);
+        boolean clicked=button!=null && clickNativeKeyboardOnTrigger(button,info.screen);
+        trace(clicked?"ZEBRA_MLOG_KEYBOARD_OPEN_REQUESTED":
+            "ZEBRA_KEYBOARD_ICON_NOT_EXPOSED");
+        return clicked;
     }
 
     private AccessibilityNodeInfo mlogRoot(){
