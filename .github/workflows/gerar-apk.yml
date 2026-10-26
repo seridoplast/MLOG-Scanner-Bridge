@@ -8,7 +8,7 @@ on:
       - master
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   compilar-apk:
@@ -139,6 +139,35 @@ jobs:
           fi
           echo "Assinatura verificada. SHA-256 do certificado: $CERT"
           sha256sum "$APK"
+
+      - name: Testar leitura de versao do GitHub Releases
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bridge-release-test
+          javac -d /tmp/bridge-release-test \
+            app/src/main/java/br/com/seridoplast/mlogbridge/GitHubReleaseVersion.java \
+            tests/GitHubReleaseVersionTest.java
+          java -cp /tmp/bridge-release-test br.com.seridoplast.mlogbridge.GitHubReleaseVersionTest
+
+      - name: Publicar release para atualização pelo aplicativo (somente repositório público)
+        if: github.event.repository.private == false
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="bridge-build-${GITHUB_RUN_NUMBER}"
+          APK='app/build/outputs/apk/release/app-release.apk'
+          test -s "$APK"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$APK" --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" "$APK" --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" --title "Scanner Bridge build ${GITHUB_RUN_NUMBER}" \
+              --notes "APK assinado para atualização interna. versionCode: $((100000 + GITHUB_RUN_NUMBER))" \
+              --latest
+          fi
 
       - name: Publicar APK assinado para download
         uses: actions/upload-artifact@v4

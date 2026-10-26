@@ -2,6 +2,8 @@ package br.com.seridoplast.mlogbridge;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import androidx.core.content.FileProvider;
+import java.io.File;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -56,6 +58,9 @@ public final class MainActivity extends Activity {
     private String lastSymbology;
     private String lastMetadataFields;
     private long lastThemeTapAt;
+    private TextView githubUpdateStatus;
+    private boolean githubChecking;
+    private File githubPendingInstall;
 
     private final BroadcastReceiver scannerTest = new BroadcastReceiver(){
         @Override public void onReceive(Context context,Intent intent){
@@ -254,6 +259,7 @@ public final class MainActivity extends Activity {
             footer.addView(tab,tp);tab.setOnClickListener(v->show(target));
         }
         root.addView(footer);
+        githubUpdateStatus=null;
         preview=null;lastStatus=null;barcodeFormatStatus=null;barcodeArtifactStatus=null;
         barcodeFieldsStatus=null;serviceState=null;setupWarningCard=null;setupWarningLabel=null;setupAccessibilityStep=null;setupKeyboardEnabledStep=null;setupKeyboardSelectedStep=null;setupFloatingStep=null;
         if(page==0)home();else if(page==1)settings();else if(page==2)diagnostic();else about();
@@ -664,14 +670,72 @@ public final class MainActivity extends Activity {
         button(card,"Abrir MLOG",true,this::openMlog);
     }
     private void about(){
-        title("Sobre","MLOG Scanner Bridge · v3.2.1");
+        String installedVersion="";
+        try{installedVersion=getPackageManager().getPackageInfo(getPackageName(),0).versionName;}
+        catch(Exception ignored){installedVersion="3.2.2";}
+        title("Sobre","MLOG Scanner Bridge · v"+installedVersion);
+        LinearLayout updates=card();updates.addView(label("Atualização",17,ink,true));
+        subtitle(updates,"Verifica a última versão assinada no GitHub Releases.");
+        githubUpdateStatus=label("Versão instalada: "+installedVersion,13,muted,false);
+        space(updates,9);updates.addView(githubUpdateStatus);
+        button(updates,"Buscar atualização no GitHub",true,this::checkGitHubUpdate);
+        subtitle(updates,"O Android pede confirmação para instalar. Seus dados são mantidos numa atualização compatível.");
         LinearLayout about=card();about.addView(label("Integração local",17,ink,true));
-        subtitle(about,"Integração CMX + MLOG. Sem histórico dos códigos.");
+        subtitle(about,"Integração do leitor nativo com o MLOG.");
         LinearLayout control=card();control.addView(label("Permissões",17,ink,true));
         button(control,"Informações do app",false,()->startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName()))));
         button(control,"Acessibilidade",false,()->startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
-        subtitle(control,"Autorize a acessibilidade nas configurações.");
+        subtitle(control,accessibilityReady()?"Acessibilidade: ativa":"Acessibilidade: verificar ou reativar após atualizar");
+        subtitle(control,keyboardSelected()?"Teclado Bridge: selecionado":"Teclado Bridge: conferir seleção no Android");
     }
+    private void setUpdateStatus(String text){
+        if(githubUpdateStatus!=null) githubUpdateStatus.setText(text);
+    }
+    private void checkGitHubUpdate(){
+        if(githubChecking){ toast("Verificação em andamento.");return; }
+        githubChecking=true;
+        GitHubReleaseUpdater.checkAndDownload(this,new GitHubReleaseUpdater.Callback(){
+            @Override public void status(String text){ setUpdateStatus(text); }
+            @Override public void upToDate(String text){ githubChecking=false;setUpdateStatus(text); }
+            @Override public void error(String message){
+                githubChecking=false;
+                setUpdateStatus("Não foi possível atualizar: "+message);
+            }
+            @Override public void ready(File file,String tag){
+                githubChecking=false;
+                setUpdateStatus("APK "+tag+" verificado. Instalação pendente.");
+                new AlertDialog.Builder(MainActivity.this)
+                    .setTitle("Atualização verificada")
+                    .setMessage("A nova versão foi baixada e sua assinatura foi validada. O Android pedirá confirmação para atualizar sem desinstalar o aplicativo.")
+                    .setPositiveButton("Instalar",(d,w)->installVerifiedApk(file))
+                    .setNegativeButton("Depois",(d,w)->{})
+                    .show();
+            }
+        });
+    }
+    private void installVerifiedApk(File apk){
+        if(apk==null || !apk.isFile()){setUpdateStatus("Arquivo da atualização não encontrado.");return;}
+        if(Build.VERSION.SDK_INT>=26 && !getPackageManager().canRequestPackageInstalls()){
+            githubPendingInstall=apk;
+            new AlertDialog.Builder(this)
+                .setTitle("Permissão para instalar atualização")
+                .setMessage("O Android precisa autorizar a instalação de atualizações por este aplicativo. Ao retornar, a instalação poderá continuar. Acessibilidade não será ativada automaticamente.")
+                .setPositiveButton("Abrir configurações",(d,w)->startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    Uri.parse("package:"+getPackageName()))))
+                .setNegativeButton("Cancelar",(d,w)->githubPendingInstall=null)
+                .show();
+            return;
+        }
+        try{
+            Uri uri=FileProvider.getUriForFile(this,getPackageName()+".updates",apk);
+            Intent installer=new Intent(Intent.ACTION_VIEW);
+            installer.setDataAndType(uri,"application/vnd.android.package-archive");
+            installer.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(installer);
+            setUpdateStatus("Instalador aberto. Confirme a atualização no Android.");
+        }catch(Exception ex){setUpdateStatus("Não foi possível abrir o instalador: "+ex.getMessage());}
+    }
+
     private void check(LinearLayout dest,String text,String key,boolean fallback){
         CheckBox b=new CheckBox(this);b.setButtonTintList(android.content.res.ColorStateList.valueOf(ink));
         b.setText(text);b.setTextColor(ink);b.setTextSize(14);
@@ -728,6 +792,10 @@ public final class MainActivity extends Activity {
     private void toast(String text){Toast.makeText(this,text,Toast.LENGTH_SHORT).show();}
     @Override protected void onResume(){
         super.onResume();
+        if(githubPendingInstall!=null && (Build.VERSION.SDK_INT<26 || getPackageManager().canRequestPackageInstalls())){
+            File pending=githubPendingInstall; githubPendingInstall=null;
+            handler.post(() -> installVerifiedApk(pending));
+        }
         BridgeUpdater.schedule(this);
         new Thread(() -> BridgeUpdater.check(getApplicationContext()), "bridge-update-start").start();
         if(Build.VERSION.SDK_INT>=33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS")!=android.content.pm.PackageManager.PERMISSION_GRANTED) requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"},778);
