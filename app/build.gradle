@@ -3,7 +3,7 @@ plugins { id 'com.android.application' }
 // A mesma chave assina todas as builds de producao.
 // NUNCA gravar senhas ou keystore neste arquivo/repositório.
 // ALTERAR SOMENTE ESTA LINHA para a proxima versao (ex.: 3.2.4).
-def bridgeVersion = '3.2.8'
+def bridgeVersion = '3.2.9'
 def bridgeParts = bridgeVersion.tokenize('.').collect { it.toInteger() }
 if (bridgeParts.size() != 3 || bridgeParts.any { it < 0 || it > 99 }) {
     throw new GradleException('bridgeVersion precisa estar em N.N.N, com cada parte entre 0 e 99')

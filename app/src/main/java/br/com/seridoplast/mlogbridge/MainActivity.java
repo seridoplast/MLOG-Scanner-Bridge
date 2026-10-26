@@ -109,8 +109,12 @@ public final class MainActivity extends Activity {
     private final Runnable ticker=new Runnable(){
         @Override public void run(){
             if(serviceState!=null){
+                boolean profile=ZebraProfile0Mode.isSelected(
+                    prefs.getBoolean(ZebraImeMode.PREF,false),
+                    prefs.getBoolean(ZebraProfile0Mode.PREF,false));
                 boolean active=MlogFocusAccessibilityService.current()!=null;
-                serviceState.setText(active?"Acessibilidade ativa":"Acessibilidade desativada");
+                serviceState.setText(profile?"Profile0: teclas do leitor nativo (sem acessibilidade)":
+                    active?"Acessibilidade ativa":"Acessibilidade desativada");
             }
             refreshSetupWarning();
             if(page==2 && lastStatus!=null){
@@ -296,6 +300,8 @@ public final class MainActivity extends Activity {
         return allowed && FloatingToolsService.isRunning();
     }
     private String missingRequiredSetup(){
+        if(ZebraProfile0Mode.isSelected(prefs.getBoolean(ZebraImeMode.PREF,false),
+                prefs.getBoolean(ZebraProfile0Mode.PREF,false)))return "";
         if(prefs.getBoolean(ZebraImeMode.PREF,false)){
             return keyboardReady()?"":"• Selecione o teclado Bridge nas configuracoes do Android";
         }
@@ -360,6 +366,11 @@ public final class MainActivity extends Activity {
     }
     private void refreshSetupWarning(){
         if(setupWarningCard==null || setupWarningLabel==null)return;
+        if(ZebraProfile0Mode.isSelected(prefs.getBoolean(ZebraImeMode.PREF,false),
+                prefs.getBoolean(ZebraProfile0Mode.PREF,false))){
+            setupWarningCard.setVisibility(View.GONE);
+            return;
+        }
         boolean access=accessibilityReady();
         boolean enabled=keyboardEnabled();
         boolean selected=keyboardSelected();
@@ -389,9 +400,18 @@ public final class MainActivity extends Activity {
 
     private void home(){
         showSetupWarning();
-        title("Leitura de códigos","Bipe para testar o leitor.");
-        subtitle(content, "Modo ativo: "+(prefs.getBoolean(ZebraImeMode.PREF,false)?
-            "Bipe Zebra (IME)":"Bipe antigo (acessibilidade)"));
+        title("Leitura de códigos",ZebraProfile0Mode.isSelected(
+            prefs.getBoolean(ZebraImeMode.PREF,false),
+            prefs.getBoolean(ZebraProfile0Mode.PREF,false))?
+            "Profile0 envia as teclas direto ao MLOG: teste na conferencia.":
+            "Bipe para testar o leitor.");
+        subtitle(content, "Modo ativo: "+(ZebraProfile0Mode.isSelected(
+                prefs.getBoolean(ZebraImeMode.PREF,false),
+                prefs.getBoolean(ZebraProfile0Mode.PREF,false))?
+            "Bipe Zebra · Profile0 (teclas nativas)":
+            prefs.getBoolean(ZebraImeMode.PREF,false)?
+            "Bipe Zebra IME anterior — ativar Profile0 em Ajustes":
+            "Bipe antigo (acessibilidade)"));
         LinearLayout sample=card();
         TextView statusLabel=label("TESTE DO SCANNER",11,muted,true);sample.addView(statusLabel);
         space(sample,20);
@@ -438,25 +458,28 @@ public final class MainActivity extends Activity {
         button(service,"Abrir MLOG",true,this::openMlog);
         button(service,"Acessibilidade do Android",false,()->startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
     }
-    /** Dois modos exclusivos: antigo por acessibilidade ou Zebra por IME.
-     * Ambos utilizam a mesma decodificacao nativa, nunca digitam simultaneamente. */
+    /** Profile0 configura o servico nativo para saida via teclado e Enter.
+     * O modo antigo restaura saida por broadcast para o Bridge.
+     * A selecao nao muda o teclado padrao do Android. */
     private void selectReadMode(boolean zebra){
         boolean current=prefs.getBoolean(ZebraImeMode.PREF,false);
-        if(current==zebra){
+        boolean nativeProfile=prefs.getBoolean(ZebraProfile0Mode.PREF,false);
+        if(current==zebra && (!zebra || nativeProfile)){
             String key=zebra?"zebra_options_expanded_v327":"legacy_options_expanded_v327";
             prefs.edit().putBoolean(key,!prefs.getBoolean(key,true)).apply();
             displayPage();return;
         }
-        if(zebra && !NativeScannerController.isInstalled(this)){
-            toast("Servico nativo do leitor nao encontrado. Modo antigo preservado.");return;
+        if(!NativeScannerController.isInstalled(this)){
+            toast("Servico nativo do coletor nao encontrado. Modo atual preservado.");return;
         }
-        if(zebra && !NativeScannerController.configure(this)){
-            toast("Nao foi possivel enviar configuracao ao leitor.");return;
-        }
+        boolean sent=zebra?NativeScannerController.configureProfile0Keyboard(this):
+            NativeScannerController.configure(this);
+        if(!sent){toast("Comandos recusados. Modo anterior preservado.");return;}
         prefs.edit()
             .putBoolean(ZebraImeMode.PREF,zebra)
-            .putBoolean(NativeScannerController.PREF,true)
-            .putBoolean(DirectScanPolicy.PREF,true)
+            .putBoolean(ZebraProfile0Mode.PREF,zebra)
+            .putBoolean(NativeScannerController.PREF,!zebra)
+            .putBoolean(DirectScanPolicy.PREF,!zebra)
             .putBoolean(BridgeEnterPolicy.PREFERENCE,!zebra)
             .putBoolean("enabled",true)
             .putBoolean(zebra?"zebra_options_expanded_v327":"legacy_options_expanded_v327",true)
@@ -465,19 +488,15 @@ public final class MainActivity extends Activity {
         MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
         if(svc!=null)svc.refreshEventThrottle();
         displayPage();
-        if(zebra && !keyboardSelected()){
+        if(zebra){
             new AlertDialog.Builder(this)
-                .setTitle("Selecionar teclado Bridge")
-                .setMessage("O modo Zebra exige selecionar MLOG Bridge como teclado no Android e abrir o campo de leitura no MLOG. O teclado nao pode criar foco sozinho sem acessibilidade.")
-                .setPositiveButton("Escolher teclado",(dialog,which)->{
-                    if(!keyboardEnabled())startActivity(new Intent(Settings.ACTION_INPUT_METHOD_SETTINGS));
-                    else{
-                        InputMethodManager im=(InputMethodManager)getSystemService(Context.INPUT_METHOD_SERVICE);
-                        if(im!=null)im.showInputMethodPicker();
-                    }
-                })
+                .setTitle("Bipe Zebra · Profile0 ativado")
+                .setMessage("O CMX foi solicitado a enviar codigo e Enter como teclado nativo, " +
+                    "sem a digitação do Bridge. Abra o MLOG e teste. " +
+                    "Se nao funcionar, volte para Bipe antigo; o firmware pode nao aceitar os comandos.")
+                .setPositiveButton("Abrir MLOG",(dialog,which)->openMlog())
                 .setNegativeButton("Depois",null).show();
-        }
+        }else toast("Bipe antigo ativado; saida por broadcast restaurada.");
     }
     private void settings(){
         title("Ajustes","Selecione um modo de leitura.");
@@ -503,39 +522,35 @@ public final class MainActivity extends Activity {
             button(modeOld,"Abrir Acessibilidade",false,this::openAccessibilitySettings);
         }
         LinearLayout modeZebra=card();
-        modeZebra.addView(label(zebra?"✓ Bipe Zebra · Ativo":"Bipe Zebra",18,ink,true));
-        subtitle(modeZebra,"Codigo e Enter pelo teclado Android do Bridge (IME).");
-        button(modeZebra,zebra?
-            (prefs.getBoolean("zebra_options_expanded_v327",true)?"Ocultar ajustes":"Configurar bipe Zebra"):
-            "Ativar bipe Zebra",zebra,()->selectReadMode(true));
-        if(zebra && prefs.getBoolean("zebra_options_expanded_v327",true)){
+        boolean profile0=prefs.getBoolean(ZebraProfile0Mode.PREF,false);
+        modeZebra.addView(label(zebra && profile0?
+            "✓ Bipe Zebra · Profile0 ativo":"Bipe Zebra · Profile0",18,ink,true));
+        subtitle(modeZebra,"Como o Zebra Profile0: o servico CMX entrega codigo e Enter " +
+            "como teclas. Bridge nao simula leitura nem exige acessibilidade.");
+        button(modeZebra,zebra && profile0?
+            (prefs.getBoolean("zebra_options_expanded_v327",true)?
+                "Ocultar ajustes":"Configurar bipe Zebra"):
+            "Ativar Bipe Zebra · Profile0",zebra && profile0,()->selectReadMode(true));
+        if(zebra && profile0 && prefs.getBoolean("zebra_options_expanded_v327",true)){
             space(modeZebra,8);
-            check(modeZebra,"Enter depois do codigo",ZebraImeMode.ENTER_PREF,true);
-            check(modeZebra,"Caracteres como teclas (teste DataWedge)",
-                ZebraImeMode.CHAR_EVENTS_PREF,false);
-            check(modeZebra,"Mostrar barra do teclado",ZebraImeMode.SHOW_PREF,true);
-            check(modeZebra,"Abrir campo pelo Bridge (precisa acessibilidade)",
-                ZebraImeMode.AUTO_FOCUS_PREF,true);
-            check(modeZebra,"Ação IME se nenhum Enter for aceito (teste)",
-                ZebraImeMode.ACTION_FALLBACK_PREF,false);
-            button(modeZebra,"1. Habilitar teclado no Android",false,
-                ()->startActivity(new Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)));
-            button(modeZebra,"2. Selecionar teclado Bridge",true,()->{
-                InputMethodManager im=(InputMethodManager)getSystemService(Context.INPUT_METHOD_SERVICE);
-                if(im!=null)im.showInputMethodPicker();
+            subtitle(modeZebra,"Saida: teclado nativo | Terminador: Enter (newline) | " +
+                "Broadcast: desativado. Sem teclado Bridge e sem verificacao de tela.");
+            button(modeZebra,"Reaplicar Profile0 no leitor",true,()->{
+                boolean ok=NativeScannerController.configureProfile0Keyboard(this);
+                toast(ok?"Comandos enviados. Teste no MLOG.":
+                    "Nao foi possivel configurar o leitor.");
             });
-            subtitle(modeZebra,"Teclado: "+(keyboardSelected()?"selecionado ✓":
-                keyboardEnabled()?"habilitado, mas nao selecionado":"nao habilitado"));
-            subtitle(modeZebra,"Campo do MLOG: "+
-                (BridgeScanInputMethodService.hasMlogInput()?"conectado ✓":"sem foco / desconectado"));
-            button(modeZebra,"3. Abrir MLOG e tocar no icone de teclado",false,this::openMlog);
-            button(modeZebra,"Reaplicar configuracao do leitor",false,()->{
-                toast(NativeScannerController.configure(this)?
-                    "Comandos enviados. Teste o bipe no MLOG.":"Scanner indisponivel.");
-            });
-            subtitle(modeZebra,"Se o Android nao abriu o campo, toque no icone de teclado do proprio MLOG. " +
-                "A abertura automatica opcional usa acessibilidade apenas para foco; codigo e Enter continuam pelo IME.");
+            button(modeZebra,"Abrir MLOG",false,this::openMlog);
+            subtitle(modeZebra,"Se nao ler ou nao enviar Enter, " +
+                "volte para Bipe antigo. Um comando aceito nao garante " +
+                "que o firmware tenha aplicado a configuracao.");
         }
+        if(zebra && profile0){
+            LinearLayout note=card();
+            note.addView(label("Velocidade",17,ink,true));
+            subtitle(note,"No Profile0, o firmware CMX controla a entrega das teclas. " +
+                "O limite em milissegundos do Bridge nao se aplica a este modo.");
+        }else{
         LinearLayout tempo=card();
         tempo.addView(label("Intervalo entre leituras (ms)",17,ink,true));
         int current=prefs.getInt(ScanAssistState.CLICK_COOLDOWN_MS,100);
@@ -561,6 +576,7 @@ public final class MainActivity extends Activity {
             timeLabel.setText("Atual: "+ms+" ms");
             toast("Intervalo aplicado: "+ms+" ms");
         });
+        }
         LinearLayout appearance=card();
         appearance.addView(label("Aparencia",17,ink,true));
         LinearLayout themes=row();
@@ -711,6 +727,11 @@ public final class MainActivity extends Activity {
             handler.post(() -> installVerifiedApk(pending));
         }
         BridgeUpdater.schedule(this);
+        // Reaplicar ao abrir o Bridge, pois o servico CMX pode reiniciar
+        // com a saida padrao apos atualizacao/reboot do coletor.
+        if(ZebraProfile0Mode.isSelected(prefs.getBoolean(ZebraImeMode.PREF,false),
+                prefs.getBoolean(ZebraProfile0Mode.PREF,false)))
+            NativeScannerController.configureProfile0Keyboard(this);
         new Thread(() -> BridgeUpdater.check(getApplicationContext()), "bridge-update-start").start();
         if(Build.VERSION.SDK_INT>=33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS")!=android.content.pm.PackageManager.PERMISSION_GRANTED) requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"},778);
         IntentFilter f=new IntentFilter();for(String a:ScannerProtocol.ACTIONS)f.addAction(a);

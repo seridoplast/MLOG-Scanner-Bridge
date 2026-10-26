@@ -159,6 +159,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private final Runnable zebraAutoFocusTask=()->{
         zebraAutoFocusPending=false;
         if(!prefs().getBoolean(ZebraImeMode.PREF,false) ||
+           prefs().getBoolean(ZebraProfile0Mode.PREF,false) ||
            !prefs().getBoolean(ZebraImeMode.AUTO_FOCUS_PREF,true) ||
            !ScanCoordinator.isActive(this) ||
            BridgeScanInputMethodService.hasMlogInput())return;
@@ -186,6 +187,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     }
 
     private void handleZebraScreenEvent(AccessibilityEvent event){
+        if(prefs().getBoolean(ZebraProfile0Mode.PREF,false))return;
         if(event==null || !prefs().getBoolean(ZebraImeMode.AUTO_FOCUS_PREF,true))return;
         int kind=event.getEventType();
         if(kind!=AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
@@ -227,8 +229,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                       AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS |
                       AccessibilityServiceInfo.FLAG_INPUT_METHOD_EDITOR;
             configuredFastEvents=fastImeMode();
-            configuredTriggerEvents=prefs().getBoolean("trigger_prefocus",false) ||
-                prefs().getBoolean(NativeScannerController.LONG_HOLD_PREF,false);
+            configuredTriggerEvents=!prefs().getBoolean(ZebraImeMode.PREF,false) &&
+                (prefs().getBoolean("trigger_prefocus",false) ||
+                 prefs().getBoolean(NativeScannerController.LONG_HOLD_PREF,false));
             if(configuredTriggerEvents)
                 si.flags|=AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS;
             else si.flags&=~AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS;
@@ -241,6 +244,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 // Caso o IME ainda nao tenha iniciado, recuperar APENAS o
                 // primeiro bipe utilizado para abrir o campo do MLOG.
                 if(prefs().getBoolean(ZebraImeMode.PREF,false)){
+                    // Profile0 nao consome scan pelo Bridge. O PDA Service
+                    // emite eventos de teclado para o MLOG diretamente.
+                    if(prefs().getBoolean(ZebraProfile0Mode.PREF,false))return;
                     if(intent!=null && DirectScanPolicy.ACTION.equals(intent.getAction()) &&
                        !BridgeScanInputMethodService.isRunning() &&
                        prefs().getBoolean(ZebraImeMode.AUTO_FOCUS_PREF,true)){
@@ -386,9 +392,10 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     /** O usuario pode alternar sem reiniciar a acessibilidade. */
     void refreshEventThrottle(){
         boolean fast=fastImeMode();
-        boolean trigger=prefs().getBoolean("trigger_prefocus",false) ||
-            prefs().getBoolean(NativeScannerController.LONG_HOLD_PREF,false) ||
-            prefs().getBoolean(BridgeEnterPolicy.PREFERENCE,false);
+        boolean trigger=!prefs().getBoolean(ZebraImeMode.PREF,false) &&
+            (prefs().getBoolean("trigger_prefocus",false) ||
+             prefs().getBoolean(NativeScannerController.LONG_HOLD_PREF,false) ||
+             prefs().getBoolean(BridgeEnterPolicy.PREFERENCE,false));
         if(fast==configuredFastEvents && trigger==configuredTriggerEvents)return;
         AccessibilityServiceInfo info=getServiceInfo();
         if(info==null)return;
@@ -1168,6 +1175,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
      * Funciona so em telas do MLOG reconhecidas; sem servico habilitado,
      * o operador toca no icone de teclado manualmente. */
     boolean requestZebraKeyboardFocus(){
+        if(prefs().getBoolean(ZebraProfile0Mode.PREF,false))return false;
         if(!prefs().getBoolean(ZebraImeMode.PREF,false) ||
            !prefs().getBoolean(ZebraImeMode.AUTO_FOCUS_PREF,true))return false;
         if(BridgeScanInputMethodService.hasMlogInput())return true;

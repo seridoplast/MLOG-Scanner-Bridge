@@ -62,6 +62,36 @@ final class NativeScannerController {
         }
     }
 
+    /**
+     * Bipe Zebra / Profile0: entregar dados como teclado DIRETAMENTE pelo
+     * servico nativo CMX. Nao ha caminho IME do Bridge nem broadcasts de
+     * codigo neste modo, impedindo que duas apps reescrevam a mesma leitura.
+     *
+     * O terminador "newline" equivale a tecla Enter suportada pelo firmware.
+     * No Android, o alvo de teclas e determinado pela janela com foco; nao
+     * podemos forcar foco em apps de terceiros sem Acessibilidade.
+     *
+     * @return true se os comandos foram enviados, NAO se o firmware os aceitou.
+     */
+    static boolean configureProfile0Keyboard(Context context) {
+        if (!isInstalled(context)) return false;
+        try {
+            // Primeiro desligar os outros canais para evitar dupla digitacao.
+            sendBoolean(context, "com.service.scanner.broadcast.output", "broadcastOutput", false);
+            sendBoolean(context, "com.service.scanner.clipboard.output", "clipboardOutput", false);
+            sendString(context, "com.service.scanner.suffix", "scanCodeSuffix", "");
+            sendString(context, "com.service.scanner.scanmode", "scanMode", ZebraProfile0Mode.SCAN_MODE);
+            sendString(context, "com.service.scanner.scan.end.type", "scanEndType", ZebraProfile0Mode.TERMINATOR);
+            sendString(context, "com.service.scanner.scan.continue.end.type", "scanContinueEndType", ZebraProfile0Mode.TERMINATOR);
+            sendString(context, "com.service.scanner.outputmode", "outputMode", ZebraProfile0Mode.OUTPUT);
+            Log.i("MLOGBridge", "PROFILE0_NATIVE_KEYBOARD_CONFIG_SENT_UNVERIFIED");
+            return true;
+        } catch (RuntimeException exception) {
+            Log.e("MLOGBridge", "PROFILE0_NATIVE_KEYBOARD_CONFIG_DENIED", exception);
+            return false;
+        }
+    }
+
     // Emular novos acionamentos pelo comando do servico nativo, SEM sintetizar
     // KeyEvent privilegiado e SEM mudar o scanMode global para continuous.
     // O comando apenas solicita ao firmware uma captura. O hardware pode nao

@@ -138,6 +138,16 @@ jobs:
             tests/ZebraImeModeTest.java
           java -cp /tmp/bridge-zebra br.com.seridoplast.mlogbridge.ZebraImeModeTest
 
+      - name: Testar contrato de saída nativa Profile0
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bridge-profile0
+          javac -d /tmp/bridge-profile0 \
+            app/src/main/java/br/com/seridoplast/mlogbridge/ZebraProfile0Mode.java \
+            tests/ZebraProfile0ModeTest.java
+          java -cp /tmp/bridge-profile0 br.com.seridoplast.mlogbridge.ZebraProfile0ModeTest
+
       - name: Compilar APK de producao com assinatura fixa
         env:
           BRIDGE_SIGNING_STORE_PASSWORD: ${{ secrets.BRIDGE_KEYSTORE_PASSWORD }}

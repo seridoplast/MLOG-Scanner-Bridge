@@ -62,7 +62,9 @@ public final class BridgeScanInputMethodService extends InputMethodService {
         return getSharedPreferences(ScanCoordinator.PREFS,MODE_PRIVATE);
     }
     private boolean zebraEnabled(){
-        return zebraPrefs().getBoolean(ZebraImeMode.PREF,false) &&
+        return ZebraProfile0Mode.usesBridgeIme(
+                   zebraPrefs().getBoolean(ZebraImeMode.PREF,false),
+                   zebraPrefs().getBoolean(ZebraProfile0Mode.PREF,false)) &&
                ScanCoordinator.isActive(this);
     }
     /** IME so consegue digitar depois que o MLOG criou uma InputConnection.
