@@ -60,6 +60,24 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     // leituras SIMULTANEAMENTE pendentes para evitar OOM em erro prolongado.
     private final ScanQueue scanQueue=new ScanQueue(128);
     private final java.util.ArrayDeque<Long> queuedAt=new java.util.ArrayDeque<>();
+    // A falha nao pode descartar em silencio os bipes ja recebidos.
+    private boolean pausedUnverified;
+    private SeparationVisualReceipt receiptBefore;
+    boolean hasUnverifiedBatch(){return pausedUnverified;}
+    int unreconciledCount(){return pausedUnverified?1+scanQueue.waitingCount():0;}
+    /** Exige uma decisao humana apos verificar a contagem real no MLOG. */
+    void discardUnverifiedBatchAfterReconciliation(){
+        if(!pausedUnverified)return;
+        int count=unreconciledCount();
+        ++workGeneration; ++serial; ++enterAttempt;
+        awaitingEnterConfirmation=false;
+        cancelPending();
+        scanQueue.clear(); queuedAt.clear();
+        pausedUnverified=false;
+        receiptBefore=null;
+        trace("MANUAL_RECONCILIATION_DISCARDED_PENDING_COUNT_"+count);
+        status("Fila limpa manualmente apos conferencia; confira os registros do MLOG.");
+    }
     // v3.0.4: trava APENAS o novo toque, por 100 ms, sem esperar Enter.
     private final TimedClickGate timedClickGate=new TimedClickGate();
     // Contador sob comando explicito do operador, nunca ativo por padrao.
@@ -289,6 +307,12 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     /** Nao descartar o proximo gatilho enquanto o editor ainda abre. */
     private void enqueueBarcode(String code){
         if(!ScanCoordinator.isActive(this))return;
+        if(pausedUnverified){
+            trace("BIP_REJECTED_PENDING_RECONCILIATION");
+            status("CONFERIR MLOG: "+unreconciledCount()+" leitura(s) pendente(s). " +
+                "Novos bipes nao estao sendo processados.");
+            return;
+        }
         refreshEventThrottle();
         if(mlogRoot()==null){status("Leitura ignorada: MLOG nao esta ativo.");return;}
         long now=SystemClock.elapsedRealtime();
@@ -334,6 +358,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         startQueuedScan();
     }
     private void startQueuedScan(){
+        if(pausedUnverified)return;
         String code=scanQueue.active();
         if(code==null)return;
         final int epoch=++workGeneration;
@@ -341,6 +366,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         if(!queuedAt.isEmpty())
             trace("QUEUE_WAIT_MS_"+(currentScanStartedAt-queuedAt.peekFirst()));
         trace("SCAN_START");
+        receiptBefore=prefs().getBoolean(NativeScannerController.PREF,false)?
+            separationReceiptOnScreen():null;
         onBarcode(code);
         // Fail-safe: nunca manter a fila bloqueada indefinidamente.
         main.postDelayed(()->{
@@ -351,7 +378,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         },5400);
     }
     private void finishQueuedScan(String reason){
-        if(scanQueue.isIdle())return;
+        if(scanQueue.isIdle() || pausedUnverified)return;
         trace("SCAN_FINISH_"+reason);
         awaitingEnterConfirmation=false;
         directEnterSent=false;
@@ -365,17 +392,24 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         prearmFallbackUsed=false;
         ++serial; // cancelar tentativas de foco da leitura anterior
         ++enterAttempt; // cancelar espera passiva da leitura anterior
-        if(!queuedAt.isEmpty())queuedAt.pollFirst();
-        if(prefs().getBoolean(NativeScannerController.PREF,false) &&
-           !"campo_mudou".equals(reason) && !"campo_saiu".equals(reason) &&
-           scanQueue.waitingCount()>0){
-            trace("NATIVE_QUEUE_HALTED_UNVERIFIED_"+reason);
-            status("Confirmacao nao verificada: fila interrompida. Confira o MLOG.");
-            scanQueue.clear();
-            queuedAt.clear();
+        boolean success="campo_mudou".equals(reason) ||
+            "campo_saiu".equals(reason) ||
+            "quantidade_visual_aumentou".equals(reason);
+        if(prefs().getBoolean(NativeScannerController.PREF,false) && !success){
+            // NAO limpar a fila: isso fazia varios bipes desaparecerem.
+            // Um Enter enviado nao significa que o MLOG registrou o produto.
+            pausedUnverified=true;
+            trace("NATIVE_QUEUE_PAUSED_UNVERIFIED_"+reason);
+            status("CONFERENCIA NECESSARIA: "+unreconciledCount()+
+                " leitura(s) incerta(s). Abra o Bridge e confira o MLOG.");
+            android.widget.Toast.makeText(this,
+                "MLOG: confira os bipes pendentes no Bridge antes de continuar.",
+                android.widget.Toast.LENGTH_LONG).show();
             ++workGeneration;
             return;
         }
+        if(!queuedAt.isEmpty())queuedAt.pollFirst();
+        receiptBefore=null;
         boolean more=scanQueue.complete();
         // O primeiro bipe segue confirmado pelo processamento normal do CMX.
         // Repeticoes posteriores sao opt-in e contam envios, nao registros gravados.
@@ -1285,6 +1319,15 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         if(info.login || info.dialog || isBlockingOverlay(root)){
             suspendForNavigation("janela_durante_cmx_enter");return;
         }
+        // Na separacao, a quantidade pode aumentar enquanto o Flutter
+        // mantem o mesmo editor/codigo. Campo identico nao significa falha.
+        if(prefs().getBoolean(NativeScannerController.PREF,false) &&
+           receiptBefore!=null && "separacao".equals(info.screen) &&
+           receiptBefore.increased(separationReceiptOnScreen())){
+            trace("SEPARATION_VISUAL_QUANTITY_INCREMENT");
+            finishQueuedScan("quantidade_visual_aumentou");
+            return;
+        }
         AccessibilityNodeInfo editor=safeEditor(info,true);
         if(editor==null && info.editors.size()==1 &&
            !blockedLabel(tag(info.editors.get(0))) &&
@@ -1805,6 +1848,18 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     /** Interface do contador: apenas um bipe original; os seguintes sao
      *  simulacoes no campo do MLOG, e NAO comandos enviados ao CMX. */
     /** Extrai só o contador visual do cartão de separação, nunca o campo editável. */
+    private SeparationVisualReceipt separationReceiptOnScreen(){
+        AccessibilityNodeInfo root=mlogRoot();
+        if(root==null)return null;
+        java.util.ArrayList<AccessibilityNodeInfo> nodes=new java.util.ArrayList<>();
+        visit(root,nodes,0);
+        for(AccessibilityNodeInfo node:nodes){
+            if(node==null || !node.isVisibleToUser())continue;
+            SeparationVisualReceipt result=SeparationVisualReceipt.parse(node.getContentDescription());
+            if(result!=null)return result;
+        }
+        return null;
+    }
     private SeparatedQuantityProbe.Result separatedOnScreen(){
         AccessibilityNodeInfo root=mlogRoot();
         if(root==null)return null;

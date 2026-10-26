@@ -424,6 +424,27 @@ public final class MainActivity extends Activity {
                 .putBoolean(ScanAssistState.ARMED,false).apply();
             toast("Ferramentas desligadas.");
         });
+        MlogFocusAccessibilityService running=MlogFocusAccessibilityService.current();
+        if(running!=null && running.hasUnverifiedBatch()){
+            LinearLayout issue=card();
+            issue.addView(label("LEITURAS PENDENTES: "+running.unreconciledCount(),16,0xffb91c1c,true));
+            subtitle(issue,"Confira as quantidades no MLOG antes de liberar novas leituras.");
+            button(issue,"Descartar pendentes APOS conferir",false,()->{
+                MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
+                if(svc==null || !svc.hasUnverifiedBatch())return;
+                int count=svc.unreconciledCount();
+                new AlertDialog.Builder(this)
+                    .setTitle("Conferiu os registros no MLOG?")
+                    .setMessage("Ha "+count+" leitura(s) com situacao incerta. " +
+                        "Esta acao NAO processa os bipes pendentes; so libera o leitor " +
+                        "depois que voce reconciliar manualmente a contagem.")
+                    .setPositiveButton("Conferi; limpar fila",(dialog,which)->{
+                        svc.discardUnverifiedBatchAfterReconciliation();
+                        displayPage();
+                    })
+                    .setNegativeButton("Voltar",null).show();
+            });
+        }
         button(service,"Abrir MLOG",true,this::openMlog);
         button(service,"Acessibilidade do Android",false,()->startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
     }
