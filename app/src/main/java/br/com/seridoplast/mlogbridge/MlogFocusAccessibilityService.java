@@ -1294,9 +1294,17 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         main.postDelayed(()->fireFixedEnter(token),delay);
     }
 
+    // O Enter continua temporizado. A unica verificacao adicional ocorre
+    // ANTES dele: comparar o texto editavel com o broadcast completo.
+    // Nunca aguarda atualizacao de quantidade ou confirmacao DEPOIS do Enter.
+    private static final long PRE_ENTER_REPAIR_DELAY_MS=35L;
+
     private void fireFixedEnter(long token){
+        fireFixedEnterChecked(token,false);
+    }
+
+    private void fireFixedEnterChecked(long token,boolean wasRepaired){
         if(token!=enterAttempt || scanQueue.isIdle() || !fixedEnterScheduled)return;
-        // Uma tecla jamais deve ser enviada para outro aplicativo ou um modal.
         AccessibilityNodeInfo root=mlogRoot();
         if(root==null || isBlockingOverlay(root)){
             trace("FIXED_ENTER_CANCELLED_NOT_MLOG");
@@ -1304,14 +1312,55 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             finishQueuedScan("enter_cancelado");
             return;
         }
+        // O ACTION_SET_TEXT do Android apenas informa que a acao foi
+        // aceita. No Flutter, o campo pode ainda estar parcial em outro frame.
+        // Recapturar o editor evita validar um AccessibilityNodeInfo antigo.
+        ScreenInfo info=inspect(root);
+        AccessibilityNodeInfo editor=safeEditor(info,true);
+        String expected=scanQueue.active();
+        boolean focused=editor!=null && editor.isEditable() && editor.isEnabled() &&
+                !editor.isPassword() && editor.isFocused();
+        CharSequence actual=null;
+        if(focused){
+            try{editor.refresh();actual=editor.getText();}
+            catch(RuntimeException ignored){focused=false;}
+        }
+        if(!focused || !BarcodePreEnterGuard.matches(expected,actual)){
+            // Flutter pode estar trocando o editor no frame do Enter.
+            // Uma unica espera curta evita cancelar por foco transitorio.
+            if(!focused && !wasRepaired){
+                trace("PRE_ENTER_EDITOR_RECHECK_ONCE");
+                main.postDelayed(()->fireFixedEnterChecked(token,true),
+                        PRE_ENTER_REPAIR_DELAY_MS);
+                return;
+            }
+            // No maximo UMA correcao de ACTION_SET_TEXT. Sem loop de 1,5 s.
+            if(!wasRepaired && focused){
+                try{
+                    Bundle data=new Bundle();
+                    data.putCharSequence(
+                        AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,expected);
+                    if(editor.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,data)){
+                        trace("PRE_ENTER_PARTIAL_REWRITE_ONCE");
+                        main.postDelayed(()->fireFixedEnterChecked(token,true),
+                                PRE_ENTER_REPAIR_DELAY_MS);
+                        return;
+                    }
+                }catch(RuntimeException ignored){}
+            }
+            trace(focused?"PRE_ENTER_INCOMPLETE_BLOCKED":"PRE_ENTER_EDITOR_NOT_READY_BLOCKED");
+            status("Codigo incompleto no campo: Enter bloqueado. Bipe novamente.");
+            // Nao confirmar textos parciais nem executar Enter para uma fila antiga.
+            finishQueuedScan("codigo_incompleto_sem_enter");
+            return;
+        }
+        trace("PRE_ENTER_CODE_EXACT_MATCH");
         trace("FIXED_ENTER_TIMER_FIRED");
         boolean sent=BridgeScanInputMethodService.sendEnterForVerifiedScan();
         if(sent)trace("FIXED_ENTER_BRIDGE_IME");
         if(!sent){
-            // Sem confirmacao posterior; so um metodo pode efetivamente enviar.
-            ScreenInfo info=inspect(root);
-            AccessibilityNodeInfo editor=safeEditor(info,true);
-            if(editor!=null && editor.isFocused() && Build.VERSION.SDK_INT>=30){
+            // Nenhuma tentativa dupla quando o teclado ja aceitou o Enter.
+            if(Build.VERSION.SDK_INT>=30){
                 try{sent=editor.performAction(
                     AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.getId());}
                 catch(RuntimeException ignored){}

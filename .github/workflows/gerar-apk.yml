@@ -80,6 +80,10 @@ jobs:
             app/src/main/java/br/com/seridoplast/mlogbridge/SeparationVisualReceipt.java \
             tests/SeparationVisualReceiptTest.java
           java -cp /tmp/bridge-test br.com.seridoplast.mlogbridge.SeparationVisualReceiptTest
+          javac -d /tmp/bridge-test \
+            app/src/main/java/br/com/seridoplast/mlogbridge/BarcodePreEnterGuard.java \
+            tests/BarcodePreEnterGuardTest.java
+          java -cp /tmp/bridge-test br.com.seridoplast.mlogbridge.BarcodePreEnterGuardTest
 
       - name: Compilar APK de producao com assinatura fixa
         env:
