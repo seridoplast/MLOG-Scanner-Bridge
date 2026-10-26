@@ -2,6 +2,13 @@ package br.com.seridoplast.mlogbridge;
 
 import android.inputmethodservice.InputMethodService;
 import android.content.Context;
+import android.content.BroadcastReceiver;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.SharedPreferences;
+import android.os.Build;
+import android.util.Log;
+import java.util.ArrayDeque;
 import android.content.res.Configuration;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -36,6 +43,196 @@ public final class BridgeScanInputMethodService extends InputMethodService {
     private boolean manual=false;
     private boolean numeric=false;
     private boolean upper=false;
+
+    // Modo Zebra (opt-in): servico nativo -> broadcast -> InputConnection MLOG.
+    // Este caminho NAO usa nem requer a AccessibilityService. Nenhum dado fica em disco.
+    private BroadcastReceiver zebraReceiver;
+    private final ArrayDeque<String> zebraQueue = new ArrayDeque<>();
+    private boolean zebraBusy=false;
+    private String zebraLastValue="";
+    private long zebraLastAt=-1;
+    private long zebraFirstWaitAt;
+    private long zebraLastEnterAt;
+    private long zebraCurrentStartedAt;
+    private long zebraCurrentCommittedAt;
+    private long zebraLastConfigAt;
+    private int zebraGeneration;
+
+    private SharedPreferences zebraPrefs(){
+        return getSharedPreferences(ScanCoordinator.PREFS,MODE_PRIVATE);
+    }
+    private boolean zebraEnabled(){
+        return zebraPrefs().getBoolean(ZebraImeMode.PREF,false) &&
+               ScanCoordinator.isActive(this);
+    }
+    private boolean zebraEditorReady(){
+        if(!zebraEnabled() || !targetMlog)return false;
+        EditorInfo info=getCurrentInputEditorInfo();
+        if(info==null || !ScanCoordinator.TARGET.equals(info.packageName) ||
+           isPassword(info.inputType) || isLoginHint(info.hintText))return false;
+        return getCurrentInputConnection()!=null;
+    }
+    private void zebraReport(String stage){
+        Log.i("MLOGBridge","ZEBRA_IME_"+stage); // nunca registrar o codigo
+    }
+    private void zebraStatus(String text){
+        ScanCoordinator.status(this,text);
+    }
+    private void configureNativeIfNeeded(){
+        if(!zebraEnabled())return;
+        long now=SystemClock.elapsedRealtime();
+        if(zebraLastConfigAt>0 && now-zebraLastConfigAt<30000L)return;
+        zebraLastConfigAt=now;
+        if(!NativeScannerController.configure(this))zebraReport("NATIVE_CONFIG_UNAVAILABLE");
+    }
+    private void registerZebraReceiver(){
+        if(zebraReceiver!=null)return;
+        zebraReceiver=new BroadcastReceiver(){
+            @Override public void onReceive(Context context,Intent intent){
+                if(!zebraEnabled() || intent==null ||
+                    !DirectScanPolicy.ACTION.equals(intent.getAction()))return;
+                String raw=ScannerProtocol.barcodeRaw(intent);
+                String code=BarcodeCleaner.clean(raw);
+                if(!ZebraImeMode.isValidCode(code,ScannerProtocol.type(intent))){
+                    zebraReport("INVALID_SCAN_IGNORED");
+                    zebraStatus("Leitura invalida; tente bipar novamente.");
+                    return;
+                }
+                long now=SystemClock.elapsedRealtime();
+                if(ZebraImeMode.isEcho(code,zebraLastValue,now-zebraLastAt)){
+                    zebraReport("BROADCAST_ECHO_SUPPRESSED");return;
+                }
+                zebraLastValue=code;zebraLastAt=now;
+                if(!zebraEditorReady()){
+                    zebraReport("NO_MLOG_INPUT_IGNORED");
+                    zebraStatus("Leitura nao enviada: abra o campo de codigo no MLOG.");
+                    return;
+                }
+                if(zebraQueue.size()>=ZebraImeMode.MAX_WAITING){
+                    zebraReport("QUEUE_FULL_IGNORED");
+                    zebraStatus("Fila do leitor cheia. Confira os produtos no MLOG.");
+                    return;
+                }
+                zebraQueue.addLast(code);
+                zebraReport("SCAN_QUEUED_DEPTH_"+zebraQueue.size());
+                zebraPump();
+            }
+        };
+        IntentFilter f=new IntentFilter(DirectScanPolicy.ACTION);
+        if(Build.VERSION.SDK_INT>=33)registerReceiver(zebraReceiver,f,Context.RECEIVER_EXPORTED);
+        else registerReceiver(zebraReceiver,f);
+    }
+    private void zebraDropHead(String reason){
+        zebraReport(reason);
+        if(!zebraQueue.isEmpty())zebraQueue.removeFirst();
+        zebraBusy=false;
+        zebraFirstWaitAt=0;
+        main.post(this::zebraPump);
+    }
+    private void zebraPump(){
+        if(zebraBusy || zebraQueue.isEmpty() || !zebraEnabled())return;
+        if(!zebraEditorReady()){
+            // Nao escrever no campo errado. Nunca reencaminhar o codigo
+            // apos mais de 750 ms: pode ter mudado de tela/produto.
+            long now=SystemClock.elapsedRealtime();
+            if(zebraFirstWaitAt==0)zebraFirstWaitAt=now;
+            if(now-zebraFirstWaitAt>=ZebraImeMode.MAX_EDITOR_WAIT_MS){
+                zebraStatus("Campo do MLOG indisponivel: leitura nao enviada.");
+                zebraDropHead("NO_EDITOR_TIMEOUT");
+            }else main.postDelayed(this::zebraPump,ZebraImeMode.EDITOR_RETRY_MS);
+            return;
+        }
+        zebraBusy=true;
+        zebraCurrentStartedAt=SystemClock.elapsedRealtime();
+        String code=zebraQueue.peekFirst();
+        InputConnection conn=getCurrentInputConnection();
+        EditorInfo info=getCurrentInputEditorInfo();
+        if(conn==null || info==null){zebraDropHead("LOST_EDITOR");return;}
+        // Se o usuario digitou algo, nunca concatenar e nunca apagar silenciosamente.
+        CharSequence before=null;
+        try{before=conn.getTextBeforeCursor(128,0);}catch(RuntimeException ignored){}
+        if(before!=null && before.length()>0){
+            // Flutter pode levar alguns frames para limpar o editor depois do Enter.
+            // Reagendar sem reenviar codigo evita perder bipes legitimamente rapidos.
+            zebraBusy=false;
+            long now=SystemClock.elapsedRealtime();
+            if(zebraFirstWaitAt==0)zebraFirstWaitAt=now;
+            if(now-zebraFirstWaitAt>=ZebraImeMode.MAX_EDITOR_WAIT_MS){
+                zebraStatus("Campo permaneceu ocupado; leitura nao enviada.");
+                zebraDropHead("FIELD_BUSY_TIMEOUT");
+            }else main.postDelayed(this::zebraPump,ZebraImeMode.EDITOR_RETRY_MS);
+            return;
+        }
+        boolean written=false;
+        try{
+            conn.beginBatchEdit();
+            written=conn.commitText(code,1);
+        }catch(RuntimeException ex){zebraReport("COMMIT_EXCEPTION");}
+        finally{try{conn.endBatchEdit();}catch(RuntimeException ignored){}}
+        if(!written){
+            zebraStatus("MLOG nao aceitou o codigo. Bipe novamente.");
+            zebraDropHead("COMMIT_REJECTED");return;
+        }
+        zebraFirstWaitAt=0;
+        zebraCurrentCommittedAt=SystemClock.elapsedRealtime();
+        zebraReport("CODE_COMMITTED_MS_"+(zebraCurrentCommittedAt-zebraCurrentStartedAt));
+        long ms=ZebraImeMode.interval(zebraPrefs().getInt(
+                ScanAssistState.CLICK_COOLDOWN_MS,100));
+        // O valor escolhido controla o tempo entre a insercao e o Enter.
+        // Piso de 20 ms para o Flutter absorver commitText assíncrono.
+        long delay=Math.max(20L,ms);
+        final int token=++zebraGeneration;
+        main.postDelayed(()->zebraEnter(token,code,conn),delay);
+    }
+    private void zebraEnter(int token,String expected,InputConnection original){
+        if(token!=zebraGeneration || !zebraEnabled() || zebraQueue.isEmpty())return;
+        if(!zebraEditorReady()){
+            zebraStatus("MLOG perdeu o foco antes do Enter. Confira a leitura.");
+            zebraDropHead("FOCUS_LOST_BEFORE_ENTER");return;
+        }
+        InputConnection current=getCurrentInputConnection();
+        // A troca do InputConnection pode ser normal no Flutter, mas so dar Enter
+        // quando conseguimos confirmar que se trata do codigo desta leitura.
+        CharSequence before=null;
+        try{before=current.getTextBeforeCursor(expected.length()+4,0);}
+        catch(RuntimeException ignored){}
+        if(before!=null && before.length()>0 &&
+           !before.toString().endsWith(expected)){
+            zebraStatus("Codigo do campo diferente do bipado; Enter bloqueado.");
+            zebraDropHead("TEXT_MISMATCH_NO_ENTER");return;
+        }
+        if(current!=original && (before==null || before.length()==0)){
+            zebraStatus("Campo mudou antes do Enter. Confira a leitura.");
+            zebraDropHead("EDITOR_CHANGED_NO_ENTER");return;
+        }
+        long now=SystemClock.uptimeMillis();
+        int dev=KeyCharacterMap.VIRTUAL_KEYBOARD;
+        int flags=KeyEvent.FLAG_SOFT_KEYBOARD;
+        boolean down=false,up=false;
+        try{
+            down=current.sendKeyEvent(new KeyEvent(now,now,KeyEvent.ACTION_DOWN,
+                KeyEvent.KEYCODE_ENTER,0,0,dev,0,flags));
+            up=current.sendKeyEvent(new KeyEvent(now,now+7,KeyEvent.ACTION_UP,
+                KeyEvent.KEYCODE_ENTER,0,0,dev,0,flags));
+        }catch(RuntimeException ex){zebraReport("ENTER_EXCEPTION");}
+        boolean sent=down||up;
+        if(!sent){
+            EditorInfo info=getCurrentInputEditorInfo();
+            int action=info==null?EditorInfo.IME_ACTION_NONE:
+                    info.imeOptions&EditorInfo.IME_MASK_ACTION;
+            if(action!=EditorInfo.IME_ACTION_NONE &&
+               action!=EditorInfo.IME_ACTION_UNSPECIFIED){
+                try{sent=current.performEditorAction(action);}
+                catch(RuntimeException ignored){}
+            }
+        }
+        if(!sent)zebraStatus("Enter nao aceito pelo MLOG. Confira o produto.");
+        zebraReport(sent?"ENTER_SENT_UNVERIFIED":"ENTER_UNAVAILABLE");
+        zebraLastEnterAt=SystemClock.elapsedRealtime();
+        zebraReport("ENTER_FROM_COMMIT_MS_"+(zebraLastEnterAt-zebraCurrentCommittedAt));
+        zebraDropHead(sent?"CYCLE_FINISHED":"CYCLE_FAILED");
+    }
+
     // Apagar contínuo: 1 caractere imediatamente; repetição enquanto o dedo
     // permanece pressionado. Ao soltar, não há exclusões pendentes.
     private static final long ERASE_HOLD_DELAY_MS=350;
@@ -76,11 +273,8 @@ public final class BridgeScanInputMethodService extends InputMethodService {
         return t;
     }
 
-    // O teclado Bridge continua com Enter MANUAL. Nenhum metodo externo
-    // consegue acionar Enter automaticamente nesta versao.
-
-    /** Somente para repeticoes solicitadas expressamente na janela flutuante.
-     *  No modo normal o CMX permanece como unico emissor de Enter. */
+    // O Enter automatico existe exclusivamente no modo Zebra opt-in.
+    // Os metodos legados abaixo continuam disponiveis para o modo anterior.
     /** Diagnostica IME ativo E InputConnection da tela MLOG atual.
      * isInputViewShown e especialmente importante: a conexao antiga pode
      * continuar existindo depois do Enter, quando o Flutter escondeu teclado.
@@ -182,8 +376,21 @@ public final class BridgeScanInputMethodService extends InputMethodService {
               v==InputType.TYPE_NUMBER_VARIATION_PASSWORD;
     }
 
-    @Override public void onCreate(){super.onCreate();active=this;}
-    @Override public void onDestroy(){stopErase();if(active==this)active=null;super.onDestroy();}
+    @Override public void onCreate(){
+        super.onCreate();active=this;
+        registerZebraReceiver();
+        configureNativeIfNeeded();
+    }
+    @Override public void onDestroy(){
+        stopErase();zebraGeneration++;zebraQueue.clear();
+        main.removeCallbacksAndMessages(null);
+        if(zebraReceiver!=null){
+            try{unregisterReceiver(zebraReceiver);}catch(RuntimeException ignored){}
+            zebraReceiver=null;
+        }
+        if(active==this)active=null;
+        super.onDestroy();
+    }
 
     @Override public View onCreateInputView(){
         panel=new LinearLayout(this);
@@ -203,6 +410,10 @@ public final class BridgeScanInputMethodService extends InputMethodService {
         numeric=info!=null && ((info.inputType&InputType.TYPE_MASK_CLASS)==InputType.TYPE_CLASS_NUMBER);
         upper=false;
         if(panel!=null)render();
+        if(zebraEnabled()){
+            configureNativeIfNeeded();
+            main.post(this::zebraPump);
+        }
     }
 
     @Override public void onStartInputView(EditorInfo info,boolean restarting){
@@ -213,6 +424,7 @@ public final class BridgeScanInputMethodService extends InputMethodService {
         if(!targetMlog)manual=true;
         else if(!restarting)manual=false;
         if(panel!=null)render();
+        if(zebraEnabled())main.post(this::zebraPump);
     }
 
     @Override public void onFinishInputView(boolean finishingInput){
@@ -224,6 +436,7 @@ public final class BridgeScanInputMethodService extends InputMethodService {
     @Override public void onFinishInput(){
         stopErase();
         if(targetMlog){manual=false;if(panel!=null)render();}
+        targetMlog=false;
         super.onFinishInput();
     }
 

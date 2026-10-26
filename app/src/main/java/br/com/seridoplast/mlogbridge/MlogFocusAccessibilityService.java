@@ -184,6 +184,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         }
         receiver=new BroadcastReceiver(){
             @Override public void onReceive(Context context,Intent intent){
+                // IME tipo Zebra e receptor exclusivo; nenhuma acessibilidade por bipe.
+                if(prefs().getBoolean(ZebraImeMode.PREF,false))return;
                 boolean treat=ScanAssistState.isClean(MlogFocusAccessibilityService.this);
                 String code=treat?ScannerProtocol.barcodeRaw(intent):ScannerProtocol.barcode(intent);
                 if(treat){
@@ -598,6 +600,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     }
 
     @Override public void onAccessibilityEvent(AccessibilityEvent event){
+        if(prefs().getBoolean(ZebraImeMode.PREF,false))return;
         if(event==null)return;
         CharSequence pkg=event.getPackageName();
         if(pkg==null || !ScanCoordinator.TARGET.contentEquals(pkg)){
@@ -806,6 +809,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     }
 
     @Override protected boolean onKeyEvent(KeyEvent event){
+        if(prefs().getBoolean(ZebraImeMode.PREF,false))return false;
         observeLongHold(event);
         if(event!=null && BridgeEnterPolicy.active(prefs().getBoolean(
                 BridgeEnterPolicy.PREFERENCE,false)) &&

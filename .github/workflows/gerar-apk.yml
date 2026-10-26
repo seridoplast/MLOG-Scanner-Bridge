@@ -126,6 +126,18 @@ jobs:
           java -cp /tmp/bridge-test-321 br.com.seridoplast.mlogbridge.NativeFocusReusePolicyTest
           java -cp /tmp/bridge-test-321 br.com.seridoplast.mlogbridge.FixedEnterCadenceTest
 
+      - name: Testar entrega do teclado estilo Zebra
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bridge-zebra
+          javac -d /tmp/bridge-zebra \
+            app/src/main/java/br/com/seridoplast/mlogbridge/BarcodeIntegrityPolicy.java \
+            app/src/main/java/br/com/seridoplast/mlogbridge/ZebraImeMode.java \
+            app/src/main/java/br/com/seridoplast/mlogbridge/ScanQueue.java \
+            tests/ZebraImeModeTest.java
+          java -cp /tmp/bridge-zebra br.com.seridoplast.mlogbridge.ZebraImeModeTest
+
       - name: Compilar APK de producao com assinatura fixa
         env:
           BRIDGE_SIGNING_STORE_PASSWORD: ${{ secrets.BRIDGE_KEYSTORE_PASSWORD }}
@@ -189,7 +201,7 @@ jobs:
           else
             gh release create "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" --title "MLOG Scanner Bridge ${TAG}" \
-              --notes "Versao ${TAG}: menos varreduras, gatilho 1 segundo, repeticao no intervalo configurado e OK por bipe em aviso de codigo. APK assinado." \
+              --notes "Versao ${TAG}: teste de entrada via teclado estilo Zebra (broadcast nativo, commitText e Enter), sem acessibilidade por leitura. O modo anterior continua disponivel. APK assinado." \
               --latest
           fi
 

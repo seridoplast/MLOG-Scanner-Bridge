@@ -296,6 +296,9 @@ public final class MainActivity extends Activity {
         return allowed && FloatingToolsService.isRunning();
     }
     private String missingRequiredSetup(){
+        if(prefs.getBoolean(ZebraImeMode.PREF,false)){
+            return keyboardReady()?"":"• Selecione o teclado Bridge nas configuracoes do Android";
+        }
         StringBuilder missing=new StringBuilder();
         if(!accessibilityReady())missing.append("• Acessibilidade desativada\n");
         if(!keyboardReady())missing.append("• Teclado Bridge não habilitado/selecionado\n");
@@ -529,6 +532,7 @@ public final class MainActivity extends Activity {
         nativeCheck.setOnCheckedChangeListener((button,checked)->{
             if(!checked){
                 prefs.edit().putBoolean(NativeScannerController.PREF,false)
+                    .putBoolean(ZebraImeMode.PREF,false)
                     .putBoolean(DirectScanPolicy.PREF,false)
                     .putBoolean(BridgeEnterPolicy.PREFERENCE,false).apply();
                 toast("Controle desligado no Bridge. Ajustes do scanner permanecem; restaure no Assistente se necessario.");
@@ -571,11 +575,62 @@ public final class MainActivity extends Activity {
             boolean ok=NativeScannerController.configure(this);
             toast(ok?"Comandos enviados (aguardando teste de bipe).":"Servico nativo indisponivel.");
         });
-        check(nativeCard,"Segurar gatilho 1 s = repetir leituras (teste)",
-            NativeScannerController.LONG_HOLD_PREF,false);
-        subtitle(nativeCard,"Desligado por padrão. Repete no intervalo de ms configurado (mín. 40 ms); soltar interrompe (máx. 30 s).");
+        if(!prefs.getBoolean(ZebraImeMode.PREF,false)){
+            check(nativeCard,"Segurar gatilho 1 s = repetir leituras (teste)",
+                NativeScannerController.LONG_HOLD_PREF,false);
+            subtitle(nativeCard,"Desligado por padrão. Repete no intervalo de ms configurado (mín. 40 ms); soltar interrompe (máx. 30 s).");
+        }else{
+            subtitle(nativeCard,"Gatilho longo indisponível no modo Zebra (sem acessibilidade). Use bipes normais.");
+        }
         subtitle(nativeCard,prefs.getBoolean("native_first_broadcast_seen",false)?
             "Recepcao nativa observada neste teste.":"Ainda sem leitura confirmada pelo canal nativo.");
+        LinearLayout zebraCard=card();
+        zebraCard.addView(label("Modo Zebra — teclado direto (teste)",17,ink,true));
+        CheckBox zebraMode=new CheckBox(this);
+        zebraMode.setButtonTintList(android.content.res.ColorStateList.valueOf(ink));
+        zebraMode.setText("Enviar codigo e Enter pelo teclado Bridge");
+        zebraMode.setTextColor(ink);
+        zebraMode.setTextSize(14);
+        zebraMode.setChecked(prefs.getBoolean(ZebraImeMode.PREF,false));
+        zebraMode.setOnCheckedChangeListener((button,checked)->{
+            if(!checked){
+                prefs.edit().putBoolean(ZebraImeMode.PREF,false).apply();
+                toast("Modo Zebra desligado. O fluxo antigo continua disponivel.");
+                displayPage();return;
+            }
+            if(!NativeScannerController.isInstalled(this)){
+                toast("Servico nativo do leitor nao encontrado.");
+                zebraMode.setChecked(false);return;
+            }
+            new AlertDialog.Builder(this)
+                .setTitle("Testar teclado direto")
+                .setMessage("O Bridge recebera o codigo por broadcast nativo e o enviara pela InputConnection do teclado, sem busca de tela por acessibilidade. Teste em um pedido de treinamento; o MLOG ainda pode rejeitar um Enter e as leituras nao sao comprovantes de gravacao. Selecione o teclado Bridge no Android antes de testar. O controle do scanner e global e pode precisar ser restaurado manualmente.")
+                .setPositiveButton("Ativar teste",(dialog,which)->{
+                    if(!NativeScannerController.configure(this)){
+                        toast("Nao foi possivel configurar o scanner nativo.");
+                        zebraMode.setChecked(false);return;
+                    }
+                    prefs.edit().putBoolean(NativeScannerController.PREF,true)
+                        .putBoolean(DirectScanPolicy.PREF,true)
+                        .putBoolean(ZebraImeMode.PREF,true)
+                        .putBoolean(BridgeEnterPolicy.PREFERENCE,false)
+                        .putBoolean(NativeScannerController.LONG_HOLD_PREF,false)
+                        .apply();
+                    toast("Modo ativado. Selecione o teclado Bridge e abra o campo do MLOG.");
+                    InputMethodManager imm=(InputMethodManager)getSystemService(Context.INPUT_METHOD_SERVICE);
+                    if(imm!=null)imm.showInputMethodPicker();
+                    displayPage();
+                })
+                .setNegativeButton("Cancelar",(dialog,which)->zebraMode.setChecked(false))
+                .setOnCancelListener(dialog->zebraMode.setChecked(false))
+                .show();
+        });
+        zebraCard.addView(zebraMode);
+        subtitle(zebraCard,"Experimental. Requer teclado Bridge selecionado e o campo de leitura do MLOG aberto. Nao precisa de acessibilidade por bipe.");
+        button(zebraCard,"Selecionar teclado Bridge",false,()->{
+            InputMethodManager imm=(InputMethodManager)getSystemService(Context.INPUT_METHOD_SERVICE);
+            if(imm!=null)imm.showInputMethodPicker();
+        });
         button(directCard,"Abrir Assistente de Digitalizacao",false,()->{
             Intent launch=getPackageManager().getLaunchIntentForPackage("com.pda.scanassist");
             if(launch!=null)startActivity(launch);
