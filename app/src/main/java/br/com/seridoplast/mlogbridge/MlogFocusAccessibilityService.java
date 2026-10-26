@@ -152,6 +152,59 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private long lastPrepareCheck;
     private final Runnable prearmRunnable=()->prepareReadingField();
 
+    // Zebra IME: preparar o campo ao ENTRAR numa tela de leitura, antes do
+    // primeiro bipe. Nunca digita nem envia Enter por acessibilidade.
+    private final ZebraAutoFocusPolicy zebraAutoFocusPolicy=new ZebraAutoFocusPolicy();
+    private boolean zebraAutoFocusPending;
+    private final Runnable zebraAutoFocusTask=()->{
+        zebraAutoFocusPending=false;
+        if(!prefs().getBoolean(ZebraImeMode.PREF,false) ||
+           !prefs().getBoolean(ZebraImeMode.AUTO_FOCUS_PREF,true) ||
+           !ScanCoordinator.isActive(this) ||
+           BridgeScanInputMethodService.hasMlogInput())return;
+        AccessibilityNodeInfo root=mlogRoot();
+        if(root==null)return;
+        ScreenInfo info=inspect(root);
+        if(!ZebraAutoFocusPolicy.isEligible(info.screen,info.login,info.dialog,
+                isBlockingOverlay(root)))return;
+        long now=SystemClock.elapsedRealtime();
+        if(!zebraAutoFocusPolicy.shouldAttempt(info.screen,now))return;
+        boolean accepted=requestZebraKeyboardFocus();
+        trace(accepted?"ZEBRA_AUTO_FOCUS_REQUESTED":"ZEBRA_AUTO_FOCUS_NOT_ACCEPTED");
+        // O Flutter pode demorar a criar a InputConnection depois do clique.
+        // Poucas tentativas espaçadas; nunca um loop por evento/frame.
+        if(!BridgeScanInputMethodService.hasMlogInput() &&
+           zebraAutoFocusPolicy.hasAttemptsRemaining() && accepted){
+            scheduleZebraAutoFocus(ZebraAutoFocusPolicy.MIN_ATTEMPT_GAP_MS);
+        }
+    };
+
+    private void scheduleZebraAutoFocus(long delayMs){
+        if(zebraAutoFocusPending)return;
+        zebraAutoFocusPending=true;
+        main.postDelayed(zebraAutoFocusTask,delayMs);
+    }
+
+    private void handleZebraScreenEvent(AccessibilityEvent event){
+        if(event==null || !prefs().getBoolean(ZebraImeMode.AUTO_FOCUS_PREF,true))return;
+        int kind=event.getEventType();
+        if(kind!=AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+           kind!=AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED &&
+           kind!=AccessibilityEvent.TYPE_WINDOWS_CHANGED)return;
+        CharSequence pkg=event.getPackageName();
+        if(pkg==null || !ScanCoordinator.TARGET.contentEquals(pkg))return;
+        if(BridgeScanInputMethodService.hasMlogInput()){
+            zebraAutoFocusPolicy.markReady();
+            return;
+        }
+        // Nao percorrer a arvore em todo CONTENT_CHANGED. O trabalho
+        // pesado fica concentrado numa tentativa com debounce.
+        if(!zebraAutoFocusPending && zebraAutoFocusPolicy.canSchedule(
+                SystemClock.elapsedRealtime())){
+            scheduleZebraAutoFocus(kind==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED?120:190);
+        }
+    }
+
     @Override protected void onServiceConnected(){
         super.onServiceConnected();
         instance=this;
@@ -618,7 +671,10 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     }
 
     @Override public void onAccessibilityEvent(AccessibilityEvent event){
-        if(prefs().getBoolean(ZebraImeMode.PREF,false))return;
+        if(prefs().getBoolean(ZebraImeMode.PREF,false)){
+            handleZebraScreenEvent(event);
+            return;
+        }
         if(event==null)return;
         CharSequence pkg=event.getPackageName();
         if(pkg==null || !ScanCoordinator.TARGET.contentEquals(pkg)){
@@ -1126,9 +1182,20 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         AccessibilityNodeInfo editor=safeEditor(info,true);
         if(editor!=null && editor.isEditable() && editor.isVisibleToUser() &&
            !editor.isPassword()){
-            boolean focused=editor.isFocused() || focusOrClick(editor);
-            trace(focused?"ZEBRA_FOCUS_EDITOR_REQUESTED":"ZEBRA_EDITOR_NOT_FOCUSABLE");
-            return focused;
+            // Foco visual do Flutter nao prova que o Android entregou um
+            // InputConnection ao IME. Em varios coletores o EditText aparece
+            // como focused=true, mas o teclado so inicia apos ACTION_CLICK.
+            boolean connected=BridgeScanInputMethodService.hasMlogInput();
+            boolean focused=editor.isFocused();
+            boolean clicked=false;
+            if(!connected && editor.isClickable()){
+                try{clicked=editor.performAction(AccessibilityNodeInfo.ACTION_CLICK);}
+                catch(RuntimeException ignored){}
+            }
+            if(!clicked && !focused)focused=focusOrClick(editor);
+            trace(clicked?"ZEBRA_FOCUSED_EDITOR_CLICKED_FOR_IME":
+                focused?"ZEBRA_FOCUS_EDITOR_REQUESTED":"ZEBRA_EDITOR_NOT_FOCUSABLE");
+            return clicked || focused;
         }
         AccessibilityNodeInfo button="atividades".equals(info.screen)?
             activityKeyboard(info):findKeyboardTarget(info);

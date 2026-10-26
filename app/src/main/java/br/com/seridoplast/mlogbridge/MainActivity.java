@@ -390,6 +390,8 @@ public final class MainActivity extends Activity {
     private void home(){
         showSetupWarning();
         title("Leitura de códigos","Bipe para testar o leitor.");
+        subtitle(content, "Modo ativo: "+(prefs.getBoolean(ZebraImeMode.PREF,false)?
+            "Bipe Zebra (IME)":"Bipe antigo (acessibilidade)"));
         LinearLayout sample=card();
         TextView statusLabel=label("TESTE DO SCANNER",11,muted,true);sample.addView(statusLabel);
         space(sample,20);
