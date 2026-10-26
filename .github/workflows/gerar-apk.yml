@@ -103,6 +103,19 @@ jobs:
             java -cp /tmp/bridge-test-320 br.com.seridoplast.mlogbridge.$test
           done
 
+      - name: Testar reuso seguro do foco e temporizador
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bridge-test-321
+          javac -d /tmp/bridge-test-321 \
+            app/src/main/java/br/com/seridoplast/mlogbridge/NativeFocusReusePolicy.java \
+            app/src/main/java/br/com/seridoplast/mlogbridge/FixedEnterCadence.java \
+            tests/NativeFocusReusePolicyTest.java \
+            tests/FixedEnterCadenceTest.java
+          java -cp /tmp/bridge-test-321 br.com.seridoplast.mlogbridge.NativeFocusReusePolicyTest
+          java -cp /tmp/bridge-test-321 br.com.seridoplast.mlogbridge.FixedEnterCadenceTest
+
       - name: Compilar APK de producao com assinatura fixa
         env:
           BRIDGE_SIGNING_STORE_PASSWORD: ${{ secrets.BRIDGE_KEYSTORE_PASSWORD }}

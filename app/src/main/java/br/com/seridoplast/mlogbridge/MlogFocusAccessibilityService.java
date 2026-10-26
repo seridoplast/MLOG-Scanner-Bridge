@@ -43,6 +43,24 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     static MlogFocusAccessibilityService current(){return instance;}
 
     private final Handler main=new Handler(Looper.getMainLooper());
+    // Mensagens de Enter nao devem ficar atras de barreiras sincronas da UI.
+    // A acessibilidade e o envio da tecla continuam na thread principal.
+    private final Handler enterTimer=Build.VERSION.SDK_INT>=28
+            ?Handler.createAsync(Looper.getMainLooper())
+            :new Handler(Looper.getMainLooper());
+    // Cache somente ENTRE SET_TEXT e seu Enter, nunca entre bipes.
+    // O Flutter pode recriar a arvore apos processar cada codigo.
+    private AccessibilityNodeInfo insertedEditor;
+    private long insertedEditorAt;
+    private String scanScreen="";
+    private long lastOverlayProbeAt;
+    // Reuso conservador do editor entre bipes: somente se o MLOG manteve
+    // exatamente o MESMO campo focado e vazio. Nunca clicar em um botao com
+    // coordenadas cacheadas nem assumir que a tela anterior ainda vale.
+    private AccessibilityNodeInfo lastKnownEditor;
+    private String lastKnownScreen="";
+    private long lastKnownEditorAt;
+
     private final SeparationProductGuard productGuard=new SeparationProductGuard();
     private final LongHoldScanPolicy longHoldPolicy=new LongHoldScanPolicy();
     private int currentLongHoldKey=-1;
@@ -312,7 +330,6 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private void enqueueBarcode(String code){
         if(!ScanCoordinator.isActive(this))return;
         refreshEventThrottle();
-        if(mlogRoot()==null){status("Leitura ignorada: MLOG nao esta ativo.");return;}
         long now=SystemClock.elapsedRealtime();
         if(now<navigationGuardUntil){
             trace("SCAN_DURING_NAVIGATION_IGNORED");
@@ -347,7 +364,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 }
                 queuedAt.addLast(now);
                 trace("NATIVE_SCAN_QUEUED_DEPTH_"+scanQueue.waitingCount());
-                status("Leituras na fila: "+scanQueue.waitingCount());
+                // Nao escrever SharedPreferences a cada bipe rapido.
+                // Erros/limites continuam sendo informados imediatamente.
                 return;
             }
             trace("SCAN_DISCARDED_BUSY_NO_QUEUE");
@@ -373,6 +391,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             trace("QUEUE_WAIT_MS_"+(currentScanStartedAt-queuedAt.peekFirst()));
         trace("SCAN_START");
         fixedEnterScheduled=false;
+        insertedEditor=null;
+        insertedEditorAt=0L;
+        scanScreen="";
         onBarcode(code);
         // Fail-safe: nunca manter a fila bloqueada indefinidamente.
         main.postDelayed(()->{
@@ -388,6 +409,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         awaitingEnterConfirmation=false;
         fixedEnterScheduled=false;
         directEnterSent=false;
+        insertedEditor=null;
+        insertedEditorAt=0L;
+        scanScreen="";
         trace("SCAN_ELAPSED_MS_"+(SystemClock.elapsedRealtime()-currentScanStartedAt));
         totalFinished++;
         // Contador acumulado sem armazenar historico/codigo no disco.
@@ -479,24 +503,26 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
      *  normal que possui a secao 'Informacoes Gerais' recolhida. */
     private boolean isBlockingOverlay(AccessibilityNodeInfo root){
         if(root==null)return true;
-        ScreenInfo info=inspect(root);
-        if(info.dialog || info.login)return true;
         CharSequence rootClass=root.getClassName();
-        if(rootClass!=null &&
-           (has(norm(rootClass),"dialog","popupwindow")))return true;
+        if(rootClass!=null && has(norm(rootClass),"dialog","popupwindow"))return true;
+        // Anteriormente inspect() percorria ate 550 nos e visit() percorria
+        // tudo uma SEGUNDA vez para cada tentativa. Verificacao unica.
         List<AccessibilityNodeInfo> nodes=new ArrayList<>();
         visit(root,nodes,0);
         boolean modalTitle=false,close=false;
         for(AccessibilityNodeInfo n:nodes){
             if(!n.isVisibleToUser())continue;
             String name=tag(n).trim();
+            if(has(name,"login","autenticacao","senha de acesso",
+                    "atencao!","atividade cancelada","confirmar cancelamento"))return true;
             if(has(name,"informacoes do item", "informacoes do produto",
                     "detalhes do item", "detalhes do produto",
                     "cancelar separacao", "confirmar cancelamento",
                     "deseja cancelar", "cancelar atividade"))modalTitle=true;
             if(has(name,"fechar", "dispensar", "fechar janela", "voltar a separacao"))close=true;
+            if(modalTitle && close)return true;
         }
-        return modalTitle && close;
+        return false;
     }
 
     private boolean isNavigationClick(AccessibilityNodeInfo source){
@@ -527,6 +553,10 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             }
             return;
         }
+        if(event.getEventType()==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED){
+            lastKnownEditor=null;
+            lastKnownScreen="";
+        }
         if(event.getEventType()==AccessibilityEvent.TYPE_VIEW_CLICKED){
             AccessibilityNodeInfo source=event.getSource();
             if(source!=null && isNavigationClick(source)){
@@ -539,10 +569,17 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         if((event.getEventType()==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
             event.getEventType()==AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) &&
            (!scanQueue.isIdle() || pendingCode!=null)){
-            AccessibilityNodeInfo visible=mlogRoot();
-            if(visible!=null && isBlockingOverlay(visible)){
-                suspendForNavigation("overlay");
-                return;
+            long overlayNow=SystemClock.elapsedRealtime();
+            // Flutter pode emitir dezenas de CONTENT_CHANGED por codigo.
+            // O teste critico ocorre novamente antes do Enter sem debounce.
+            if(event.getEventType()==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+               overlayNow-lastOverlayProbeAt>=90L){
+                lastOverlayProbeAt=overlayNow;
+                AccessibilityNodeInfo visible=mlogRoot();
+                if(visible!=null && isBlockingOverlay(visible)){
+                    suspendForNavigation("overlay");
+                    return;
+                }
             }
         }
         if(event.getEventType()==AccessibilityEvent.TYPE_VIEW_FOCUSED){
@@ -947,6 +984,37 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         return null;
     }
 
+    /** Caminho rapido somente quando o editor anterior continua focado,
+     * vazio e no mesmo windowId. Ao menor sinal de mudanca, usa o fluxo
+     * completo de descoberta e mapeamento da tela.
+     */
+    private boolean tryReuseFocusedNativeEditor(AccessibilityNodeInfo root,String code){
+        if(!prefs().getBoolean(NativeScannerController.PREF,false) ||
+           lastKnownEditor==null || root==null || code==null || code.isEmpty() ||
+           !NativeFocusReusePolicy.withinWindow(
+               SystemClock.elapsedRealtime(),lastKnownEditorAt) ||
+           lastKnownScreen.isEmpty())return false;
+        // Uma janela modal no mesmo processo invalida o reuso.
+        if(isBlockingOverlay(root))return false;
+        AccessibilityNodeInfo editor=lastKnownEditor;
+        try{
+            if(!editor.refresh())return false;
+            CharSequence text=editor.getText();
+            // O MLOG precisa ter esvaziado o campo anterior por conta propria.
+            // Nunca substituir um codigo pendente/humano neste atalho.
+            if(!NativeFocusReusePolicy.editorReusable(
+                    editor.getWindowId()==root.getWindowId(),
+                    editor.isFocused(),editor.isVisibleToUser(),
+                    editor.isEditable(),editor.isEnabled(),editor.isPassword(),
+                    blockedLabel(tag(editor)),text==null || text.length()==0))return false;
+            scanScreen=lastKnownScreen;
+            ++serial;
+            trace("NATIVE_FOCUS_REUSED_EMPTY_EDITOR");
+            focusAndSet(editor,code);
+            return true;
+        }catch(RuntimeException ignored){return false;}
+    }
+
     private void onBarcode(String code){
         lastAutoActionAt=SystemClock.elapsedRealtime();
         if(pendingCode!=null){status("Leitura anterior aguardando campo; mantendo fila.");return;}
@@ -954,6 +1022,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         // outro broadcast. A confirmacao nova sera identificada no queueEnter.
         AccessibilityNodeInfo root=mlogRoot();
         if(root==null){status("Ignorado: MLOG nao esta na tela ativa.");finishQueuedScan("fora_do_mlog");return;}
+        if(tryReuseFocusedNativeEditor(root,code))return;
         ScreenInfo i=inspect(root);
         if("desconhecida".equals(i.screen) && !i.login && !i.dialog &&
            i.editors.size()==1 && SystemClock.elapsedRealtime()-preparedAt<9000 &&
@@ -969,6 +1038,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
            "desconhecida".equals(i.screen)){
             status("Leitura pausada: tela desconhecida ou aviso aberto.");finishQueuedScan("tela_bloqueada");return;
         }
+        scanScreen=i.screen;
         // Diferenciar um editor QUALQUER do campo efetivamente aberto pelo
         // botao de teclado do MLOG. Antes, um editor desfocado bloqueava o
         // clique no botao e somente fazia o Gboard aparecer.
@@ -1330,17 +1400,22 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 deferEditorAction(code,advertised?"SET_TEXT_RETRY":"ACTION_SET_TEXT_PENDING");
                 return;
             }
-            AccessibilityNodeInfo currentRoot=mlogRoot();
-            ScreenInfo currentInfo=currentRoot==null?null:inspect(currentRoot);
+            // O tipo de tela ja foi verificado na entrada desta leitura.
+            // Evita percorrer toda a arvore Flutter pela 3a vez neste bipe.
             lastEnteredByBridge=code;
-            lastEnteredScreen=currentInfo==null?"":currentInfo.screen;
+            lastEnteredScreen=scanScreen;
+            insertedEditor=editor;
+            insertedEditorAt=SystemClock.elapsedRealtime();
             cancelPending();
             trace("SET_TEXT_OK");
-            status(prefs().getBoolean(NativeScannerController.PREF,false)?
-                "Codigo inserido; Enter programado pelo intervalo configurado.":
-                prefs().getBoolean(DirectScanPolicy.PREF,false)?
-                "Codigo inserido: confirmacao pelo Bridge.":
-                "Leitura inserida: aguardando Enter do CMX.");
+            // No modo nativo o fluxo normal nao atualiza SharedPreferences
+            // em cada bipe. A escrita em disco compete com o agendamento
+            // do Enter em aparelhos com CPU/flash lentos.
+            if(!prefs().getBoolean(NativeScannerController.PREF,false)){
+                status(prefs().getBoolean(DirectScanPolicy.PREF,false)?
+                    "Codigo inserido: confirmacao pelo Bridge.":
+                    "Leitura inserida: aguardando Enter do CMX.");
+            }
             // O estado preparado sera limpo ao terminar ESTA leitura;
             // nao usar timer que possa apagar o estado da leitura seguinte.
             awaitCmxConfirmation(code,0);
@@ -1382,13 +1457,34 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         long delay=FixedEnterCadence.delayMs(currentScanStartedAt,
                 lastFixedEnterAt,interval,now);
         trace("FIXED_ENTER_SCHEDULED_DELAY_MS_"+delay);
-        main.postDelayed(()->fireFixedEnter(token),delay);
+        final long intendedAt=now+delay;
+        enterTimer.postDelayed(()->{
+            trace("FIXED_ENTER_TIMER_LAG_MS_"+
+                    Math.max(0L,SystemClock.elapsedRealtime()-intendedAt));
+            fireFixedEnter(token);
+        },delay);
     }
 
     // O Enter continua temporizado. A unica verificacao adicional ocorre
     // ANTES dele: comparar o texto editavel com o broadcast completo.
     // Nunca aguarda atualizacao de quantidade ou confirmacao DEPOIS do Enter.
     private static final long PRE_ENTER_REPAIR_DELAY_MS=35L;
+
+    /** Reutiliza o editor SOMENTE dentro da mesma leitura (SET_TEXT -> Enter).
+     * refresh() detecta nos descartados pelo Flutter; windowId impede usar
+     * uma janela antiga. O teste de overlay continua independente.
+     */
+    private AccessibilityNodeInfo validatedInsertedEditor(AccessibilityNodeInfo root){
+        AccessibilityNodeInfo e=insertedEditor;
+        if(e==null || root==null || SystemClock.elapsedRealtime()-insertedEditorAt>1200L)
+            return null;
+        try{
+            if(e.getWindowId()!=root.getWindowId() || !e.refresh() ||
+               !e.isVisibleToUser() || !e.isEditable() || !e.isEnabled() ||
+               e.isPassword() || blockedLabel(tag(e)))return null;
+            return e;
+        }catch(RuntimeException ignored){return null;}
+    }
 
     private void fireFixedEnter(long token){
         fireFixedEnterChecked(token,false);
@@ -1406,15 +1502,26 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         // O ACTION_SET_TEXT do Android apenas informa que a acao foi
         // aceita. No Flutter, o campo pode ainda estar parcial em outro frame.
         // Recapturar o editor evita validar um AccessibilityNodeInfo antigo.
-        ScreenInfo info=inspect(root);
-        AccessibilityNodeInfo editor=safeEditor(info,true);
         String expected=scanQueue.active();
+        AccessibilityNodeInfo editor=validatedInsertedEditor(root);
+        boolean cachedEditorReady=editor!=null;
+        if(cachedEditorReady)trace("FIXED_ENTER_EDITOR_FAST_PATH");
+        if(editor==null){
+            // Recuperacao quando o Flutter recriou o campo depois de SET_TEXT.
+            ScreenInfo info=inspect(root);
+            editor=safeEditor(info,true);
+            trace("FIXED_ENTER_EDITOR_FULL_LOOKUP");
+        }
         boolean focused=editor!=null && editor.isEditable() && editor.isEnabled() &&
                 !editor.isPassword() && editor.isFocused();
         CharSequence actual=null;
         if(focused){
-            try{editor.refresh();actual=editor.getText();}
-            catch(RuntimeException ignored){focused=false;}
+            try{
+                // Cache ja passou no refresh() nesta chamada. Nao fazer
+                // outra ida ao processo de acessibilidade sem necessidade.
+                if(!cachedEditorReady && !editor.refresh())focused=false;
+                else actual=editor.getText();
+            }catch(RuntimeException ignored){focused=false;}
         }
         if(!focused || !BarcodePreEnterGuard.matches(expected,actual)){
             // Flutter pode estar trocando o editor no frame do Enter.
@@ -1475,6 +1582,17 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         if(sent && productNow!=null && prefs().getBoolean(NativeScannerController.PREF,false))
             productGuard.sent(productNow.product,expected);
         lastFixedEnterAt=SystemClock.elapsedRealtime();
+        if(sent && editor!=null && !scanScreen.isEmpty()){
+            // Nao confundir "Enter enviado" com sucesso do pedido: o cache
+            // so e usado se o editor real ainda estiver focado e vazio.
+            lastKnownEditor=editor;
+            lastKnownScreen=scanScreen;
+            lastKnownEditorAt=lastFixedEnterAt;
+        }else{
+            lastKnownEditor=null;
+            lastKnownScreen="";
+            lastKnownEditorAt=0L;
+        }
         trace(sent?"FIXED_ENTER_SENT_NO_VISUAL_WAIT":"FIXED_ENTER_UNAVAILABLE");
         if(!sent)status("Enter nao enviado. Confira o teclado Bridge e a acessibilidade.");
         finishQueuedScan(sent?"enter_temporizado_enviado":"enter_indisponivel");
@@ -2423,12 +2541,15 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         scheduleAutoRepeat();
     }
 
-    @Override public void onInterrupt(){stopLongHold();cancelAutoCount("Acessibilidade interrompida; contador cancelado.");cancelPending();scanQueue.clear();++workGeneration;restoreKeyboard();status("Acessibilidade interrompida.");}
+    @Override public void onInterrupt(){lastKnownEditor=null;lastKnownScreen="";stopLongHold();cancelAutoCount("Acessibilidade interrompida; contador cancelado.");cancelPending();scanQueue.clear();++workGeneration;restoreKeyboard();status("Acessibilidade interrompida.");}
     @Override public void onDestroy(){
+        lastKnownEditor=null;
+        lastKnownScreen="";
         stopLongHold();
         cancelAutoCount("Acessibilidade encerrada; contador cancelado.");
         if(receiverRegistered)try{unregisterReceiver(receiver);}catch(RuntimeException ignored){}
         main.removeCallbacksAndMessages(null);
+        enterTimer.removeCallbacksAndMessages(null);
         cancelPending();
         scanQueue.clear();
         if(instance==this)instance=null;
