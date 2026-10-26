@@ -424,27 +424,6 @@ public final class MainActivity extends Activity {
                 .putBoolean(ScanAssistState.ARMED,false).apply();
             toast("Ferramentas desligadas.");
         });
-        MlogFocusAccessibilityService running=MlogFocusAccessibilityService.current();
-        if(running!=null && running.hasUnverifiedBatch()){
-            LinearLayout issue=card();
-            issue.addView(label("LEITURAS PENDENTES: "+running.unreconciledCount(),16,0xffb91c1c,true));
-            subtitle(issue,"Confira as quantidades no MLOG antes de liberar novas leituras.");
-            button(issue,"Descartar pendentes APOS conferir",false,()->{
-                MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
-                if(svc==null || !svc.hasUnverifiedBatch())return;
-                int count=svc.unreconciledCount();
-                new AlertDialog.Builder(this)
-                    .setTitle("Conferiu os registros no MLOG?")
-                    .setMessage("Ha "+count+" leitura(s) com situacao incerta. " +
-                        "Esta acao NAO processa os bipes pendentes; so libera o leitor " +
-                        "depois que voce reconciliar manualmente a contagem.")
-                    .setPositiveButton("Conferi; limpar fila",(dialog,which)->{
-                        svc.discardUnverifiedBatchAfterReconciliation();
-                        displayPage();
-                    })
-                    .setNegativeButton("Voltar",null).show();
-            });
-        }
         button(service,"Abrir MLOG",true,this::openMlog);
         button(service,"Acessibilidade do Android",false,()->startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
     }
@@ -612,8 +591,8 @@ public final class MainActivity extends Activity {
         subtitle(ime,bridgeSelected?"Teclado Bridge selecionado.":"Teclado Bridge não selecionado.");
         // Controle de tempo em ms, salvo localmente e aplicado ao servico em uso.
         LinearLayout advanced=card();
-        advanced.addView(label("Avançado",17,ink,true));
-        subtitle(advanced,"Intervalo entre leituras. 0 ms desativa o bloqueio por tempo.");
+        advanced.addView(label("Tempo do ciclo (ms)",17,ink,true));
+        subtitle(advanced,"No modo nativo, o tempo controla bipes e Enter.");
         int activeMs=prefs.getInt(ScanAssistState.CLICK_COOLDOWN_MS,
             (int)TimedClickGate.COOLDOWN_MS);
         TextView currentMs=label("Tempo atual: "+activeMs+" ms",14,ink,true);
@@ -628,14 +607,14 @@ public final class MainActivity extends Activity {
         cooldownInput.setTextColor(ink);
         cooldownInput.setHintTextColor(muted);
         cooldownInput.setTextSize(19);
-        cooldownInput.setContentDescription("Tempo de bloqueio em milissegundos");
+        cooldownInput.setContentDescription("Intervalo dos bipes e do Enter em milissegundos");
         cooldownRow.addView(cooldownInput,new LinearLayout.LayoutParams(0,dp(58),1));
         TextView units=label("ms",14,muted,true);
         units.setPadding(dp(10),0,dp(5),0);
         cooldownRow.addView(units);
         space(advanced,6);
         advanced.addView(cooldownRow);
-        subtitle(advanced,"0 ou mais. Padrão: 100 ms. Valores muito baixos podem duplicar leituras.");
+        subtitle(advanced,"Sem conferir a tela apos o Enter. Tempos baixos podem perder ou duplicar produtos.");
         button(advanced,"Aplicar tempo",true,()->{
             String raw=cooldownInput.getText().toString().trim();
             int ms;

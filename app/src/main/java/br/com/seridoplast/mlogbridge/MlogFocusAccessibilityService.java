@@ -60,24 +60,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     // leituras SIMULTANEAMENTE pendentes para evitar OOM em erro prolongado.
     private final ScanQueue scanQueue=new ScanQueue(128);
     private final java.util.ArrayDeque<Long> queuedAt=new java.util.ArrayDeque<>();
-    // A falha nao pode descartar em silencio os bipes ja recebidos.
-    private boolean pausedUnverified;
-    private SeparationVisualReceipt receiptBefore;
-    boolean hasUnverifiedBatch(){return pausedUnverified;}
-    int unreconciledCount(){return pausedUnverified?1+scanQueue.waitingCount():0;}
-    /** Exige uma decisao humana apos verificar a contagem real no MLOG. */
-    void discardUnverifiedBatchAfterReconciliation(){
-        if(!pausedUnverified)return;
-        int count=unreconciledCount();
-        ++workGeneration; ++serial; ++enterAttempt;
-        awaitingEnterConfirmation=false;
-        cancelPending();
-        scanQueue.clear(); queuedAt.clear();
-        pausedUnverified=false;
-        receiptBefore=null;
-        trace("MANUAL_RECONCILIATION_DISCARDED_PENDING_COUNT_"+count);
-        status("Fila limpa manualmente apos conferencia; confira os registros do MLOG.");
-    }
+    // Ciclo temporizado: sem esperar mudanca visual do Flutter apos o Enter.
+    private long lastFixedEnterAt;
+    private boolean fixedEnterScheduled;
     // v3.0.4: trava APENAS o novo toque, por 100 ms, sem esperar Enter.
     private final TimedClickGate timedClickGate=new TimedClickGate();
     // Contador sob comando explicito do operador, nunca ativo por padrao.
@@ -307,12 +292,6 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     /** Nao descartar o proximo gatilho enquanto o editor ainda abre. */
     private void enqueueBarcode(String code){
         if(!ScanCoordinator.isActive(this))return;
-        if(pausedUnverified){
-            trace("BIP_REJECTED_PENDING_RECONCILIATION");
-            status("CONFERIR MLOG: "+unreconciledCount()+" leitura(s) pendente(s). " +
-                "Novos bipes nao estao sendo processados.");
-            return;
-        }
         refreshEventThrottle();
         if(mlogRoot()==null){status("Leitura ignorada: MLOG nao esta ativo.");return;}
         long now=SystemClock.elapsedRealtime();
@@ -333,14 +312,14 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             // So no modo nativo: reter eventos curtos, mas NAO tratar
             // nenhuma leitura como conferida ate a anterior ser concluida.
             if(prefs().getBoolean(NativeScannerController.PREF,false)){
-                if(scanQueue.waitingCount()>=24 || !scanQueue.offer(code)){
+                if(!scanQueue.offer(code)){
                     trace("NATIVE_QUEUE_FULL");
-                    status("Fila de bipes cheia. Pare e confira as quantidades no MLOG.");
+                    status("Leitor ocupado: capacidade de processamento atingida.");
                     return;
                 }
                 queuedAt.addLast(now);
                 trace("NATIVE_SCAN_QUEUED_DEPTH_"+scanQueue.waitingCount());
-                status("Bipes aguardando: "+scanQueue.waitingCount()+". Sem confirmacao, fila sera suspensa.");
+                status("Leituras na fila: "+scanQueue.waitingCount());
                 return;
             }
             trace("SCAN_DISCARDED_BUSY_NO_QUEUE");
@@ -358,7 +337,6 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         startQueuedScan();
     }
     private void startQueuedScan(){
-        if(pausedUnverified)return;
         String code=scanQueue.active();
         if(code==null)return;
         final int epoch=++workGeneration;
@@ -366,21 +344,21 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         if(!queuedAt.isEmpty())
             trace("QUEUE_WAIT_MS_"+(currentScanStartedAt-queuedAt.peekFirst()));
         trace("SCAN_START");
-        receiptBefore=prefs().getBoolean(NativeScannerController.PREF,false)?
-            separationReceiptOnScreen():null;
+        fixedEnterScheduled=false;
         onBarcode(code);
         // Fail-safe: nunca manter a fila bloqueada indefinidamente.
         main.postDelayed(()->{
-            if(workGeneration!=epoch || scanQueue.isIdle())return;
-            trace("SCAN_TIMEOUT");
-            status("Leitura nao concluida no prazo; confira MLOG antes de repetir.");
-            finishQueuedScan("timeout");
-        },5400);
+            if(workGeneration!=epoch || scanQueue.isIdle() || fixedEnterScheduled)return;
+            trace("SCAN_TIMEOUT_BEFORE_CODE_INSERTION");
+            status("Nao foi possivel abrir/preencher o campo de leitura.");
+            finishQueuedScan("timeout_antes_codigo");
+        },prefs().getBoolean(NativeScannerController.PREF,false)?2300:5400);
     }
     private void finishQueuedScan(String reason){
-        if(scanQueue.isIdle() || pausedUnverified)return;
+        if(scanQueue.isIdle())return;
         trace("SCAN_FINISH_"+reason);
         awaitingEnterConfirmation=false;
+        fixedEnterScheduled=false;
         directEnterSent=false;
         trace("SCAN_ELAPSED_MS_"+(SystemClock.elapsedRealtime()-currentScanStartedAt));
         totalFinished++;
@@ -392,24 +370,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         prearmFallbackUsed=false;
         ++serial; // cancelar tentativas de foco da leitura anterior
         ++enterAttempt; // cancelar espera passiva da leitura anterior
-        boolean success="campo_mudou".equals(reason) ||
-            "campo_saiu".equals(reason) ||
-            "quantidade_visual_aumentou".equals(reason);
-        if(prefs().getBoolean(NativeScannerController.PREF,false) && !success){
-            // NAO limpar a fila: isso fazia varios bipes desaparecerem.
-            // Um Enter enviado nao significa que o MLOG registrou o produto.
-            pausedUnverified=true;
-            trace("NATIVE_QUEUE_PAUSED_UNVERIFIED_"+reason);
-            status("CONFERENCIA NECESSARIA: "+unreconciledCount()+
-                " leitura(s) incerta(s). Abra o Bridge e confira o MLOG.");
-            android.widget.Toast.makeText(this,
-                "MLOG: confira os bipes pendentes no Bridge antes de continuar.",
-                android.widget.Toast.LENGTH_LONG).show();
-            ++workGeneration;
-            return;
-        }
         if(!queuedAt.isEmpty())queuedAt.pollFirst();
-        receiptBefore=null;
         boolean more=scanQueue.complete();
         // O primeiro bipe segue confirmado pelo processamento normal do CMX.
         // Repeticoes posteriores sao opt-in e contam envios, nao registros gravados.
@@ -436,7 +397,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             // Breve intervalo para o Flutter recompor a arvore apos Enter.
             // O Flutter precisa reconstruir a arvore. Aguardar so um frame
             // curto; cada nova leitura voltara a verificar campo/foco.
-            main.postDelayed(this::startQueuedScan,fastImeMode()?16:65);
+            main.postDelayed(this::startQueuedScan,
+                    prefs().getBoolean(NativeScannerController.PREF,false)?16:(fastImeMode()?16:65));
         }
     }
 
@@ -1137,13 +1099,16 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private void startPending(String code,String type){
         // O codigo so permanece na memoria ate concluir a tentativa.
         pendingCode=code;
-        pendingDeadline=SystemClock.elapsedRealtime()+3400;
+        pendingDeadline=SystemClock.elapsedRealtime()+
+            (prefs().getBoolean(NativeScannerController.PREF,false)?1200:3400);
         pendingScreen=type;
         ++serial;
         trace("WAIT_EDITOR_"+type);
     }
     private void retryFill(int id,String intendedScreen){
-        int[] intervals=fastImeMode()?new int[]{25,60,110,175,260,390,600,900,1300,1900,2700,3100}:
+        int[] intervals=prefs().getBoolean(NativeScannerController.PREF,false)?
+                new int[]{15,40,80,130,190,280,400,550,750,1000,1190}:
+                fastImeMode()?new int[]{25,60,110,175,260,390,600,900,1300,1900,2700,3100}:
                 new int[]{90,170,280,430,610,850,1150,1500,2000,2700,3100};
         for(int delay:intervals){
             main.postDelayed(()->tryPending(id,intendedScreen),delay);
@@ -1280,7 +1245,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             lastEnteredScreen=currentInfo==null?"":currentInfo.screen;
             cancelPending();
             trace("SET_TEXT_OK");
-            status(prefs().getBoolean(DirectScanPolicy.PREF,false)?
+            status(prefs().getBoolean(NativeScannerController.PREF,false)?
+                "Codigo inserido; Enter programado pelo intervalo configurado.":
+                prefs().getBoolean(DirectScanPolicy.PREF,false)?
                 "Codigo inserido: confirmacao pelo Bridge.":
                 "Leitura inserida: aguardando Enter do CMX.");
             // O estado preparado sera limpo ao terminar ESTA leitura;
@@ -1295,6 +1262,10 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private boolean directEnterSent; // sempre false nesta versao; preserva evento legado sem acao
 
     private void awaitCmxConfirmation(String expected,long ignoredDelay){
+        if(prefs().getBoolean(NativeScannerController.PREF,false)){
+            scheduleFixedEnter();
+            return;
+        }
         final long token=++enterAttempt;
         awaitingEnterConfirmation=true;
         directEnterSent=false;
@@ -1305,6 +1276,56 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             "BRIDGE_ENTER_ARMED":"CMX_ENTER_PASSIVE_WAIT");
         main.postDelayed(()->observeCmxConfirmation(expected,token),
                 prefs().getBoolean(NativeScannerController.PREF,false)?20:40);
+    }
+
+    /** Modo nativo: intervalo configurado vale para o inicio da leitura e
+     * tambem para o Enter. O codigo ja foi inserido por ACTION_SET_TEXT.
+     * Nunca espera alteracao do Flutter depois do envio do Enter.
+     */
+    private void scheduleFixedEnter(){
+        final long token=++enterAttempt;
+        awaitingEnterConfirmation=false;
+        fixedEnterScheduled=true;
+        long now=SystemClock.elapsedRealtime();
+        long interval=timedClickGate.getCooldownMs();
+        long delay=FixedEnterCadence.delayMs(currentScanStartedAt,
+                lastFixedEnterAt,interval,now);
+        trace("FIXED_ENTER_SCHEDULED_DELAY_MS_"+delay);
+        main.postDelayed(()->fireFixedEnter(token),delay);
+    }
+
+    private void fireFixedEnter(long token){
+        if(token!=enterAttempt || scanQueue.isIdle() || !fixedEnterScheduled)return;
+        // Uma tecla jamais deve ser enviada para outro aplicativo ou um modal.
+        AccessibilityNodeInfo root=mlogRoot();
+        if(root==null || isBlockingOverlay(root)){
+            trace("FIXED_ENTER_CANCELLED_NOT_MLOG");
+            status("Enter cancelado: MLOG nao esta ativo ou exibiu aviso.");
+            finishQueuedScan("enter_cancelado");
+            return;
+        }
+        trace("FIXED_ENTER_TIMER_FIRED");
+        boolean sent=BridgeScanInputMethodService.sendEnterForVerifiedScan();
+        if(sent)trace("FIXED_ENTER_BRIDGE_IME");
+        if(!sent){
+            // Sem confirmacao posterior; so um metodo pode efetivamente enviar.
+            ScreenInfo info=inspect(root);
+            AccessibilityNodeInfo editor=safeEditor(info,true);
+            if(editor!=null && editor.isFocused() && Build.VERSION.SDK_INT>=30){
+                try{sent=editor.performAction(
+                    AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.getId());}
+                catch(RuntimeException ignored){}
+                if(sent)trace("FIXED_ENTER_EDITOR_ACTION");
+            }
+            if(!sent){
+                sent=sendAutoEnterByAccessibility();
+                if(sent)trace("FIXED_ENTER_ACCESSIBILITY_FALLBACK");
+            }
+        }
+        lastFixedEnterAt=SystemClock.elapsedRealtime();
+        trace(sent?"FIXED_ENTER_SENT_NO_VISUAL_WAIT":"FIXED_ENTER_UNAVAILABLE");
+        if(!sent)status("Enter nao enviado. Confira o teclado Bridge e a acessibilidade.");
+        finishQueuedScan(sent?"enter_temporizado_enviado":"enter_indisponivel");
     }
 
     /** Observacao passiva. NUNCA envia teclas, clique no Gboard ou acao IME. */
@@ -1318,15 +1339,6 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         ScreenInfo info=inspect(root);
         if(info.login || info.dialog || isBlockingOverlay(root)){
             suspendForNavigation("janela_durante_cmx_enter");return;
-        }
-        // Na separacao, a quantidade pode aumentar enquanto o Flutter
-        // mantem o mesmo editor/codigo. Campo identico nao significa falha.
-        if(prefs().getBoolean(NativeScannerController.PREF,false) &&
-           receiptBefore!=null && "separacao".equals(info.screen) &&
-           receiptBefore.increased(separationReceiptOnScreen())){
-            trace("SEPARATION_VISUAL_QUANTITY_INCREMENT");
-            finishQueuedScan("quantidade_visual_aumentou");
-            return;
         }
         AccessibilityNodeInfo editor=safeEditor(info,true);
         if(editor==null && info.editors.size()==1 &&
