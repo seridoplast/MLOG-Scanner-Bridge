@@ -571,9 +571,9 @@ public final class MainActivity extends Activity {
             boolean ok=NativeScannerController.configure(this);
             toast(ok?"Comandos enviados (aguardando teste de bipe).":"Servico nativo indisponivel.");
         });
-        check(nativeCard,"Segurar gatilho 1,5 s = repetir acionamentos (teste)",
+        check(nativeCard,"Segurar gatilho 1 s = repetir leituras (teste)",
             NativeScannerController.LONG_HOLD_PREF,false);
-        subtitle(nativeCard,"Desligado por padrão. Repete o comando de leitura a cada 250 ms ou mais; soltar interrompe (máx. 30 s).");
+        subtitle(nativeCard,"Desligado por padrão. Repete no intervalo de ms configurado (mín. 40 ms); soltar interrompe (máx. 30 s).");
         subtitle(nativeCard,prefs.getBoolean("native_first_broadcast_seen",false)?
             "Recepcao nativa observada neste teste.":"Ainda sem leitura confirmada pelo canal nativo.");
         button(directCard,"Abrir Assistente de Digitalizacao",false,()->{

@@ -2,11 +2,12 @@ package br.com.seridoplast.mlogbridge;
 
 /** Estado deterministico do gatilho fisico para leitura continua opt-in. */
 final class LongHoldScanPolicy {
-    static final long HOLD_MS=1500L;
-    // Ritmo minimo para repeticao programada; nao promete decodificacao
-    // em 250 ms (o firmware e o MLOG podem precisar de mais tempo).
+    static final long HOLD_MS=1000L;
+    // Usar o MESMO intervalo do bloqueio do operador. Se 0 ms, usar
+    // 40 ms como protecao para nao inundar o servico nativo com Intents.
+    // O firmware ainda determina quanto demora uma decodificacao real.
     static long pulseInterval(long configuredMs){
-        return Math.max(250L,configuredMs);
+        return Math.max(40L,configuredMs);
     }
     static boolean canPulse(int pendingCount,boolean awaitingEditor){
         return pendingCount<3 && !awaitingEditor;

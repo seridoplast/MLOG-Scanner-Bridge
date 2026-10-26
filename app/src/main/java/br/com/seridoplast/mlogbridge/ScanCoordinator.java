@@ -21,6 +21,9 @@ final class ScanCoordinator {
     }
     static synchronized boolean accept(String code){return accept(code,false);}
     static synchronized boolean accept(String code,boolean fast){
+        return accept(code,fast,ScanDuplicatePolicy.DUPLICATE_WINDOW_MS);
+    }
+    static synchronized boolean accept(String code,boolean fast,long dedupWindowMs){
         if(code==null || code.isEmpty() || code.length()>128)return false;
         for(int i=0;i<code.length();i++){
             char ch=code.charAt(i);
@@ -28,6 +31,6 @@ final class ScanCoordinator {
         }
         // A velocidade de confirmacao nao pode desligar a protecao contra
         // duplicidade da entrada. Fast=true acelera o Enter, NAO os broadcasts.
-        return duplicatePolicy.shouldAccept(code,SystemClock.elapsedRealtime());
+        return duplicatePolicy.shouldAccept(code,SystemClock.elapsedRealtime(),dedupWindowMs);
     }
 }

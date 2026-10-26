@@ -85,6 +85,16 @@ jobs:
             tests/BarcodePreEnterGuardTest.java
           java -cp /tmp/bridge-test br.com.seridoplast.mlogbridge.BarcodePreEnterGuardTest
 
+      - name: Testar OK somente em erro de codigo de barras
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bridge-error-test
+          javac -d /tmp/bridge-error-test \
+            app/src/main/java/br/com/seridoplast/mlogbridge/BarcodeErrorDialogPolicy.java \
+            tests/BarcodeErrorDialogPolicyTest.java
+          java -cp /tmp/bridge-error-test br.com.seridoplast.mlogbridge.BarcodeErrorDialogPolicyTest
+
       - name: Testar validação de GTIN, transição de produto e gatilho longo
         shell: bash
         run: |
@@ -179,7 +189,7 @@ jobs:
           else
             gh release create "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" --title "MLOG Scanner Bridge ${TAG}" \
-              --notes "Versao ${TAG}: leitor otimizado, gatilho longo opcional e atualizador pelo GitHub. APK assinado." \
+              --notes "Versao ${TAG}: menos varreduras, gatilho 1 segundo, repeticao no intervalo configurado e OK por bipe em aviso de codigo. APK assinado." \
               --latest
           fi
 

@@ -19,6 +19,14 @@ public final class ScanDuplicatePolicyTest {
             check(fast.shouldAccept("MESMO_CODIGO",t),"Leitura fisica "+i);
             check(!fast.shouldAccept("MESMO_CODIGO",t+75),"Eco "+i);
         }
+        ScanDuplicatePolicy nativePolicy=new ScanDuplicatePolicy();
+        check(nativePolicy.shouldAccept("1234567890123",1000,100),"primeiro bip modo nativo");
+        check(!nativePolicy.shouldAccept("1234567890123",1060,100),"eco abaixo de 100ms");
+        check(nativePolicy.shouldAccept("1234567890123",1110,100),"bipe valido apos 100ms");
+        ScanDuplicatePolicy fastNative=new ScanDuplicatePolicy();
+        check(fastNative.shouldAccept("ABC",2000,0),"primeiro bipe zero");
+        check(!fastNative.shouldAccept("ABC",2020,0),"eco min 35ms");
+        check(fastNative.shouldAccept("ABC",2040,0),"repeticao com zero apos piso");
         System.out.println("OK: 1000 leituras, sem ecos duplicados; dois codigos distintos preservados.");
     }
 }

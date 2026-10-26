@@ -20,12 +20,17 @@ final class ScanDuplicatePolicy {
     private final Map<String,Long> recent=new HashMap<>();
 
     synchronized boolean shouldAccept(String code,long nowMs){
+        return shouldAccept(code,nowMs,DUPLICATE_WINDOW_MS);
+    }
+    synchronized boolean shouldAccept(String code,long nowMs,long configuredWindowMs){
         if(code==null || code.isEmpty()) return false;
-        // Guardar apenas ocorrencias recentes para nao reter codigos em memoria.
+        // No modo nativo a janela acompanha o bloqueio definido pelo usuario.
+        // Conserva pelo menos 35 ms para ecos identicos do mesmo broadcast.
+        long windowMs=Math.max(35L,configuredWindowMs);
         Iterator<Map.Entry<String,Long>> it=recent.entrySet().iterator();
         while(it.hasNext()){
             long age=nowMs-it.next().getValue();
-            if(age<0 || age>=DUPLICATE_WINDOW_MS) it.remove();
+            if(age<0 || age>=windowMs) it.remove();
         }
         if(recent.containsKey(code)) return false;
         recent.put(code,nowMs);

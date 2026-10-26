@@ -54,6 +54,10 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private long insertedEditorAt;
     private String scanScreen="";
     private long lastOverlayProbeAt;
+    // Aviso especifico de codigo inexistente: o proximo gatilho apenas fecha OK.
+    private boolean barcodeErrorHint;
+    private long errorDismissGuardUntil;
+    private long lastPulseAppCheckAt;
     // Reuso conservador do editor entre bipes: somente se o MLOG manteve
     // exatamente o MESMO campo focado e vazio. Nunca clicar em um botao com
     // coordenadas cacheadas nem assumir que a tela anterior ainda vale.
@@ -192,6 +196,18 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                     }
                     code=cleaned;
                 }
+                // O gatilho seguinte em aviso de codigo inexistente deve
+                // pressionar OK, inclusive se o codigo capturado for invalido.
+                if(barcodeErrorHint &&
+                    ScanCoordinator.isActive(MlogFocusAccessibilityService.this) &&
+                    DirectScanPolicy.accept(intent==null?null:intent.getAction(),
+                        prefs().getBoolean(DirectScanPolicy.PREF,false))) {
+                    AccessibilityNodeInfo errorRoot=mlogRoot();
+                    if(tryDismissKnownBarcodeError(errorRoot))return;
+                }
+                if(SystemClock.elapsedRealtime()<errorDismissGuardUntil){
+                    trace("SCAN_IGNORED_AFTER_ERROR_OK");return;
+                }
                 // O codigo decodificado nao deve ser alterado nem confirmado
                 // quando vier vazio, com controle ou checksum GS1 invalido.
                 // O tipo declarado pelo hardware nao e uma prova de que todo
@@ -245,7 +261,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                         discardOldCycleOnNewTrigger();
                     trace(directMode?"DIRECT_BROADCAST_NEW_CYCLE":"BROADCAST_REARM_NEW_CYCLE");
                 }
-                if(!ScanCoordinator.accept(code,fastImeMode())){
+                long dedupWindow=prefs().getBoolean(NativeScannerController.PREF,false)
+                        ?timedClickGate.getCooldownMs():ScanDuplicatePolicy.DUPLICATE_WINDOW_MS;
+                if(!ScanCoordinator.accept(code,fastImeMode(),dedupWindow)){
                     if(code!=null && !code.isEmpty()) trace("BROADCAST_SUPPRESSED_"+source);
                     return;
                 }
@@ -495,6 +513,47 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         status("Operacao cancelada ao abrir informacoes/aviso. Novo bipe somente apos fechar.");
     }
 
+    /** Um novo bipe fecha SOMENTE o aviso conhecido de codigo de barras.
+     * Nao confirma cancelamentos, finalizacoes, quantidades nem outros modais.
+     * O codigo deste mesmo bipe NUNCA e inserido como produto.
+     */
+    private boolean tryDismissKnownBarcodeError(AccessibilityNodeInfo root){
+        if(root==null)return false;
+        List<AccessibilityNodeInfo> nodes=new ArrayList<>();
+        visit(root,nodes,0);
+        boolean knownError=false;
+        AccessibilityNodeInfo okNode=null;
+        for(AccessibilityNodeInfo node:nodes){
+            if(!node.isVisibleToUser())continue;
+            String label=tag(node);
+            if(BarcodeErrorDialogPolicy.isKnownNormalized(label))knownError=true;
+            if(okNode==null && ("ok".equals(label.trim()) || "entendi".equals(label.trim()))){
+                AccessibilityNodeInfo button=clickable(node);
+                if(button!=null && button.isVisibleToUser() && button.isEnabled())
+                    okNode=button;
+            }
+        }
+        if(!knownError || okNode==null){
+            if(!knownError)barcodeErrorHint=false;
+            return false;
+        }
+        boolean clicked=false;
+        try { clicked=okNode.performAction(AccessibilityNodeInfo.ACTION_CLICK); }
+        catch(RuntimeException ignored){}
+        if(!clicked)return false;
+        barcodeErrorHint=false;
+        errorDismissGuardUntil=SystemClock.elapsedRealtime()+
+            Math.max(180L,timedClickGate.getCooldownMs()+40L);
+        if(!scanQueue.isIdle()){
+            trace("ERROR_OK_INTERRUPTED_PENDING_SCANS");
+            ++serial; ++enterAttempt; ++workGeneration;
+            fixedEnterScheduled=false;cancelPending();scanQueue.clear();queuedAt.clear();
+        }
+        stopLongHold();
+        trace("BARCODE_ERROR_OK_BY_NEXT_TRIGGER");
+        return true;
+    }
+
     /** Flutter pode desenhar dialogs no mesmo TYPE_APPLICATION. Essa guarda
      *  complementa o titulo detectado em inspect(), sem bloquear a pesquisa
      *  normal que possui a secao 'Informacoes Gerais' recolhida. */
@@ -550,6 +609,18 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             }
             return;
         }
+        if(event.getEventType()==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+           event.getEventType()==AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED){
+            for(CharSequence text:event.getText()){
+                if(BarcodeErrorDialogPolicy.isKnownBarcodeError(text)){
+                    barcodeErrorHint=true;
+                    trace("BARCODE_ERROR_HINT_FROM_EVENT");
+                    break;
+                }
+            }
+            if(BarcodeErrorDialogPolicy.isKnownBarcodeError(event.getContentDescription()))
+                barcodeErrorHint=true;
+        }
         if(event.getEventType()==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED){
             lastKnownEditor=null;
             lastKnownScreen="";
@@ -571,6 +642,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             prefs().getBoolean(NativeScannerController.PREF,false) &&
             event.getEventType()==AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED;
         if(!nativeEnterContentEvent &&
+           !prefs().getBoolean(NativeScannerController.PREF,false) &&
            (event.getEventType()==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
             event.getEventType()==AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) &&
            (!scanQueue.isIdle() || pendingCode!=null)){
@@ -617,17 +689,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         }
         // v1.4: nenhum clique por simples mudanca de tela. Cada gesto do MLOG
         // deve estar vinculado a uma leitura efetivamente recebida do CMX.
-        if(pendingCode==null && time-lastDiagnostic>1550 && time-lastAutoActionAt>30000){
-            lastDiagnostic=time;
-            AccessibilityNodeInfo root=mlogRoot();
-            if(root!=null){
-                ScreenInfo i=inspect(root);
-                status("Tela: "+i.screen+" | editaveis: "+i.editors.size()+
-                    " | icone teclado: "+(i.keyboard!=null?"sim":"nao")+
-                    " | busca: "+(i.searchField!=null?"visivel":"nao detectada")+
-                    ". Aguarda bipe.");
-            }
-        }
+        // v3.2.4: sem varrer a hierarquia quando o scanner esta ocioso.
+        // O diagnostico manual continua disponivel sob demanda.
     }
 
     /**
@@ -653,7 +716,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 ++longHoldGeneration;
                 currentLongHoldKey=-1;
                 if(wasActive){NativeScannerController.stopContinuous(this);trace("LONG_HOLD_RELEASE_STOPPED");}
-                else trace("LONG_HOLD_RELEASE_BEFORE_1500MS");
+                else trace("LONG_HOLD_RELEASE_BEFORE_1000MS");
             }
             return;
         }
@@ -664,23 +727,26 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         int learned=prefs().getInt("learned_trigger_key",-1);
         // O firmware deste coletor expôs 277 no diagnostico do gatilho.
         if(!(isScannerTriggerKey(key) || key==277 || key==learned))return;
-        AccessibilityNodeInfo root=mlogRoot();
-        if(root==null || isBlockingOverlay(root))return;
-        ScreenInfo info=inspect(root);
-        if(info.login || info.dialog || "desconhecida".equals(info.screen))return;
+        // Nao percorrer a tela no ACTION_DOWN: o scanner nativo decodifica
+        // independentemente do foco. A verificacao da janela ocorre ao iniciar.
+        if(barcodeErrorHint && tryDismissKnownBarcodeError(mlogRoot()))return;
         long now=SystemClock.elapsedRealtime();
         if(!longHoldPolicy.down(key,now))return;
         currentLongHoldKey=key;
         int generation=++longHoldGeneration;
-        trace("LONG_HOLD_ARMED_1500MS");
+        trace("LONG_HOLD_ARMED_1000MS");
         main.postDelayed(()->{
             if(generation!=longHoldGeneration || !longHoldPolicy.shouldStart(SystemClock.elapsedRealtime()) ||
                 !prefs().getBoolean(NativeScannerController.LONG_HOLD_PREF,false))return;
             AccessibilityNodeInfo visible=mlogRoot();
-            if(visible==null || isBlockingOverlay(visible)){
+            if(visible==null){
                 longHoldPolicy.reset();currentLongHoldKey=-1;return;
             }
-            // Depois dos 1,5 s: solicitar NOVOS acionamentos um por vez,
+            ScreenInfo holdScreen=inspect(visible);
+            if(holdScreen.login || holdScreen.dialog || "desconhecida".equals(holdScreen.screen)){
+                longHoldPolicy.reset();currentLongHoldKey=-1;return;
+            }
+            // Depois de 1 s: solicitar NOVOS acionamentos um por vez,
             // em vez de alterar o firmware para modo continuous. O bip
             // fisico inicial ja foi entregue pelo proprio gatilho.
             longHoldPolicy.started();
@@ -711,12 +777,16 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 if(generation==longHoldGeneration)stopLongHold();
                 return;
             }
-            // Sem novas leituras ao sair do MLOG ou abrir um aviso.
-            AccessibilityNodeInfo root=mlogRoot();
-            if(root==null || isBlockingOverlay(root)){
-                stopLongHold();
-                trace("LONG_HOLD_STOPPED_MLOG_NOT_READY");
-                return;
+            // Verificar o aplicativo apenas a cada 350 ms, nunca a arvore
+            // inteira a cada pulso. Um aviso especifico interrompe a repeticao.
+            long pulseNow=SystemClock.elapsedRealtime();
+            if(barcodeErrorHint || pulseNow-lastPulseAppCheckAt>=350L){
+                lastPulseAppCheckAt=pulseNow;
+                if(barcodeErrorHint || mlogRoot()==null){
+                    stopLongHold();
+                    trace("LONG_HOLD_STOPPED_MLOG_NOT_READY");
+                    return;
+                }
             }
             if(LongHoldScanPolicy.canPulse(scanQueue.waitingCount(),pendingCode!=null)){
                 if(!NativeScannerController.pulseTrigger(this)){
@@ -766,6 +836,18 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             autoCountFirstEnterAt=SystemClock.elapsedRealtime();
             trace("AUTO_FIRST_HARDWARE_ENTER_OBSERVED");
         }
+        // No modo nativo, o ACTION_DOWN nao precisa procurar campo, janela,
+        // botao de teclado nem executar pre-foco: o broadcast chega depois.
+        // Quando houver aviso de codigo, pressionar gatilho fecha somente OK.
+        if(event!=null && prefs().getBoolean(NativeScannerController.PREF,false) &&
+           event.getAction()==KeyEvent.ACTION_DOWN && event.getRepeatCount()==0 &&
+           ScanCoordinator.isActive(this)){
+            int k=event.getKeyCode();
+            int learned=prefs().getInt("learned_trigger_key",-1);
+            if((isScannerTriggerKey(k) || k==277 || k==learned) && barcodeErrorHint &&
+               tryDismissKnownBarcodeError(mlogRoot()))return true;
+        }
+        if(prefs().getBoolean(NativeScannerController.PREF,false))return false;
         if(event==null || !prefs().getBoolean("trigger_prefocus",true) ||
            !ScanCoordinator.isActive(this) || event.getAction()!=KeyEvent.ACTION_DOWN ||
            event.getRepeatCount()!=0)return false;
@@ -1029,7 +1111,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                SystemClock.elapsedRealtime(),lastKnownEditorAt) ||
            lastKnownScreen.isEmpty())return false;
         // Uma janela modal no mesmo processo invalida o reuso.
-        if(isBlockingOverlay(root))return false;
+        if(barcodeErrorHint)return false;
         AccessibilityNodeInfo editor=lastKnownEditor;
         try{
             if(!editor.refresh())return false;
@@ -1068,7 +1150,13 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             // somente apos preparacao de uma tela reconhecida.
             i.screen=preparedScreen;
         }
-        if(i.login || i.dialog || isBlockingOverlay(root) ||
+        if(i.dialog || barcodeErrorHint){
+            if(tryDismissKnownBarcodeError(root)){
+                finishQueuedScan("aviso_codigo_ok");return;
+            }
+        }
+        if(i.login || i.dialog ||
+           (!prefs().getBoolean(NativeScannerController.PREF,false) && isBlockingOverlay(root)) ||
            "desconhecida".equals(i.screen)){
             status("Leitura pausada: tela desconhecida ou aviso aberto.");finishQueuedScan("tela_bloqueada");return;
         }
@@ -1395,16 +1483,20 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             }
             // Em Consulta/Conferencia, a caixa de busca conserva o ultimo codigo.
             // Uma NOVA bipagem pode substitui-lo, somente nessa tela reconhecida.
-            AccessibilityNodeInfo root=mlogRoot();
-            ScreenInfo info=root==null?null:inspect(root);
-            boolean newSearch=info!=null &&
-                ("consulta".equals(info.screen) || "conferencia_venda".equals(info.screen) ||
-                 (prefs().getBoolean(NativeScannerController.PREF,false) &&
-                  ConferenceScreenPolicy.isMapped(info.screen)));
-            boolean previouslyInserted=info!=null &&
-                ("atividades".equals(info.screen) || "separacao".equals(info.screen)) &&
+            String currentScreen=scanScreen;
+            if(!prefs().getBoolean(NativeScannerController.PREF,false)){
+                AccessibilityNodeInfo root=mlogRoot();
+                ScreenInfo info=root==null?null:inspect(root);
+                currentScreen=info==null?"":info.screen;
+            }
+            boolean newSearch="consulta".equals(currentScreen) ||
+                "conferencia_venda".equals(currentScreen) ||
+                (prefs().getBoolean(NativeScannerController.PREF,false) &&
+                 ConferenceScreenPolicy.isMapped(currentScreen));
+            boolean previouslyInserted=("atividades".equals(currentScreen) ||
+                "separacao".equals(currentScreen)) &&
                 existing.toString().trim().equals(lastEnteredByBridge) &&
-                info.screen.equals(lastEnteredScreen);
+                currentScreen.equals(lastEnteredScreen);
             // Se o wedge digitou a versao com artefatos, podemos substitui-la
             // SOMENTE quando sua limpeza resulta exatamente no mesmo codigo
             // recebido pelo broadcast. Nao alterar textos manuais diferentes.
@@ -1527,7 +1619,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private void fireFixedEnterChecked(long token,boolean wasRepaired){
         if(token!=enterAttempt || scanQueue.isIdle() || !fixedEnterScheduled)return;
         AccessibilityNodeInfo root=mlogRoot();
-        if(root==null || isBlockingOverlay(root)){
+        if(root==null || barcodeErrorHint){
             trace("FIXED_ENTER_CANCELLED_NOT_MLOG");
             status("Enter cancelado: MLOG nao esta ativo ou exibiu aviso.");
             finishQueuedScan("enter_cancelado");
@@ -1586,16 +1678,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             finishQueuedScan("codigo_incompleto_sem_enter");
             return;
         }
-        // Captura leve ANTES do Enter; protege a transicao de um item
-        // para o seguinte sem aguardar contagem ou retorno do servidor.
-        SeparatedQuantityProbe.Result productNow=separatedOnScreen(root);
-        if(prefs().getBoolean(NativeScannerController.PREF,false) &&
-            productNow!=null && productGuard.rejects(productNow.product,expected)){
-            trace("PREVIOUS_PRODUCT_ENTER_BLOCKED");
-            status("Produto mudou. Confira a nova etiqueta antes de continuar.");
-            finishQueuedScan("produto_anterior_sem_enter");
-            return;
-        }
+        // v3.2.4: nao percorrer novamente o cartao do produto antes do Enter.
+        // A protecao aqui e SOMENTE editor correto + codigo completo.
         trace("PRE_ENTER_CODE_EXACT_MATCH");
         trace("FIXED_ENTER_TIMER_FIRED");
         boolean sent=BridgeScanInputMethodService.sendEnterForVerifiedScan();
@@ -1613,8 +1697,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 if(sent)trace("FIXED_ENTER_ACCESSIBILITY_FALLBACK");
             }
         }
-        if(sent && productNow!=null && prefs().getBoolean(NativeScannerController.PREF,false))
-            productGuard.sent(productNow.product,expected);
+        // Sem consulta repetitiva de quantidade/produto neste caminho rapido.
         lastFixedEnterAt=SystemClock.elapsedRealtime();
         if(sent && editor!=null && !scanScreen.isEmpty()){
             // Nao confundir "Enter enviado" com sucesso do pedido: o cache
@@ -2065,7 +2148,13 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             if(has(t,"bipar pedido","bipar pedidos","pedido de separacao","bipagem de pedidos"))pedidos=true;
             if(has(t,"bipar nota","nota fiscal","conferencia de nota","bipagem de nota"))notas=true;
             if(has(t,"login","autenticacao","senha de acesso"))v.login=true;
-            if(has(t,"atencao!","atividade cancelada","confirmar cancelamento"))v.dialog=true;
+            boolean barcodeError=(has(t,"nao encontrado","nao localizado",
+                "nao identificado","codigo invalido","codigo incorreto","produto invalido") &&
+                BarcodeErrorDialogPolicy.isKnownNormalized(t));
+            if(has(t,"atencao!","atividade cancelada","confirmar cancelamento") || barcodeError){
+                v.dialog=true;
+                if(barcodeError)barcodeErrorHint=true;
+            }
             if(n.isEditable() && !n.isPassword())v.editors.add(n);
             if(has(t,"bipe ou digite o codigo da atividade","digite o codigo da atividade"))v.searchField=n;
             if(n.isClickable() && n.isEnabled())v.clicks.add(n);
