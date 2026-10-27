@@ -23,10 +23,9 @@ final class ShizukuScanClient {
     private volatile boolean connecting;
     private boolean attached;
     private final Shizuku.OnBinderReceivedListener arrived=()->connect();
-    private final Shizuku.OnBinderDeadListener died=()->{
-        remote=null; connecting=false;
-        ScanCoordinator.status(context,"Shizuku parou. Leitura bloqueada; reinicie o Shizuku.");
-    };
+    // Instantiate after context has been assigned: Java definite assignment
+    // forbids referencing a blank final field from an earlier field initializer.
+    private final Shizuku.OnBinderDeadListener died;
     private final ServiceConnection connection=new ServiceConnection(){
         @Override public void onServiceConnected(ComponentName name,IBinder binder){
             remote=IShizukuScanService.Stub.asInterface(binder);
@@ -39,7 +38,15 @@ final class ShizukuScanClient {
         }
     };
 
-    ShizukuScanClient(Context context){this.context=context.getApplicationContext();}
+    ShizukuScanClient(Context context){
+        this.context=context.getApplicationContext();
+        this.died=()->{
+            remote=null;
+            connecting=false;
+            ScanCoordinator.status(this.context,
+                "Shizuku parou. Leitura bloqueada; reinicie o Shizuku.");
+        };
+    }
 
     void start(){
         if (attached)return;
