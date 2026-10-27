@@ -148,6 +148,16 @@ jobs:
             tests/ZebraProfile0ModeTest.java
           java -cp /tmp/bridge-profile0 br.com.seridoplast.mlogbridge.ZebraProfile0ModeTest
 
+      - name: Testar modo Shizuku (validacao e exclusao de caracteres perigosos)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bridge-shizuku-tests
+          javac -d /tmp/bridge-shizuku-tests \
+            app/src/main/java/br/com/seridoplast/mlogbridge/ShizukuScanMode.java \
+            tests/ShizukuScanModeTest.java
+          java -cp /tmp/bridge-shizuku-tests br.com.seridoplast.mlogbridge.ShizukuScanModeTest
+
       - name: Compilar APK de producao com assinatura fixa
         env:
           BRIDGE_SIGNING_STORE_PASSWORD: ${{ secrets.BRIDGE_KEYSTORE_PASSWORD }}

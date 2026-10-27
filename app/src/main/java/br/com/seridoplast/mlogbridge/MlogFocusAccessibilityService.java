@@ -72,6 +72,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     // Protecao adicional se o Android nao entregar ACTION_UP (ex.: bloqueio da tela).
     private static final long LONG_HOLD_MAX_MS=30000L;
 
+    private ShizukuScanClient shizukuScan;
     private BroadcastReceiver receiver;
     private boolean receiverRegistered;
     // Confirmar uma vez POR LEITURA, nunca bloquear pelo valor do codigo.
@@ -210,6 +211,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     @Override protected void onServiceConnected(){
         super.onServiceConnected();
         instance=this;
+        shizukuScan=new ShizukuScanClient(this);
+        shizukuScan.start();
         BridgePreferences.enableOnUpgrade(prefs());
         updateClickCooldownMs(prefs().getInt(ScanAssistState.CLICK_COOLDOWN_MS,
                 (int)TimedClickGate.COOLDOWN_MS));
@@ -229,7 +232,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                       AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS |
                       AccessibilityServiceInfo.FLAG_INPUT_METHOD_EDITOR;
             configuredFastEvents=fastImeMode();
-            configuredTriggerEvents=!prefs().getBoolean(ZebraImeMode.PREF,false) &&
+            configuredTriggerEvents=!prefs().getBoolean(ShizukuScanMode.PREF,false) &&
+                !prefs().getBoolean(ZebraImeMode.PREF,false) &&
                 (prefs().getBoolean("trigger_prefocus",false) ||
                  prefs().getBoolean(NativeScannerController.LONG_HOLD_PREF,false));
             if(configuredTriggerEvents)
@@ -240,6 +244,20 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         }
         receiver=new BroadcastReceiver(){
             @Override public void onReceive(Context context,Intent intent){
+                // Shizuku is an isolated broadcast-only input channel. Never touch the
+                // MLOG UI, send old Enter, or process alternate/duplicate sources.
+                if (prefs().getBoolean(ShizukuScanMode.PREF,false)) {
+                    if (intent==null || !DirectScanPolicy.ACTION.equals(intent.getAction()))return;
+                    AccessibilityNodeInfo active=getRootInActiveWindow();
+                    if(active==null || active.getPackageName()==null ||
+                       !ScanCoordinator.TARGET.contentEquals(active.getPackageName())) {
+                        status("Leitura bloqueada: abra a conferencia do MLOG.");
+                        return;
+                    }
+                    String raw=ScannerProtocol.barcodeRaw(intent);
+                    if(shizukuScan!=null)shizukuScan.scan(raw);
+                    return;
+                }
                 // Modo Zebra: acessibilidade NUNCA escreve codigo nem envia Enter.
                 // Caso o IME ainda nao tenha iniciado, recuperar APENAS o
                 // primeiro bipe utilizado para abrir o campo do MLOG.
@@ -367,7 +385,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             // Nunca preparar/clicar na tela sem receber uma leitura.
             prefs().edit().putBoolean("prearm_field",false).apply();
             // Versoes anteriores podiam deixar o teclado oculto pelo controlador.
-            restoreKeyboard();
+            if(!prefs().getBoolean(ShizukuScanMode.PREF,false))restoreKeyboard();
             status("Bridge conectado: aguardando leitura do MLOG.");
             if(prefs().getBoolean(NativeScannerController.PREF,false)){
                 boolean applied=NativeScannerController.configure(this);
@@ -375,6 +393,19 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 if(!applied)status("Leitor nativo indisponivel; verifique o servico Hikrobot.");
             }
         }catch(RuntimeException e){status("Falha ao registrar o broadcast do scanner.");}
+    }
+
+    void prepareShizuku(){
+        // The mode changed while the accessibility service stays alive.
+        // Cancel every outstanding old-mode Enter/focus/tap callback before
+        // accepting the first privileged barcode. Never replay old reads.
+        main.removeCallbacksAndMessages(null);
+        enterTimer.removeCallbacksAndMessages(null);
+        cancelPending();
+        scanQueue.clear();
+        ++workGeneration;
+        zebraInitialScan=null;
+        if(shizukuScan!=null)shizukuScan.connect();
     }
 
     /** Atualiza o bloqueio entre gatilhos sem reiniciar a acessibilidade. */
@@ -386,13 +417,15 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private SharedPreferences prefs(){return getSharedPreferences(ScanCoordinator.PREFS,MODE_PRIVATE);}
     /** So acelera quando o operador optou pelo teclado proprio E pelo modo rapido. */
     private boolean fastImeMode(){
+        if(prefs().getBoolean(ShizukuScanMode.PREF,false))return false;
         return prefs().getBoolean("experimental_bridge_ime",false) &&
                prefs().getBoolean("fast_ime_mode",false);
     }
     /** O usuario pode alternar sem reiniciar a acessibilidade. */
     void refreshEventThrottle(){
         boolean fast=fastImeMode();
-        boolean trigger=!prefs().getBoolean(ZebraImeMode.PREF,false) &&
+        boolean trigger=!prefs().getBoolean(ShizukuScanMode.PREF,false) &&
+            !prefs().getBoolean(ZebraImeMode.PREF,false) &&
             (prefs().getBoolean("trigger_prefocus",false) ||
              prefs().getBoolean(NativeScannerController.LONG_HOLD_PREF,false) ||
              prefs().getBoolean(BridgeEnterPolicy.PREFERENCE,false));
@@ -678,6 +711,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     }
 
     @Override public void onAccessibilityEvent(AccessibilityEvent event){
+        if(prefs().getBoolean(ShizukuScanMode.PREF,false))return;
         if(prefs().getBoolean(ZebraImeMode.PREF,false)){
             handleZebraScreenEvent(event);
             return;
@@ -890,6 +924,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     }
 
     @Override protected boolean onKeyEvent(KeyEvent event){
+        if(prefs().getBoolean(ShizukuScanMode.PREF,false))return false;
         if(prefs().getBoolean(ZebraImeMode.PREF,false))return false;
         observeLongHold(event);
         if(event!=null && BridgeEnterPolicy.active(prefs().getBoolean(
@@ -2805,13 +2840,14 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         scheduleAutoRepeat();
     }
 
-    @Override public void onInterrupt(){lastKnownEditor=null;lastKnownScreen="";stopLongHold();cancelAutoCount("Acessibilidade interrompida; contador cancelado.");cancelPending();scanQueue.clear();++workGeneration;restoreKeyboard();status("Acessibilidade interrompida.");}
+    @Override public void onInterrupt(){lastKnownEditor=null;lastKnownScreen="";stopLongHold();cancelAutoCount("Acessibilidade interrompida; contador cancelado.");cancelPending();scanQueue.clear();++workGeneration;if(!prefs().getBoolean(ShizukuScanMode.PREF,false))restoreKeyboard();status("Acessibilidade interrompida.");}
     @Override public void onDestroy(){
         lastKnownEditor=null;
         lastKnownScreen="";
         stopLongHold();
         cancelAutoCount("Acessibilidade encerrada; contador cancelado.");
         if(receiverRegistered)try{unregisterReceiver(receiver);}catch(RuntimeException ignored){}
+        if(shizukuScan!=null)shizukuScan.stop();
         main.removeCallbacksAndMessages(null);
         enterTimer.removeCallbacksAndMessages(null);
         cancelPending();
