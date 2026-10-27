@@ -182,6 +182,16 @@ jobs:
             tests/GitHubReleaseVersionTest.java
           java -cp /tmp/bridge-release-test br.com.seridoplast.mlogbridge.GitHubReleaseVersionTest
 
+      - name: Testar alternancia Profile0 e eventos IME
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bridge-v330-tests
+          javac -d /tmp/bridge-v330-tests \
+            app/src/main/java/br/com/seridoplast/mlogbridge/ZebraProfile0Mode.java \
+            tests/ZebraModeSwitch330Test.java
+          java -cp /tmp/bridge-v330-tests br.com.seridoplast.mlogbridge.ZebraModeSwitch330Test
+
       - name: Nomear APK assinado no padrao vN.N.N
         shell: bash
         run: |
@@ -211,7 +221,7 @@ jobs:
           else
             gh release create "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" --title "MLOG Scanner Bridge ${TAG}" \
-              --notes "Versao ${TAG}: teste de entrada via teclado estilo Zebra (broadcast nativo, commitText e Enter), sem acessibilidade por leitura. O modo anterior continua disponivel. APK assinado." \
+              --notes "Versao ${TAG}: modo experimental de caracteres como eventos de tecla pelo IME e alternativa Profile0 do CMX. InputConnection focada e necessaria no modo IME. Bipe antigo preservado. APK assinado." \
               --latest
           fi
 
