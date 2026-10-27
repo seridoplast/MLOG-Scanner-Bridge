@@ -213,6 +213,20 @@ public final class FloatingToolsService extends Service {
             header.addView(button("−",this::collapse));layout.addView(header);
             layout.addView(separator());
             SharedPreferences pref=ScanAssistState.prefs(this);
+            if(pref.getBoolean(ShizukuScanMode.PREF,false)){
+                boolean ok=ShizukuHealthMonitor.ready();
+                TextView state=muted(ok?"✓ Shizuku ativo":"⚠ Shizuku parado: leituras bloqueadas",12);
+                if(!ok)state.setTextColor(red);
+                layout.addView(state);
+                TextView reopen=button("Abrir Shizuku / Iniciar",()->{
+                    collapse();
+                    if(!ShizukuHealthMonitor.openShizuku(this))
+                        android.widget.Toast.makeText(this,"Shizuku não encontrado",android.widget.Toast.LENGTH_SHORT).show();
+                });
+                LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
+                lp.topMargin=dp(9);layout.addView(reopen,lp);
+                layout.addView(separator());
+            }
             Switch cleaner=toggle(pref.getBoolean(ScanAssistState.CLEAN,false));
             cleaner.setOnCheckedChangeListener((v,on)->{
                 pref.edit().putBoolean(ScanAssistState.CLEAN,on).apply();

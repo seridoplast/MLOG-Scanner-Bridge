@@ -47,7 +47,7 @@ public final class MainActivity extends Activity {
     private int page = 0;
     private int bg, card, line, ink, muted, inverse, inkSurface;
     private LinearLayout root, content, footer;
-    private TextView preview, lastStatus, barcodeFormatStatus, barcodeArtifactStatus, barcodeFieldsStatus, serviceState;
+    private TextView preview, lastStatus, barcodeFormatStatus, barcodeArtifactStatus, barcodeFieldsStatus, serviceState, shizukuSettingsStatus;
     private LinearLayout setupWarningCard;
     private TextView setupWarningLabel;
     private TextView setupAccessibilityStep, setupKeyboardEnabledStep,
@@ -121,18 +121,19 @@ public final class MainActivity extends Activity {
         @Override public void run(){
             if(serviceState!=null){
                 boolean shizuku=prefs.getBoolean(ShizukuScanMode.PREF,false);
-                boolean profile=ZebraProfile0Mode.isSelected(
-                    prefs.getBoolean(ZebraImeMode.PREF,false),
-                    prefs.getBoolean(ZebraProfile0Mode.PREF,false));
                 boolean active=MlogFocusAccessibilityService.current()!=null;
-                boolean keyEventsIme=prefs.getBoolean(ZebraImeMode.PREF,false) && !profile;
-                serviceState.setText(shizuku?(shizukuAuthorized()?"Bipe Shizuku autorizado":
-                    "Bipe Shizuku sem conexao"):
-                    profile?"Profile0: teclado nativo CMX":
-                    keyEventsIme?(keyboardSelected()?"Eventos IME: teclado selecionado; foco do MLOG necessario":
-                        "Eventos IME: selecione o teclado Bridge nos Ajustes"):
-                    active?"Acessibilidade ativa":"Acessibilidade desativada");
+                boolean ready=shizukuAuthorized();
+                serviceState.setText(shizuku?(ready && active?"✓ Scanner pronto: Shizuku + acessibilidade":
+                    !ready?"⚠ Scanner indisponível: abra o Shizuku e toque em Iniciar":
+                        "⚠ Shizuku ligado; ative a acessibilidade do Bridge"):
+                    active?"✓ Bipe Normal: acessibilidade ativa":
+                    "⚠ Bipe Normal: acessibilidade desativada");
+                serviceState.setTextColor(shizuku && (!ready || !active)?0xffd97706:
+                    active?0xff228b58:muted);
             }
+            if(prefs.getBoolean(ShizukuScanMode.PREF,false))
+                ShizukuHealthMonitor.refresh(MainActivity.this);
+            updateShizukuUiStatus();
             refreshSetupWarning();
             if(page==2 && lastStatus!=null){
                 lastStatus.setText(prefs.getString("last_status","Nenhum diagnostico ainda."));
@@ -144,6 +145,24 @@ public final class MainActivity extends Activity {
     @Override public void onCreate(Bundle saved){
         prefs=getSharedPreferences(ScanCoordinator.PREFS,MODE_PRIVATE);
         BridgePreferences.enableOnUpgrade(prefs);
+        // v3.4.3: legacy Zebra modes removed from the UI. Preserve Shizuku;
+        // migrate old Zebra-only selections to Bipe Normal safely.
+        if(!prefs.getBoolean("migrated_remove_zebra_v343",false)){
+            boolean oldZebra=prefs.getBoolean(ZebraImeMode.PREF,false) ||
+                prefs.getBoolean(ZebraProfile0Mode.PREF,false);
+            boolean shizukuSelected=prefs.getBoolean(ShizukuScanMode.PREF,false);
+            SharedPreferences.Editor migration=prefs.edit()
+                .putBoolean("migrated_remove_zebra_v343",true)
+                .putBoolean(ZebraImeMode.PREF,false)
+                .putBoolean(ZebraProfile0Mode.PREF,false);
+            if(oldZebra && !shizukuSelected){
+                migration.putBoolean(BridgeEnterPolicy.PREFERENCE,true)
+                    .putBoolean(NativeScannerController.PREF,true)
+                    .putBoolean("enabled",true);
+            }
+            migration.apply();
+            if(oldZebra && !shizukuSelected)NativeScannerController.configure(this);
+        }
         if(!ScanAssistState.AUTO_BIPS_ENABLED){
             prefs.edit().putBoolean(ScanAssistState.ARMED,false)
                 .putBoolean(ScanAssistState.BATCH,false).apply();
@@ -283,7 +302,7 @@ public final class MainActivity extends Activity {
         root.addView(footer);
         githubUpdateStatus=null;
         preview=null;lastStatus=null;barcodeFormatStatus=null;barcodeArtifactStatus=null;
-        barcodeFieldsStatus=null;serviceState=null;setupWarningCard=null;setupWarningLabel=null;setupAccessibilityStep=null;setupKeyboardEnabledStep=null;setupKeyboardSelectedStep=null;setupFloatingStep=null;
+        barcodeFieldsStatus=null;serviceState=null;shizukuSettingsStatus=null;setupWarningCard=null;setupWarningLabel=null;setupAccessibilityStep=null;setupKeyboardEnabledStep=null;setupKeyboardSelectedStep=null;setupFloatingStep=null;
         if(page==0)home();else if(page==1)settings();else if(page==2)diagnostic();else about();
     }
     private void show(int p){page=p;displayPage();}
@@ -443,19 +462,10 @@ public final class MainActivity extends Activity {
     private void home(){
         showSetupWarning();
         title("Leitura de códigos",prefs.getBoolean(ShizukuScanMode.PREF,false)?
-            "Modo Shizuku (compatibilidade CMX): input text + Enter, sem abrir teclado.":ZebraProfile0Mode.isSelected(
-            prefs.getBoolean(ZebraImeMode.PREF,false),
-            prefs.getBoolean(ZebraProfile0Mode.PREF,false))?
-            "Profile0 envia as teclas direto ao MLOG: teste na conferencia.":
-            "Bipe para testar o leitor.");
-        subtitle(content, "Modo ativo: "+(prefs.getBoolean(ShizukuScanMode.PREF,false)?
-            "Bipe Shizuku (processo remoto experimental)":ZebraProfile0Mode.isSelected(
-                prefs.getBoolean(ZebraImeMode.PREF,false),
-                prefs.getBoolean(ZebraProfile0Mode.PREF,false))?
-            "Bipe Zebra · Profile0 (teclas nativas)":
-            prefs.getBoolean(ZebraImeMode.PREF,false)?
-            "Bipe Zebra · eventos de tecla pelo IME (teste)":
-            "Bipe antigo (acessibilidade)"));
+            "Bipe Shizuku: código + Enter sem abrir teclado.":
+            "Bipe Normal: leitura assistida por acessibilidade.");
+        subtitle(content,"Modo ativo: "+(prefs.getBoolean(ShizukuScanMode.PREF,false)?
+            "Bipe Shizuku":"Bipe Normal"));
         LinearLayout sample=card();
         TextView statusLabel=label("TESTE DO SCANNER",11,muted,true);sample.addView(statusLabel);
         space(sample,20);
@@ -499,6 +509,10 @@ public final class MainActivity extends Activity {
                 .putBoolean(ScanAssistState.ARMED,false).apply();
             toast("Ferramentas desligadas.");
         });
+        if(prefs.getBoolean(ShizukuScanMode.PREF,false)){
+            subtitle(service,"Após reiniciar o coletor: Shizuku → Iniciar. O Bridge verifica o serviço continuamente.");
+            button(service,"Abrir Shizuku / Ativar",false,this::openShizuku);
+        }
         button(service,"Abrir MLOG",true,this::openMlog);
         button(service,"Acessibilidade do Android",false,()->startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
     }
@@ -508,10 +522,32 @@ public final class MainActivity extends Activity {
      * IMPORTANTE: (C) nao injeta teclas globais e exige InputConnection focada.
      */
     private boolean shizukuAuthorized(){
-        try {
-            return Shizuku.pingBinder() &&
-                Shizuku.checkSelfPermission()==android.content.pm.PackageManager.PERMISSION_GRANTED;
-        } catch(RuntimeException ignored){return false;}
+        return ShizukuHealthMonitor.ready();
+    }
+    private void openShizuku(){
+        if(!ShizukuHealthMonitor.openShizuku(this))
+            toast("Shizuku não encontrado. Instale o aplicativo Shizuku.");
+    }
+    private void updateShizukuUiStatus(){
+        if(shizukuSettingsStatus==null)return;
+        boolean ready=shizukuAuthorized();
+        boolean accessible=accessibilityReady();
+        shizukuSettingsStatus.setText(ready && accessible?
+            "✓ Shizuku conectado; scanner pronto":
+            !ready?"⚠ Shizuku desligado/sem autorização: leituras bloqueadas":
+            "⚠ Shizuku ligado; ative a acessibilidade do Bridge");
+        shizukuSettingsStatus.setTextColor(ready && accessible?0xff228b58:0xffd97706);
+    }
+    private boolean shizukuAutoOpenAttempted;
+    private final Runnable autoOpenShizuku=()->offerShizukuRecoveryOnce();
+    private void offerShizukuRecoveryOnce(){
+        if(shizukuAutoOpenAttempted || isFinishing() || isDestroyed() ||
+            !prefs.getBoolean(ShizukuScanMode.PREF,false) || shizukuAuthorized())return;
+        shizukuAutoOpenAttempted=true;
+        // Only when Bridge itself is foreground. Never repeatedly steal focus
+        // from MLOG or automatically click privileged Shizuku controls.
+        toast("Shizuku parado. Abra o Shizuku e toque em Iniciar.");
+        openShizuku();
     }
     private void selectShizukuMode(){
         if(!accessibilityReady()){
@@ -525,7 +561,7 @@ public final class MainActivity extends Activity {
         if(!shizukuAuthorized()){
             try {
                 if(!Shizuku.pingBinder()){
-                    toast("Abra o Shizuku e inicie o servico pelo ADB primeiro.");return;
+                    openShizuku();toast("No Shizuku, toque em Iniciar e volte ao Bridge.");return;
                 }
                 if(Shizuku.shouldShowRequestPermissionRationale()){
                     toast("Permissao negada. Autorize o Bridge dentro do Shizuku.");return;
@@ -553,10 +589,9 @@ public final class MainActivity extends Activity {
         MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
         if(svc!=null){svc.refreshEventThrottle();svc.prepareShizuku();}
         displayPage();
-        toast("Bipe Shizuku experimental ativo. Teste UMA leitura no MLOG.");
+        toast("Bipe Shizuku ativo. Teste uma leitura no MLOG.");
     }
-    private void selectReadMode(boolean zebra){
-        if(zebra){ selectZebraInputMode(false);return; }
+    private void selectReadMode(){
         if(!NativeScannerController.isInstalled(this)){
             toast("Servico nativo do leitor nao encontrado; modo preservado.");return;
         }
@@ -575,58 +610,20 @@ public final class MainActivity extends Activity {
         MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
         if(svc!=null)svc.refreshEventThrottle();
         displayPage();
-        toast("Bipe antigo selecionado; modo broadcast solicitado.");
-    }
-    private void selectZebraInputMode(boolean bridgeIme){
-        if(!NativeScannerController.isInstalled(this)){
-            toast("Servico nativo do leitor nao encontrado; modo preservado.");return;
-        }
-        boolean sent=bridgeIme?NativeScannerController.configure(this):
-            NativeScannerController.configureProfile0Keyboard(this);
-        if(!sent){toast("Comandos nao enviados. Modo preservado.");return;}
-        prefs.edit()
-            .putBoolean(ShizukuScanMode.PREF,false)
-            .putBoolean(ZebraImeMode.PREF,true)
-            .putBoolean(ZebraProfile0Mode.PREF,!bridgeIme)
-            .putBoolean(NativeScannerController.PREF,bridgeIme)
-            .putBoolean(DirectScanPolicy.PREF,bridgeIme)
-            .putBoolean(BridgeEnterPolicy.PREFERENCE,false)
-            .putBoolean(ZebraImeMode.CHAR_EVENTS_PREF,bridgeIme)
-            .putBoolean(ZebraImeMode.ENTER_PREF,true)
-            .putBoolean(ZebraImeMode.AUTO_FOCUS_PREF,true)
-            .putBoolean("enabled",true)
-            .putBoolean("zebra_options_expanded_v327",true).apply();
-        BridgeScanInputMethodService.resetForModeChange();
-        MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
-        if(svc!=null)svc.refreshEventThrottle();
-        displayPage();
-        if(bridgeIme){
-            new AlertDialog.Builder(this)
-                .setTitle("Eventos de tecla · teste")
-                .setMessage("O leitor agora foi configurado para enviar broadcasts ao teclado Bridge. " +
-                    "Habilite e selecione o teclado Bridge no Android. O MLOG precisa " +
-                    "abrir um campo para fornecer uma InputConnection; nao sao teclas globais. " +
-                    "Se nao funcionar, retorne ao Profile0 nativo sem apagar o aplicativo.")
-                .setPositiveButton("Selecionar teclado",(d,w)->{
-                    InputMethodManager imm=(InputMethodManager)getSystemService(Context.INPUT_METHOD_SERVICE);
-                    if(imm!=null)imm.showInputMethodPicker();
-                })
-                .setNegativeButton("Depois",null).show();
-        }else{
-            toast("Bipe Zebra Profile0 selecionado: teclado nativo do CMX.");
-        }
+        toast("Bipe Normal selecionado; modo broadcast solicitado.");
     }
     private void settings(){
         title("Ajustes","Selecione um modo de leitura.");
         final boolean shizuku=prefs.getBoolean(ShizukuScanMode.PREF,false);
-        final boolean zebra=prefs.getBoolean(ZebraImeMode.PREF,false) && !shizuku;
         LinearLayout modeShizuku=card();
-        modeShizuku.addView(label(shizuku?"✓ Bipe Shizuku · Ativo":"Bipe Shizuku · novo",18,ink,true));
+        modeShizuku.addView(label(shizuku?"✓ Bipe Shizuku · Ativo":"Bipe Shizuku",18,ink,true));
         subtitle(modeShizuku,"CMX por broadcast exclusivo → Shizuku (shell) → codigo e Enter. " +
             "Sem abrir teclado e sem escrever pela acessibilidade. Requer servico Shizuku " +
             "iniciado e autorizacao; apos reiniciar o coletor, reinicie o Shizuku.");
-        subtitle(modeShizuku,shizukuAuthorized()?"✓ Shizuku em execucao e autorizado":
-            "⚠ Shizuku nao autorizado ou fora de execucao");
+        shizukuSettingsStatus=label("Verificando serviço...",13,muted,true);
+        modeShizuku.addView(shizukuSettingsStatus);
+        updateShizukuUiStatus();
+        button(modeShizuku,"Abrir Shizuku / Iniciar serviço",false,this::openShizuku);
         subtitle(modeShizuku,accessibilityReady()?"✓ Receptor de scanner ativo":
             "⚠ Ative acessibilidade para receber os broadcasts");
         button(modeShizuku,shizuku?"✓ Bipe Shizuku selecionado":"Ativar Bipe Shizuku",
@@ -641,12 +638,12 @@ public final class MainActivity extends Activity {
                 "Codigo injetado nao confirma registro no MLOG; confira a conferencia.");
         }
         LinearLayout modeOld=card();
-        modeOld.addView(label((zebra||shizuku)?"Bipe antigo":"✓ Bipe antigo · Ativo",18,ink,true));
+        modeOld.addView(label(shizuku?"Bipe Normal":"✓ Bipe Normal · Ativo",18,ink,true));
         subtitle(modeOld,"Leitor nativo + foco e Enter pela acessibilidade.");
-        button(modeOld,(zebra||shizuku)?"Ativar bipe antigo":
-            (prefs.getBoolean("legacy_options_expanded_v327",true)?"Ocultar ajustes":"Configurar bipe antigo"),
-            !zebra && !shizuku,()->selectReadMode(false));
-        if(!zebra && !shizuku && prefs.getBoolean("legacy_options_expanded_v327",true)){
+        button(modeOld,shizuku?"Ativar Bipe Normal":
+            (prefs.getBoolean("legacy_options_expanded_v327",true)?"Ocultar ajustes":"Configurar Bipe Normal"),
+            !shizuku,this::selectReadMode);
+        if(!shizuku && prefs.getBoolean("legacy_options_expanded_v327",true)){
             space(modeOld,8);
             check(modeOld,"Leitura assistida","enabled",true);
             check(modeOld,"Detectar botao de teclado","layout_fallback",true);
@@ -660,58 +657,7 @@ public final class MainActivity extends Activity {
             });
             button(modeOld,"Abrir Acessibilidade",false,this::openAccessibilitySettings);
         }
-        LinearLayout modeZebra=card();
-        boolean profile0=prefs.getBoolean(ZebraProfile0Mode.PREF,false);
-        modeZebra.addView(label(zebra?"✓ Bipe Zebra · Ativo":"Bipe Zebra",18,ink,true));
-        subtitle(modeZebra,"Escolha como enviar codigo + Enter ao MLOG. " +
-            "Um metodo desliga o outro automaticamente.");
-        button(modeZebra,(zebra && profile0?"✓  ":"")+"Profile0: teclado nativo CMX",
-            zebra && profile0,()->selectZebraInputMode(false));
-        button(modeZebra,(zebra && !profile0?"✓  ":"")+"Teste: caracteres como eventos de tecla",
-            zebra && !profile0,()->selectZebraInputMode(true));
-        if(zebra && profile0){
-            space(modeZebra,8);
-            subtitle(modeZebra,"Scanner envia codigo e Enter diretamente como teclado. " +
-                "Nao precisa selecionar o teclado Bridge. " +
-                "O foco continua sendo determinado pelo Android/MLOG.");
-            button(modeZebra,"Reaplicar Profile0 no CMX",false,()->{
-                boolean ok=NativeScannerController.configureProfile0Keyboard(this);
-                toast(ok?"Comandos enviados. Teste o leitor.":"Falha ao enviar comandos.");
-            });
-        }
-        if(zebra && !profile0){
-            space(modeZebra,8);
-            subtitle(modeZebra,"O scanner envia broadcasts; teclado Bridge transforma " +
-                "cada caractere em KeyEvent e envia Enter. " +
-                "So funciona enquanto houver campo MLOG focado (InputConnection). " +
-                "Opcionalmente a acessibilidade tenta abrir o campo, nao digita os codigos.");
-            button(modeZebra,"1. Habilitar teclado Bridge no Android",false,this::openKeyboardSettings);
-            button(modeZebra,"2. Selecionar teclado Bridge",true,()->{
-                InputMethodManager imm=(InputMethodManager)getSystemService(Context.INPUT_METHOD_SERVICE);
-                if(imm!=null)imm.showInputMethodPicker();
-            });
-            subtitle(modeZebra,keyboardSelected()?"✓ Teclado Bridge selecionado":
-                "⚠ Teclado Bridge ainda nao selecionado");
-            check(modeZebra,"Enviar caracteres como eventos de tecla",ZebraImeMode.CHAR_EVENTS_PREF,true);
-            check(modeZebra,"Enviar Enter como evento",ZebraImeMode.ENTER_PREF,true);
-            check(modeZebra,"Tentar preparar o foco via acessibilidade",ZebraImeMode.AUTO_FOCUS_PREF,true);
-            button(modeZebra,"Abrir Acessibilidade",false,this::openAccessibilitySettings);
-            button(modeZebra,"Reaplicar saida por broadcast",false,()->{
-                boolean ok=NativeScannerController.configure(this);
-                toast(ok?"Comandos enviados. Teste o leitor.":"Falha ao enviar comandos.");
-            });
-            subtitle(modeZebra,"Limite Android: sendKeyEvent nao injeta eventos globais. " +
-                "Se o MLOG nao oferecer foco, o leitor nao conseguira escrever nesse modo.");
-        }
-        if(shizuku){
-            // The privileged input path has its own serialized queue.
-        }else if(zebra){
-            LinearLayout note=card();
-            note.addView(label("Velocidade",17,ink,true));
-            subtitle(note,profile0?
-                "No Profile0 o firmware CMX controla as teclas; intervalo do Bridge nao se aplica.":
-                "No IME o intervalo nao garante registro no MLOG; campo focado e obrigatorio.");
-        }else{
+        if(!shizuku){
         LinearLayout tempo=card();
         tempo.addView(label("Intervalo entre leituras (ms)",17,ink,true));
         int current=prefs.getInt(ScanAssistState.CLICK_COOLDOWN_MS,100);
@@ -909,6 +855,8 @@ public final class MainActivity extends Activity {
             startService(new Intent(this,FloatingToolsService.class));
         }
         handler.post(ticker);
+        ShizukuHealthMonitor.refresh(this);
+        handler.postDelayed(autoOpenShizuku,1200);
         refreshSetupWarning();
         handler.post(this::maybeShowFirstSetupDialog);
     }
@@ -918,6 +866,7 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onPause(){
         handler.removeCallbacks(ticker);
+        handler.removeCallbacks(autoOpenShizuku);
         if(receiving)try{unregisterReceiver(scannerTest);}catch(RuntimeException ignored){}
         receiving=false;
         super.onPause();

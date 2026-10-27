@@ -208,11 +208,20 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         }
     }
 
+    // Background health check while accessibility service is alive; no focus stealing.
+    private final Runnable shizukuWatchdog=new Runnable(){
+        @Override public void run(){
+            ShizukuHealthMonitor.refresh(MlogFocusAccessibilityService.this);
+            main.postDelayed(this,5000);
+        }
+    };
+
     @Override protected void onServiceConnected(){
         super.onServiceConnected();
         instance=this;
         shizukuScan=new ShizukuScanClient(this);
         shizukuScan.start();
+        main.post(shizukuWatchdog);
         BridgePreferences.enableOnUpgrade(prefs());
         updateClickCooldownMs(prefs().getInt(ScanAssistState.CLICK_COOLDOWN_MS,
                 (int)TimedClickGate.COOLDOWN_MS));
@@ -256,6 +265,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                     }
                     String raw=ScannerProtocol.barcodeRaw(intent);
                     if(shizukuScan!=null)shizukuScan.scan(raw);
+                    if(!ShizukuHealthMonitor.ready())
+                        ShizukuHealthMonitor.refresh(MlogFocusAccessibilityService.this);
                     return;
                 }
                 // Modo Zebra: acessibilidade NUNCA escreve codigo nem envia Enter.

@@ -33,9 +33,15 @@ final class ShizukuScanClient {
 
     ShizukuScanClient(Context context) {
         this.context=context.getApplicationContext();
-        died=()->ScanCoordinator.status(this.context,
-            "Shizuku parou. Leituras bloqueadas; reinicie o Shizuku.");
-        arrived=()->Log.i("MLOGBridge","SHIZUKU_BINDER_AVAILABLE");
+        died=()->{
+            ScanCoordinator.status(this.context,
+                "Shizuku parou. Leituras bloqueadas; reinicie o Shizuku.");
+            ShizukuHealthMonitor.refresh(this.context);
+        };
+        arrived=()->{
+            Log.i("MLOGBridge","SHIZUKU_BINDER_AVAILABLE");
+            ShizukuHealthMonitor.refresh(this.context);
+        };
     }
 
     void start() {
