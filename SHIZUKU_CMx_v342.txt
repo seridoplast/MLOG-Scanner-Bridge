@@ -1,0 +1,14 @@
+Bridge v3.4.2 - diagnóstico 27/10/2026
+
+1. Logs do CMX mostram focusSpot output e broadcast output ao mesmo tempo.
+   O Bridge passa a enviar focusSpotOutput=false e focusSpotCover=false no firmware.
+2. Logs do Shizuku UserService mostram NPE em LoadedApk.makeApplicationInner
+   antes de criar ShizukuShellScanService (MediaTek).
+3. v3.4.2 tenta a rota LEGADA Shizuku.newProcess diretamente via reflexão
+   no processo Shizuku (UID shell), sem UserService. Pode nao estar
+   disponível em atualizações futuras do Shizuku.
+4. Os dois passos do comando input (text e Enter) sao sequenciais, somente
+   no MLOG, no modo escolhido; nenhuma repetição automatica no erro.
+5. A confirmação em log significa apenas que o comando foi enviado, nao
+   que o MLOG registrou o produto. Testar somente em conferência de treino.
+6. Nao foi feito build completo de APK neste ambiente. GitHub Actions deve compilar.

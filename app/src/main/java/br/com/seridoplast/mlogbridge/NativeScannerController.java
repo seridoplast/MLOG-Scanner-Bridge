@@ -44,6 +44,12 @@ final class NativeScannerController {
     static boolean configure(Context context) {
         if (!isInstalled(context)) return false;
         try {
+            // CMX/MediaTek has an independent "focusSpot" channel that can
+            // insert codes into MLOG even while broadcast is enabled.
+            // The scanner log showed BOTH "focusSpot output" and "broadcast output".
+            // Disable the focusSpot path before enabling broadcast-only delivery.
+            sendBoolean(context, "com.service.scanner.focus.spot.output", "focusSpotOutput", false);
+            sendBoolean(context, "com.service.scanner.focus.spot.cover", "focusSpotCover", false);
             // Configurar acao e extra ANTES de habilitar o modo broadcast.
             sendString(context, "com.service.scanner.config.broad.action", "broad_action", ACTION_SCAN);
             sendString(context, "com.service.scanner.config.broad.code", "broad_code", "ScanCode");

@@ -1,123 +1,146 @@
 package br.com.seridoplast.mlogbridge;
 
-import android.content.ComponentName;
 import android.content.Context;
-import android.content.ServiceConnection;
-import android.os.IBinder;
-import android.os.RemoteException;
+import android.content.pm.PackageManager;
 import android.util.Log;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import rikka.shizuku.Shizuku;
+import rikka.shizuku.ShizukuRemoteProcess;
 
-/** Only used when the Shizuku mode is selected. No accessibility typing/taps. */
+/**
+ * CMX/MediaTek compatibility experiment. Shizuku's UserService crashes inside
+ * LoadedApk.makeApplicationInner on this firmware before our service is created.
+ * Execute two tightly validated commands via Shizuku's legacy remote process API
+ * instead. This private compatibility API may be removed in later Shizuku versions.
+ * It is only used for a selected scan mode, never for arbitrary user commands.
+ */
 final class ShizukuScanClient {
     private final Context context;
     private final ExecutorService worker=Executors.newSingleThreadExecutor(r -> {
         Thread thread=new Thread(r,"bridge-shizuku-scans");
-        thread.setDaemon(true);return thread;
+        thread.setDaemon(true);
+        return thread;
     });
     private final AtomicInteger pending=new AtomicInteger();
-    private volatile IShizukuScanService remote;
-    private volatile boolean connecting;
-    private boolean attached;
-    private final Shizuku.OnBinderReceivedListener arrived=()->connect();
-    // Instantiate after context has been assigned: Java definite assignment
-    // forbids referencing a blank final field from an earlier field initializer.
+    private volatile boolean attached;
     private final Shizuku.OnBinderDeadListener died;
-    private final ServiceConnection connection=new ServiceConnection(){
-        @Override public void onServiceConnected(ComponentName name,IBinder binder){
-            remote=IShizukuScanService.Stub.asInterface(binder);
-            connecting=false;
-            ScanCoordinator.status(context,"Shizuku conectado. Teste uma leitura no MLOG.");
-            Log.i("MLOGBridge","SHIZUKU_SCAN_SERVICE_CONNECTED");
-        }
-        @Override public void onServiceDisconnected(ComponentName name){
-            remote=null; connecting=false;
-        }
-    };
+    private final Shizuku.OnBinderReceivedListener arrived;
 
-    ShizukuScanClient(Context context){
+    ShizukuScanClient(Context context) {
         this.context=context.getApplicationContext();
-        this.died=()->{
-            remote=null;
-            connecting=false;
-            ScanCoordinator.status(this.context,
-                "Shizuku parou. Leitura bloqueada; reinicie o Shizuku.");
-        };
+        died=()->ScanCoordinator.status(this.context,
+            "Shizuku parou. Leituras bloqueadas; reinicie o Shizuku.");
+        arrived=()->Log.i("MLOGBridge","SHIZUKU_BINDER_AVAILABLE");
     }
 
-    void start(){
-        if (attached)return;
+    void start() {
+        if(attached)return;
         attached=true;
         Shizuku.addBinderReceivedListenerSticky(arrived);
         Shizuku.addBinderDeadListener(died);
     }
 
-    void connect(){
-        if (!attached || remote!=null || connecting)return;
+    void connect() {
+        if(ready())ScanCoordinator.status(context,
+            "Shizuku autorizado. Injetor experimental aguardando leitura.");
+        else ScanCoordinator.status(context,
+            "Shizuku sem autorizacao/conexao. Nenhuma leitura sera injetada.");
+    }
+
+    boolean ready() {
         try {
-            if (!Shizuku.pingBinder() ||
-                Shizuku.checkSelfPermission()!=android.content.pm.PackageManager.PERMISSION_GRANTED) return;
-            connecting=true;
-            Shizuku.UserServiceArgs args=new Shizuku.UserServiceArgs(
-                new ComponentName(context,ShizukuShellScanService.class))
-                .daemon(false).processNameSuffix("scan-shell").version(1);
-            Shizuku.bindUserService(args,connection);
-        } catch (Exception ex) {
-            connecting=false;
-            Log.w("MLOGBridge","SHIZUKU_BIND_FAILED",ex);
-        }
+            return Shizuku.pingBinder() &&
+                Shizuku.checkSelfPermission()==PackageManager.PERMISSION_GRANTED &&
+                (Shizuku.getUid()==2000 || Shizuku.getUid()==0);
+        } catch(RuntimeException ex) {return false;}
     }
 
-    boolean ready(){
-        try{return remote!=null && Shizuku.pingBinder();}
-        catch(RuntimeException ignored){return false;}
-    }
-
-    /** Every admitted broadcast represents one scan. Never coalesce equal barcodes. */
-    void scan(String code){
-        if (!ShizukuScanMode.supported(code)) {
-            ScanCoordinator.status(context,"Codigo com caracteres nao suportados; leitura nao enviada.");
-            Log.w("MLOGBridge","SHIZUKU_UNSUPPORTED_FORMAT");return;
+    /** No coalescing by barcode value: two deliberate reads must remain two. */
+    void scan(String code) {
+        if(!ShizukuScanMode.supported(code)){
+            ScanCoordinator.status(context,"Formato do codigo nao suportado; leitura bloqueada.");
+            return;
         }
-        if (!ready()){
+        if(!ready()){
             ScanCoordinator.status(context,"Shizuku sem conexao. Leitura nao enviada.");
-            connect();return;
+            return;
         }
-        if (pending.incrementAndGet()>ShizukuScanMode.MAX_PENDING){
+        if(pending.incrementAndGet()>ShizukuScanMode.MAX_PENDING){
             pending.decrementAndGet();
-            ScanCoordinator.status(context,"Fila Shizuku cheia. Leitura nao enviada.");return;
+            ScanCoordinator.status(context,"Fila cheia. Leitura nao enviada; confira o MLOG.");
+            return;
         }
-        try{worker.execute(()->{
-            try {
-                // A pending scan belongs to this mode only. A mode switch
-                // must not release delayed barcodes into another workflow.
-                if (!context.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE)
-                    .getBoolean(ShizukuScanMode.PREF,false))return;
-                IShizukuScanService service=remote;
-                if (service==null || !service.injectScan(code)) {
-                    ScanCoordinator.status(context,"Falha Shizuku: conferir ultimo produto no MLOG.");
-                    Log.w("MLOGBridge","SHIZUKU_SCAN_FAILED_UNVERIFIED");
-                } else {
+        try {
+            worker.execute(()->{
+                try {
+                    if(!context.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE)
+                        .getBoolean(ShizukuScanMode.PREF,false))return;
+                    if(!ready()){
+                        ScanCoordinator.status(context,"Shizuku desconectado; leitura nao enviada.");
+                        return;
+                    }
+                    // The tested ADB sequence, not InputConnection nor accessibility.
+                    // A failure after the text step is ambiguous: never retry and
+                    // accidentally register the barcode twice.
+                    if(!runInput("text",code)){
+                        ScanCoordinator.status(context,"Falha ao digitar. Confira o MLOG.");
+                        return;
+                    }
+                    if(!runInput("keyevent","66")){
+                        ScanCoordinator.status(context,"Falha no Enter. Confira o MLOG.");
+                        return;
+                    }
                     Log.i("MLOGBridge","SHIZUKU_SCAN_INJECTED_UNVERIFIED");
-                }
-            } catch(RemoteException|RuntimeException ex){
-                ScanCoordinator.status(context,"Shizuku perdeu conexao; confira leitura.");
-                Log.w("MLOGBridge","SHIZUKU_REMOTE_FAILURE",ex);
-                remote=null;
-            } finally {pending.decrementAndGet();}
-        });}catch(java.util.concurrent.RejectedExecutionException ex){
+                } catch(Exception ex) {
+                    Log.w("MLOGBridge","SHIZUKU_REMOTE_COMMAND_FAILED",ex);
+                    ScanCoordinator.status(context,"Falha na injecao Shizuku. Confira o MLOG.");
+                } finally {pending.decrementAndGet();}
+            });
+        } catch(RuntimeException ex) {
             pending.decrementAndGet();
-            Log.w("MLOGBridge","SHIZUKU_QUEUE_STOPPED");
+            Log.w("MLOGBridge","SHIZUKU_QUEUE_FAILED",ex);
         }
     }
-    void stop(){
+
+    private boolean runInput(String operation,String argument) throws Exception {
+        if(!"text".equals(operation) && !"keyevent".equals(operation))return false;
+        final Method method=Shizuku.class.getDeclaredMethod("newProcess",
+                String[].class,String[].class,String.class);
+        method.setAccessible(true);
+        final String[] argv={"/system/bin/input",operation,argument};
+        Object result;
+        try {
+            result=method.invoke(null,(Object)argv,null,null);
+        } catch(InvocationTargetException ex) {
+            Throwable cause=ex.getCause();
+            throw new IllegalStateException("Shizuku remote command failed",cause);
+        }
+        if(!(result instanceof ShizukuRemoteProcess))return false;
+        ShizukuRemoteProcess process=(ShizukuRemoteProcess)result;
+        try {
+            if(!process.waitForTimeout(2500,TimeUnit.MILLISECONDS)){
+                process.destroy();
+                Log.w("MLOGBridge","SHIZUKU_REMOTE_TIMEOUT");
+                return false;
+            }
+            int exit=process.exitValue();
+            if(exit!=0)Log.w("MLOGBridge","SHIZUKU_REMOTE_EXIT_"+exit);
+            return exit==0;
+        } finally {
+            try{process.getInputStream().close();}catch(Exception ignored){}
+            try{process.getErrorStream().close();}catch(Exception ignored){}
+        }
+    }
+
+    void stop() {
         attached=false;
         Shizuku.removeBinderReceivedListener(arrived);
         Shizuku.removeBinderDeadListener(died);
-        remote=null;
         worker.shutdownNow();
     }
 }

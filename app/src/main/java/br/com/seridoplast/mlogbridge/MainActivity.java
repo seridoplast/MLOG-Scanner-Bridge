@@ -443,13 +443,13 @@ public final class MainActivity extends Activity {
     private void home(){
         showSetupWarning();
         title("Leitura de códigos",prefs.getBoolean(ShizukuScanMode.PREF,false)?
-            "Modo Shizuku: input text + Enter, sem abrir teclado.":ZebraProfile0Mode.isSelected(
+            "Modo Shizuku (compatibilidade CMX): input text + Enter, sem abrir teclado.":ZebraProfile0Mode.isSelected(
             prefs.getBoolean(ZebraImeMode.PREF,false),
             prefs.getBoolean(ZebraProfile0Mode.PREF,false))?
             "Profile0 envia as teclas direto ao MLOG: teste na conferencia.":
             "Bipe para testar o leitor.");
         subtitle(content, "Modo ativo: "+(prefs.getBoolean(ShizukuScanMode.PREF,false)?
-            "Bipe Shizuku (ADB shell)":ZebraProfile0Mode.isSelected(
+            "Bipe Shizuku (processo remoto experimental)":ZebraProfile0Mode.isSelected(
                 prefs.getBoolean(ZebraImeMode.PREF,false),
                 prefs.getBoolean(ZebraProfile0Mode.PREF,false))?
             "Bipe Zebra · Profile0 (teclas nativas)":
@@ -553,7 +553,7 @@ public final class MainActivity extends Activity {
         MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
         if(svc!=null){svc.refreshEventThrottle();svc.prepareShizuku();}
         displayPage();
-        toast("Bipe Shizuku ativo. Abra o MLOG e teste uma leitura.");
+        toast("Bipe Shizuku experimental ativo. Teste UMA leitura no MLOG.");
     }
     private void selectReadMode(boolean zebra){
         if(zebra){ selectZebraInputMode(false);return; }
