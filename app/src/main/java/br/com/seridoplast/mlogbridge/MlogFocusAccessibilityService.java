@@ -279,7 +279,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                         // Another physical scan means operator interrupted the batch.
                         stopShizukuBatch("Novo bipe físico recebido: lote automático interrompido.");
                     }
-                    if(ScanAssistState.isArmed(this))startShizukuBatch(raw);
+                    if(ScanAssistState.isArmed(MlogFocusAccessibilityService.this))startShizukuBatch(raw);
                     if(shizukuScan!=null)shizukuScan.scan(raw);
                     if(!ShizukuHealthMonitor.ready())
                         ShizukuHealthMonitor.refresh(MlogFocusAccessibilityService.this);
