@@ -49,7 +49,11 @@ public final class FloatingToolsService extends Service {
         FloatingToolsService instance=visible;
         if(instance!=null) instance.main.post(()->{
             instance.statusText=message;
-            if(instance.status!=null)instance.status.setText(message);
+            if(instance.status!=null){
+                instance.status.setText(message);
+                // Sem texto de rodape com bipes automaticos desativados.
+                instance.status.setVisibility(ScanAssistState.isBatch(instance)?View.VISIBLE:View.GONE);
+            }
         });
     }
 
@@ -302,7 +306,10 @@ public final class FloatingToolsService extends Service {
                 fl.topMargin=dp(10);drawer.addView(foot,fl);
             }
             } // fim da seção de bipes automáticos autorizados
+            // Mostrar mensagens do lote apenas quando bipes automaticos estao ativos.
+            // Sem uma faixa de status vazia ou "Bipes automaticos desativados" ao desligar.
             status=muted(statusText,12);
+            status.setVisibility(ScanAssistState.isBatch(this)?View.VISIBLE:View.GONE);
             LinearLayout.LayoutParams sl=new LinearLayout.LayoutParams(-1,-2);
             sl.topMargin=dp(16);layout.addView(status,sl);
         }

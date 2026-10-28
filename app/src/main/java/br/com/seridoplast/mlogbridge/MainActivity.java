@@ -277,7 +277,7 @@ public final class MainActivity extends Activity {
         name.setImageResource(darkNow()?R.drawable.brand_name_dark:R.drawable.brand_name_light);
         name.setScaleType(ImageView.ScaleType.FIT_CENTER);
         name.setContentDescription("MLOG Bridge");
-        LinearLayout.LayoutParams nl=new LinearLayout.LayoutParams(dp(157),dp(68));nl.leftMargin=dp(8);
+        LinearLayout.LayoutParams nl=new LinearLayout.LayoutParams(dp(120),dp(52));nl.leftMargin=dp(8);
         left.addView(name,nl);
         head.addView(left,new LinearLayout.LayoutParams(0,-2,1));
         TextView moon=action(darkNow()?"☀":"☾",false,()->{});
