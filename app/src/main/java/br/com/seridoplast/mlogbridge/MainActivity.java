@@ -534,6 +534,8 @@ public final class MainActivity extends Activity {
         MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
         if(svc!=null){svc.refreshEventThrottle();svc.prepareShizuku();}
         displayPage();
+        ShizukuHealthMonitor.refresh(this);
+        ensureShizukuNotificationPermission();
         toast("Bipe Shizuku ativo. Teste uma leitura no MLOG.");
     }
     private void selectReadMode(){
@@ -555,6 +557,7 @@ public final class MainActivity extends Activity {
         MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
         if(svc!=null)svc.refreshEventThrottle();
         displayPage();
+        ShizukuHealthMonitor.refresh(this); // removes a pending Shizuku alert
         toast("Bipe Normal selecionado; modo broadcast solicitado.");
     }
     private void settings(){
@@ -804,6 +807,17 @@ public final class MainActivity extends Activity {
         return super.dispatchKeyEvent(event);
     }
     private void toast(String text){Toast.makeText(this,text,Toast.LENGTH_SHORT).show();}
+    private void ensureShizukuNotificationPermission(){
+        // Android 13+: request only once, only in the Shizuku scan mode.
+        if(Build.VERSION.SDK_INT>=33 && prefs.getBoolean(ShizukuScanMode.PREF,false)
+            && checkSelfPermission("android.permission.POST_NOTIFICATIONS")
+                !=android.content.pm.PackageManager.PERMISSION_GRANTED
+            && !prefs.getBoolean("shizuku_notice_permission_asked_v346",false)){
+            prefs.edit().putBoolean("shizuku_notice_permission_asked_v346",true).apply();
+            requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"},346);
+        }
+    }
+
     @Override protected void onResume(){
         super.onResume();
         if(githubPendingInstall!=null && (Build.VERSION.SDK_INT<26 || getPackageManager().canRequestPackageInstalls())){
@@ -832,6 +846,7 @@ public final class MainActivity extends Activity {
         }
         handler.post(ticker);
         ShizukuHealthMonitor.refresh(this);
+        ensureShizukuNotificationPermission();
         refreshSetupWarning();
     }
     @Override protected void onDestroy(){
