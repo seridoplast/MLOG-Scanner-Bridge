@@ -73,6 +73,17 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private static final long LONG_HOLD_MAX_MS=30000L;
 
     private ShizukuScanClient shizukuScan;
+    // Independente do motor IME antigo. Uma leitura fisica inicia o lote,
+    // cada passo seguinte exige incremento visivel de 1 no MESMO produto.
+    private boolean shizukuBatchActive;
+    private int shizukuBatchGeneration;
+    private int shizukuBatchTarget;
+    private int shizukuBatchDispatched;
+    private String shizukuBatchBarcode;
+    private String shizukuBatchScreen;
+    private SeparatedQuantityProbe.Result shizukuBatchObserved;
+    private long shizukuBatchDispatchedAt;
+
     private BroadcastReceiver receiver;
     private boolean receiverRegistered;
     // Confirmar uma vez POR LEITURA, nunca bloquear pelo valor do codigo.
@@ -264,6 +275,11 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                         return;
                     }
                     String raw=ScannerProtocol.barcodeRaw(intent);
+                    if(shizukuBatchActive){
+                        // Another physical scan means operator interrupted the batch.
+                        stopShizukuBatch("Novo bipe físico recebido: lote automático interrompido.");
+                    }
+                    if(ScanAssistState.isArmed(this))startShizukuBatch(raw);
                     if(shizukuScan!=null)shizukuScan.scan(raw);
                     if(!ShizukuHealthMonitor.ready())
                         ShizukuHealthMonitor.refresh(MlogFocusAccessibilityService.this);
@@ -2502,6 +2518,127 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         ScanAssistState.report("Bipes automáticos: aguardando confirmação do 1º bipe físico; faltam "+(quantity-1)+" virtuais.");
     }
 
+    /** Automatic repeats via the SAME Shizuku text+Enter pipeline as physical scans.
+     *  We never use the old IME/Accessibility Enter path in Shizuku mode.
+     *  No retry after uncertain delivery. Requires a visible count before arming.
+     */
+    private void startShizukuBatch(String barcode){
+        prefs().edit().putBoolean(ScanAssistState.ARMED,false).apply();
+        if(!ScanAssistState.isBatch(this) || !ShizukuScanMode.supported(barcode) ||
+            !ShizukuHealthMonitor.ready()){
+            ScanAssistState.report("Lote não iniciado: Shizuku indisponível ou código inválido.");
+            return;
+        }
+        int total=ScanAssistState.clamp(prefs().getInt(ScanAssistState.COUNT,1));
+        if(total<=1){ScanAssistState.report("Total 1: bipe normal.");return;}
+        AccessibilityNodeInfo root=mlogRoot();
+        if(root==null || isBlockingOverlay(root)){
+            ScanAssistState.report("Lote não iniciado: tela MLOG bloqueada.");return;
+        }
+        ScreenInfo info=inspect(root);
+        SeparatedQuantityProbe.Result baseline=separatedOnScreen(root);
+        if(!"separacao".equals(info.screen) || info.dialog || info.login || baseline==null){
+            ScanAssistState.report("Lote não iniciado: abra Separação com contador SEPARADO visível.");
+            return;
+        }
+        shizukuBatchActive=true;
+        shizukuBatchGeneration++;
+        shizukuBatchTarget=total;
+        shizukuBatchDispatched=1; // first physical scan follows immediately
+        shizukuBatchBarcode=barcode;
+        shizukuBatchScreen=info.screen;
+        shizukuBatchObserved=baseline;
+        shizukuBatchDispatchedAt=SystemClock.elapsedRealtime();
+        ScanAssistState.report("Bipe 1/"+total+" enviado; aguardando confirmação na Separação.");
+        final int generation=shizukuBatchGeneration;
+        main.postDelayed(()->checkShizukuBatch(generation),120);
+    }
+
+    /** Fail closed if count doesn't increase exactly by one in 5 seconds. */
+    private void checkShizukuBatch(int generation){
+        if(!shizukuBatchActive || generation!=shizukuBatchGeneration)return;
+        if(!ScanAssistState.isBatch(this) || !prefs().getBoolean(ShizukuScanMode.PREF,false) ||
+            !ShizukuHealthMonitor.ready()){
+            stopShizukuBatch("Lote interrompido: Shizuku desligado ou opção desativada.");return;
+        }
+        AccessibilityNodeInfo root=mlogRoot();
+        if(root==null || isBlockingOverlay(root)){
+            stopShizukuBatch("Lote interrompido: tela MLOG indisponível.");return;
+        }
+        ScreenInfo info=inspect(root);
+        if(info.dialog || info.login || !shizukuBatchScreen.equals(info.screen)){
+            stopShizukuBatch("Lote interrompido: tela de Separação mudou.");return;
+        }
+        SeparatedQuantityProbe.Result result=separatedOnScreen(root);
+        if(result!=null && shizukuBatchObserved!=null &&
+            shizukuBatchObserved.sameProduct(result)){
+            int delta=result.count-shizukuBatchObserved.count;
+            if(delta==1){
+                shizukuBatchObserved=result;
+                int done=shizukuBatchDispatched;
+                ScanAssistState.report("MLOG confirmou "+done+"/"+shizukuBatchTarget+
+                    " leituras (SEPARADO +1).");
+                if(done>=shizukuBatchTarget){
+                    stopShizukuBatch("Lote concluído: "+done+
+                        " leituras verificadas na tela. Confira o pedido.");return;
+                }
+                // Fast but never overlap a pending barcode/Enter injection.
+                long wait=Math.max(120L,450L-(SystemClock.elapsedRealtime()-shizukuBatchDispatchedAt));
+                main.postDelayed(()->sendNextShizukuBatch(generation),wait);
+                return;
+            }
+            if(delta>1 || delta<0){
+                stopShizukuBatch("Lote parado: contador mudou "+delta+
+                    " unidades. Confira possíveis duplicidades.");return;
+            }
+        }else if(result!=null){
+            stopShizukuBatch("Lote parado: produto mudou. Confira a quantidade.");return;
+        }
+        if(SystemClock.elapsedRealtime()-shizukuBatchDispatchedAt>5000L){
+            stopShizukuBatch("Lote parado: MLOG não confirmou o incremento em 5 s. Não reenviado.");
+            return;
+        }
+        main.postDelayed(()->checkShizukuBatch(generation),100);
+    }
+    private void sendNextShizukuBatch(int generation){
+        if(!shizukuBatchActive || generation!=shizukuBatchGeneration)return;
+        // Recheck state and UI immediately before each send.
+        if(!ScanAssistState.isBatch(this) || !ShizukuHealthMonitor.ready() ||
+            shizukuScan==null || !ShizukuScanMode.supported(shizukuBatchBarcode)){
+            stopShizukuBatch("Lote parado: Shizuku indisponível.");return;
+        }
+        AccessibilityNodeInfo root=mlogRoot();
+        if(root==null || isBlockingOverlay(root)){
+            stopShizukuBatch("Lote parado: MLOG indisponível.");return;
+        }
+        ScreenInfo info=inspect(root);
+        SeparatedQuantityProbe.Result current=separatedOnScreen(root);
+        if(info.dialog || info.login || !shizukuBatchScreen.equals(info.screen) ||
+           current==null || shizukuBatchObserved==null ||
+           !shizukuBatchObserved.sameProduct(current) ||
+           current.count!=shizukuBatchObserved.count){
+            stopShizukuBatch("Lote parado: estado do produto não corresponde ao último bipe.");return;
+        }
+        // No retry if command fails after text injection: operator must inspect MLOG.
+        if(!shizukuScan.scan(shizukuBatchBarcode)){
+            stopShizukuBatch("Lote parado: Shizuku não aceitou a próxima leitura.");return;
+        }
+        shizukuBatchDispatched++;
+        shizukuBatchDispatchedAt=SystemClock.elapsedRealtime();
+        ScanAssistState.report("Enviado "+shizukuBatchDispatched+"/"+shizukuBatchTarget+
+            "; aguardando SEPARADO aumentar 1.");
+        main.postDelayed(()->checkShizukuBatch(generation),120);
+    }
+    private void stopShizukuBatch(String message){
+        if(!shizukuBatchActive)return;
+        shizukuBatchActive=false;
+        shizukuBatchGeneration++;
+        shizukuBatchBarcode=null;
+        shizukuBatchObserved=null;
+        prefs().edit().putBoolean(ScanAssistState.ARMED,false).apply();
+        if(message!=null)ScanAssistState.report(message);
+    }
+
     void onCmxEnterObservedByKeyboard(){
         if(autoCountRunning && autoCountFirst){
             autoCountFirstEnterAt=SystemClock.elapsedRealtime();
@@ -2511,6 +2648,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
 
     /** Botao cancelar acessivel a partir da janela flutuante. */
     void cancelAutoCount(String message){
+        stopShizukuBatch(message);
         boolean wasRunning=autoCountRunning;
         ++autoCountToken;
         autoCountRunning=false;

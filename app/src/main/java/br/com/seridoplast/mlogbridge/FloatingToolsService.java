@@ -38,7 +38,7 @@ public final class FloatingToolsService extends Service {
     private boolean expanded;
     // Persistir posição da BOLHA, não a coordenada do painel expandido.
     private int bubbleX=-1, bubbleY=-1;
-    private boolean batchDrawerOpen; // mantida para reativacao futura
+    private boolean batchDrawerOpen;
     private String statusText="Tratador de códigos disponível.";
     private final int background=0xff161616;
     private final int text=0xffffffff;
@@ -65,9 +65,8 @@ public final class FloatingToolsService extends Service {
             android.content.SharedPreferences p=ScanAssistState.prefs(this);
             bubbleX=p.getInt("floating_gear_x",dp(12));
             bubbleY=p.getInt("floating_gear_y",dp(160));
-            // Versao de teste sem bipes automaticos: nunca restaurar lote antigo.
-            p.edit().putBoolean(ScanAssistState.ARMED,false)
-                .putBoolean(ScanAssistState.BATCH,false).apply();
+            // Never restore an ARMED batch after process restart (safety).
+            p.edit().putBoolean(ScanAssistState.ARMED,false).apply();
             draw(false);
         }
         return START_NOT_STICKY;
@@ -213,45 +212,38 @@ public final class FloatingToolsService extends Service {
             header.addView(button("−",this::collapse));layout.addView(header);
             layout.addView(separator());
             SharedPreferences pref=ScanAssistState.prefs(this);
+            // 1º botão: reaplica a configuração CMX (não exige Shizuku).
+            TextView reset=button("⟳ Resetar Bipe",()->{
+                boolean ok=NativeScannerController.configure(this);
+                statusText=ok?"Configuração broadcast enviada ao CMX. Teste uma leitura.":
+                    "Não foi possível reaplicar broadcast do CMX.";
+                android.widget.Toast.makeText(this,statusText,android.widget.Toast.LENGTH_LONG).show();
+                collapse();
+            });
+            layout.addView(reset,new LinearLayout.LayoutParams(-1,-2));
             if(pref.getBoolean(ShizukuScanMode.PREF,false)){
                 boolean ok=ShizukuHealthMonitor.ready();
-                TextView state=muted(ok?"✓ Shizuku ativo":"⚠ Shizuku parado: leituras bloqueadas",12);
+                TextView state=muted(ok?"✓ Shizuku ativo":"⚠ Shizuku parado",12);
                 if(!ok)state.setTextColor(red);
-                layout.addView(state);
-                TextView reopen=button("Abrir Shizuku / Iniciar",()->{
-                    collapse();
-                    if(!ShizukuHealthMonitor.openShizuku(this))
-                        android.widget.Toast.makeText(this,"Shizuku não encontrado",android.widget.Toast.LENGTH_SHORT).show();
-                });
-                LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
-                lp.topMargin=dp(9);layout.addView(reopen,lp);
-                layout.addView(separator());
+                LinearLayout.LayoutParams statusLp=new LinearLayout.LayoutParams(-1,-2);
+                statusLp.topMargin=dp(6);layout.addView(state,statusLp);
             }
+            layout.addView(separator());
             Switch cleaner=toggle(pref.getBoolean(ScanAssistState.CLEAN,false));
             cleaner.setOnCheckedChangeListener((v,on)->{
                 pref.edit().putBoolean(ScanAssistState.CLEAN,on).apply();
                 statusText=on?"Tratador ativo":"Tratador desativado";
                 if(status!=null)status.setText(statusText);
             });
-            layout.addView(featureRow("Tratador de códigos","Limpa caracteres invisíveis",cleaner,null));
-            // BIPES AUTOMATICOS TEMPORARIAMENTE OCULTOS. O bloco completo
-            // da gaveta e do motor permanece logo abaixo para reativacao futura.
-            if(ScanAssistState.AUTO_BIPS_ENABLED){
+            layout.addView(featureRow("Leitura","Tratar códigos recebidos",cleaner,null));
+            // O recurso protegido só aparece no flutuante quando liberado em Ajustes.
+            if(ScanAssistState.isBatch(this)){
             layout.addView(separator());
-            Switch batch=toggle(pref.getBoolean(ScanAssistState.BATCH,false));
-            batch.setOnCheckedChangeListener((v,on)->{
-                pref.edit().putBoolean(ScanAssistState.BATCH,on)
-                    .putBoolean(ScanAssistState.ARMED,false).apply();
-                MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
-                if(svc!=null)svc.cancelAutoCount(on?null:"Bipes automáticos desligados.");
-                statusText=on?"Escolha o total e arme o próximo bipe.":"Bipes automáticos desligados.";
-                if(status!=null)status.setText(statusText);
+            TextView batchTitle=button("Bipes automáticos  ▾",()->{
+                batchDrawerOpen=!batchDrawerOpen;
+                draw(true);
             });
-            layout.addView(featureRow("Bipes automáticos  ▾",
-                "Toque no título para abrir",batch,()->{
-                    batchDrawerOpen=!batchDrawerOpen;
-                    draw(true);
-                }));
+            layout.addView(batchTitle,new LinearLayout.LayoutParams(-1,-2));
             if(batchDrawerOpen){
                 LinearLayout drawer=new LinearLayout(this);drawer.setOrientation(LinearLayout.VERTICAL);
                 drawer.setPadding(dp(0),dp(14),dp(0),dp(8));
@@ -280,8 +272,12 @@ public final class FloatingToolsService extends Service {
                         statusText="Informe de 1 a "+ScanAssistState.MAX_COUNT+" bipes.";
                         if(status!=null)status.setText(statusText);return;
                     }
-                    if(!batch.isChecked()){
-                        statusText="Ative Bipes automáticos no interruptor.";
+                    if(!ScanAssistState.isBatch(this)){
+                        statusText="Ative Bipes automáticos em Ajustes com senha.";
+                        if(status!=null)status.setText(statusText);return;
+                    }
+                    if(pref.getBoolean(ShizukuScanMode.PREF,false) && !ShizukuHealthMonitor.ready()){
+                        statusText="Shizuku desligado. Não armei bipes automáticos.";
                         if(status!=null)status.setText(statusText);return;
                     }
                     MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
@@ -301,11 +297,11 @@ public final class FloatingToolsService extends Service {
                 });
                 LinearLayout.LayoutParams slp=new LinearLayout.LayoutParams(-1,-2);
                 slp.topMargin=dp(8);drawer.addView(stop,slp);
-                TextView foot=muted("A partir de 155 ms; na separação, aguarda SEPARADO aumentar antes de continuar. Não soma apenas pelo Enter enviado.",11);
+                TextView foot=muted("Shizuku: só repete após SEPARADO aumentar 1 no mesmo produto. Sem confirmação, interrompe o lote. Confira o pedido.",11);
                 LinearLayout.LayoutParams fl=new LinearLayout.LayoutParams(-1,-2);
                 fl.topMargin=dp(10);drawer.addView(foot,fl);
             }
-            } // fim da secao preservada de bipes automaticos
+            } // fim da seção de bipes automáticos autorizados
             status=muted(statusText,12);
             LinearLayout.LayoutParams sl=new LinearLayout.LayoutParams(-1,-2);
             sl.topMargin=dp(16);layout.addView(status,sl);

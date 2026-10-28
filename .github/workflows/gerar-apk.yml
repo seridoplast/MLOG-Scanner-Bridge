@@ -158,6 +158,16 @@ jobs:
             tests/ShizukuScanModeTest.java
           java -cp /tmp/bridge-shizuku-tests br.com.seridoplast.mlogbridge.ShizukuScanModeTest
 
+      - name: Testar bloqueio por senha do lote automático
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bridge-bips-tests
+          javac -d /tmp/bridge-bips-tests \
+            app/src/main/java/br/com/seridoplast/mlogbridge/AutoBipsAccess.java \
+            tests/AutoBipsAccessTest.java
+          java -cp /tmp/bridge-bips-tests br.com.seridoplast.mlogbridge.AutoBipsAccessTest
+
       - name: Compilar APK de producao com assinatura fixa
         env:
           BRIDGE_SIGNING_STORE_PASSWORD: ${{ secrets.BRIDGE_KEYSTORE_PASSWORD }}

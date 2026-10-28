@@ -10,10 +10,8 @@ final class ScanAssistState {
     static final String ARMED = "scan_assist_armed";
     static final String COUNT = "scan_assist_count";
     static final int MAX_COUNT = 100;
-    // Funcao de bipes automaticos preservada integralmente no codigo, mas
-    // TEMPORARIAMENTE DESABILITADA a pedido do usuario (v3.0.5).
-    // Para reativar no futuro, revisar os testes e alterar esta flag para true.
-    static final boolean AUTO_BIPS_ENABLED = false;
+    // Bipes automáticos: feature off by default and explicit password activation.
+    static final boolean AUTO_BIPS_ENABLED = true;
     static final String CLICK_COOLDOWN_MS = "click_cooldown_ms";
     private ScanAssistState(){}
     static SharedPreferences prefs(Context context){
@@ -25,5 +23,10 @@ final class ScanAssistState {
         return AUTO_BIPS_ENABLED && prefs(context).getBoolean(BATCH,false);
     }
     static boolean isArmed(Context context){return isBatch(context) && prefs(context).getBoolean(ARMED,false);}
+    static void disable(Context context){
+        prefs(context).edit().putBoolean(BATCH,false).putBoolean(ARMED,false).apply();
+        MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
+        if(svc!=null)svc.cancelAutoCount("Bipes automáticos desligados.");
+    }
     static void report(String message){FloatingToolsService.report(message);}
 }

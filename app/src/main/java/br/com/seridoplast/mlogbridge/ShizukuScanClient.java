@@ -67,19 +67,19 @@ final class ShizukuScanClient {
     }
 
     /** No coalescing by barcode value: two deliberate reads must remain two. */
-    void scan(String code) {
+    boolean scan(String code) {
         if(!ShizukuScanMode.supported(code)){
             ScanCoordinator.status(context,"Formato do codigo nao suportado; leitura bloqueada.");
-            return;
+            return false;
         }
         if(!ready()){
             ScanCoordinator.status(context,"Shizuku sem conexao. Leitura nao enviada.");
-            return;
+            return false;
         }
         if(pending.incrementAndGet()>ShizukuScanMode.MAX_PENDING){
             pending.decrementAndGet();
             ScanCoordinator.status(context,"Fila cheia. Leitura nao enviada; confira o MLOG.");
-            return;
+            return false;
         }
         try {
             worker.execute(()->{
@@ -107,9 +107,11 @@ final class ShizukuScanClient {
                     ScanCoordinator.status(context,"Falha na injecao Shizuku. Confira o MLOG.");
                 } finally {pending.decrementAndGet();}
             });
+            return true;
         } catch(RuntimeException ex) {
             pending.decrementAndGet();
             Log.w("MLOGBridge","SHIZUKU_QUEUE_FAILED",ex);
+            return false;
         }
     }
 

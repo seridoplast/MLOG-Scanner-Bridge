@@ -145,6 +145,11 @@ public final class MainActivity extends Activity {
     @Override public void onCreate(Bundle saved){
         prefs=getSharedPreferences(ScanCoordinator.PREFS,MODE_PRIVATE);
         BridgePreferences.enableOnUpgrade(prefs);
+        if(!prefs.getBoolean("auto_bips_optin_v344",false)){
+            prefs.edit().putBoolean("auto_bips_optin_v344",true)
+                .putBoolean(ScanAssistState.BATCH,false)
+                .putBoolean(ScanAssistState.ARMED,false).apply();
+        }
         // v3.4.3: legacy Zebra modes removed from the UI. Preserve Shizuku;
         // migrate old Zebra-only selections to Bipe Normal safely.
         if(!prefs.getBoolean("migrated_remove_zebra_v343",false)){
@@ -267,9 +272,12 @@ public final class MainActivity extends Activity {
         logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
         // Logo 2 acompanha claro/escuro; a cor azul permanece.
 
-        left.addView(logo,new LinearLayout.LayoutParams(dp(42),dp(42)));
-        TextView name=label("mlog bridge",19,ink,true);
-        LinearLayout.LayoutParams nl=new LinearLayout.LayoutParams(-2,-2);nl.leftMargin=dp(12);
+        left.addView(logo,new LinearLayout.LayoutParams(dp(48),dp(48)));
+        ImageView name=new ImageView(this);
+        name.setImageResource(darkNow()?R.drawable.brand_name_dark:R.drawable.brand_name_light);
+        name.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        name.setContentDescription("MLOG Bridge");
+        LinearLayout.LayoutParams nl=new LinearLayout.LayoutParams(dp(157),dp(68));nl.leftMargin=dp(8);
         left.addView(name,nl);
         head.addView(left,new LinearLayout.LayoutParams(0,-2,1));
         TextView moon=action(darkNow()?"☀":"☾",false,()->{});
@@ -397,66 +405,18 @@ public final class MainActivity extends Activity {
         setupWarningLabel=label("",13,0xffffffff,false);
         space(setupWarningCard,7);setupWarningCard.addView(setupWarningLabel);
         setupAccessibilityStep=setupStep("1. Acessibilidade",this::openAccessibilitySettings);
-        setupKeyboardEnabledStep=setupStep("2. Habilitar teclado Bridge",this::openKeyboardSettings);
-        setupKeyboardSelectedStep=setupStep("3. Selecionar teclado Bridge",()->{
-            InputMethodManager imm=(InputMethodManager)getSystemService(Context.INPUT_METHOD_SERVICE);
-            if(imm!=null)imm.showInputMethodPicker();
-        });
-        setupFloatingStep=setupStep("4. Botão flutuante",this::openOverlaySettings);
+        setupFloatingStep=setupStep("2. Botão flutuante",this::openOverlaySettings);
         refreshSetupWarning();
     }
     private void refreshSetupWarning(){
         if(setupWarningCard==null || setupWarningLabel==null)return;
-        if(ZebraProfile0Mode.isSelected(prefs.getBoolean(ZebraImeMode.PREF,false),
-                prefs.getBoolean(ZebraProfile0Mode.PREF,false))){
-            setupWarningCard.setVisibility(View.GONE);
-            return;
-        }
-        if(prefs.getBoolean(ZebraImeMode.PREF,false)){
-            // IME experimental exige teclado selecionado, nao permissao de
-            // bolha nem acessibilidade (esta e opcional somente para foco).
-            boolean enabled=keyboardEnabled();
-            boolean selected=keyboardSelected();
-            setupAccessibilityStep.setVisibility(View.GONE);
-            setupFloatingStep.setVisibility(View.GONE);
-            setupKeyboardEnabledStep.setVisibility(View.VISIBLE);
-            setupKeyboardSelectedStep.setVisibility(View.VISIBLE);
-            updateSetupStep(setupKeyboardEnabledStep,enabled,"Teclado habilitado");
-            updateSetupStep(setupKeyboardSelectedStep,selected,"Teclado selecionado");
-            setupWarningCard.setVisibility(enabled&&selected?View.GONE:View.VISIBLE);
-            setupWarningLabel.setText("Eventos de tecla precisam do teclado Bridge ativo " +
-                "e de um campo MLOG com foco.");
-            return;
-        }
-        setupAccessibilityStep.setVisibility(View.VISIBLE);
-        setupFloatingStep.setVisibility(View.VISIBLE);
-        setupKeyboardEnabledStep.setVisibility(View.VISIBLE);
-        setupKeyboardSelectedStep.setVisibility(View.VISIBLE);
         boolean access=accessibilityReady();
-        boolean enabled=keyboardEnabled();
-        boolean selected=keyboardSelected();
         boolean floating=floatingReady();
         updateSetupStep(setupAccessibilityStep,access,"Acessibilidade");
-        updateSetupStep(setupKeyboardEnabledStep,enabled,"Teclado habilitado");
-        updateSetupStep(setupKeyboardSelectedStep,selected,"Teclado selecionado");
         updateSetupStep(setupFloatingStep,floating,"Botão flutuante");
-        boolean complete=access && enabled && selected && floating;
+        boolean complete=access && floating;
         setupWarningCard.setVisibility(complete?View.GONE:View.VISIBLE);
-        setupWarningLabel.setText(complete?"Tudo configurado.":
-            "Ativado: "+((access?1:0)+(enabled?1:0)+(selected?1:0)+(floating?1:0))+
-            "/4. Toque nas pendências.");
-    }
-    private void maybeShowFirstSetupDialog(){
-        if(prefs.getBoolean("first_setup_prompt_v302",false))return;
-        prefs.edit().putBoolean("first_setup_prompt_v302",true).apply();
-        if(missingRequiredSetup().isEmpty())return;
-        new AlertDialog.Builder(this)
-            .setTitle("Configurar MLOG Scanner Bridge")
-            .setMessage("Ative Acessibilidade, Teclado Bridge e Botão flutuante. " +
-                "Confirme as permissões no Android.")
-            .setPositiveButton("Começar",(dialog,which)->openAccessibilitySettings())
-            .setNegativeButton("Depois",(dialog,which)->{})
-            .show();
+        setupWarningLabel.setText("Somente as duas permissões essenciais.");
     }
 
     private void home(){
@@ -509,10 +469,6 @@ public final class MainActivity extends Activity {
                 .putBoolean(ScanAssistState.ARMED,false).apply();
             toast("Ferramentas desligadas.");
         });
-        if(prefs.getBoolean(ShizukuScanMode.PREF,false)){
-            subtitle(service,"Após reiniciar o coletor: Shizuku → Iniciar. O Bridge verifica o serviço continuamente.");
-            button(service,"Abrir Shizuku / Ativar",false,this::openShizuku);
-        }
         button(service,"Abrir MLOG",true,this::openMlog);
         button(service,"Acessibilidade do Android",false,()->startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
     }
@@ -537,17 +493,6 @@ public final class MainActivity extends Activity {
             !ready?"⚠ Shizuku desligado/sem autorização: leituras bloqueadas":
             "⚠ Shizuku ligado; ative a acessibilidade do Bridge");
         shizukuSettingsStatus.setTextColor(ready && accessible?0xff228b58:0xffd97706);
-    }
-    private boolean shizukuAutoOpenAttempted;
-    private final Runnable autoOpenShizuku=()->offerShizukuRecoveryOnce();
-    private void offerShizukuRecoveryOnce(){
-        if(shizukuAutoOpenAttempted || isFinishing() || isDestroyed() ||
-            !prefs.getBoolean(ShizukuScanMode.PREF,false) || shizukuAuthorized())return;
-        shizukuAutoOpenAttempted=true;
-        // Only when Bridge itself is foreground. Never repeatedly steal focus
-        // from MLOG or automatically click privileged Shizuku controls.
-        toast("Shizuku parado. Abra o Shizuku e toque em Iniciar.");
-        openShizuku();
     }
     private void selectShizukuMode(){
         if(!accessibilityReady()){
@@ -623,7 +568,6 @@ public final class MainActivity extends Activity {
         shizukuSettingsStatus=label("Verificando serviço...",13,muted,true);
         modeShizuku.addView(shizukuSettingsStatus);
         updateShizukuUiStatus();
-        button(modeShizuku,"Abrir Shizuku / Iniciar serviço",false,this::openShizuku);
         subtitle(modeShizuku,accessibilityReady()?"✓ Receptor de scanner ativo":
             "⚠ Ative acessibilidade para receber os broadcasts");
         button(modeShizuku,shizuku?"✓ Bipe Shizuku selecionado":"Ativar Bipe Shizuku",
@@ -693,6 +637,40 @@ public final class MainActivity extends Activity {
             p.leftMargin=dp(4);themes.addView(choice,p);
         }
         space(appearance,10);appearance.addView(themes);
+        // Ultimo ajuste: protegido por senha, inicialmente desligado em qualquer atualização.
+        LinearLayout automatic=card();
+        automatic.addView(label("Bipes automáticos",17,ink,true));
+        subtitle(automatic,"1 leitura física e repetições assistidas. No Shizuku, cada repetição exige incremento visível de SEPARADO no mesmo produto.");
+        boolean enabled=ScanAssistState.isBatch(this);
+        subtitle(automatic,enabled?"✓ Ativo — configure a quantidade no botão flutuante.":
+            "Desativado — não aparece no botão flutuante.");
+        button(automatic,enabled?"Desativar bipes automáticos":"Ativar com senha",enabled,()->{
+            if(ScanAssistState.isBatch(this)){
+                ScanAssistState.disable(this);
+                displayPage();
+                toast("Bipes automáticos desativados.");
+            } else requireAutoBipsPassword();
+        });
+    }
+    private void requireAutoBipsPassword(){
+        final EditText password=new EditText(this);
+        password.setSingleLine(true);
+        password.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        int padding=dp(18); password.setPadding(padding,padding,padding,padding);
+        new AlertDialog.Builder(this)
+            .setTitle("Liberar bipes automáticos")
+            .setMessage("Função experimental: confira as quantidades lançadas no MLOG.")
+            .setView(password)
+            .setPositiveButton("Ativar",(dialog,which)->{
+                if(AutoBipsAccess.valid(password.getText().toString())){
+                    ScanAssistState.prefs(this).edit()
+                        .putBoolean(ScanAssistState.BATCH,true)
+                        .putBoolean(ScanAssistState.ARMED,false).apply();
+                    displayPage();
+                    toast("Bipes automáticos liberados. Configure no botão flutuante.");
+                }else toast("Senha incorreta. Recurso permanece desativado.");
+            })
+            .setNegativeButton("Cancelar",null).show();
     }
     private void diagnostic(){
         title("Diagnóstico","Copie o último evento.");
@@ -723,7 +701,6 @@ public final class MainActivity extends Activity {
         button(control,"Informações do app",false,()->startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName()))));
         button(control,"Acessibilidade",false,()->startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
         subtitle(control,accessibilityReady()?"Acessibilidade: ativa":"Acessibilidade: verificar ou reativar após atualizar");
-        subtitle(control,keyboardSelected()?"Teclado Bridge: selecionado":"Teclado Bridge: conferir seleção no Android");
     }
     private void setUpdateStatus(String text){
         if(githubUpdateStatus!=null) githubUpdateStatus.setText(text);
@@ -842,7 +819,6 @@ public final class MainActivity extends Activity {
                 prefs.getBoolean(ZebraProfile0Mode.PREF,false)))
             NativeScannerController.configureProfile0Keyboard(this);
         new Thread(() -> BridgeUpdater.check(getApplicationContext()), "bridge-update-start").start();
-        if(Build.VERSION.SDK_INT>=33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS")!=android.content.pm.PackageManager.PERMISSION_GRANTED) requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"},778);
         IntentFilter f=new IntentFilter();for(String a:ScannerProtocol.ACTIONS)f.addAction(a);
         try{
             if(Build.VERSION.SDK_INT>=33)registerReceiver(scannerTest,f,Context.RECEIVER_EXPORTED);
@@ -856,9 +832,7 @@ public final class MainActivity extends Activity {
         }
         handler.post(ticker);
         ShizukuHealthMonitor.refresh(this);
-        handler.postDelayed(autoOpenShizuku,1200);
         refreshSetupWarning();
-        handler.post(this::maybeShowFirstSetupDialog);
     }
     @Override protected void onDestroy(){
         Shizuku.removeRequestPermissionResultListener(shizukuPermission);
@@ -866,7 +840,6 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onPause(){
         handler.removeCallbacks(ticker);
-        handler.removeCallbacks(autoOpenShizuku);
         if(receiving)try{unregisterReceiver(scannerTest);}catch(RuntimeException ignored){}
         receiving=false;
         super.onPause();
