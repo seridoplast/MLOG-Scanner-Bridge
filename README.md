@@ -1,8 +1,19 @@
 # MLOG Scanner Bridge — Seridóplast
 
+## v3.5.8 — Publicacao DEBUG com aprovacao
+
+- Um `git push` na `main` compila/assina e publica **GitHub Pre-release** com titulo `[DEBUG]`, `rollout=0` e APK `MLOG-Scanner-Bridge-vN.N.N.apk`. Nunca se instala automaticamente nos coletores.
+- Para testar no coletor piloto: no app, **Sobre → Buscar DEBUG (com senha)**. Digite a senha de autorizacao e instale por Shizuku ou Android. O app guarda apenas um verificador PBKDF2 com salt e libera temporariamente a sessao (2 minutos); nao armazena a senha original.
+- Para aprovar a **mesma versao/APK**: GitHub → Releases → edite a Pre-release, desmarque **Set as a pre-release**, retire `[DEBUG]` do titulo (opcional), altere a descricao para `rollout=10` (ou 25, 50, 100). Salve e marque como **Latest** se o GitHub oferecer essa opcao. **So depois dessa aprovacao** o `/releases/latest` considera a versao; o Bridge distribui conforme o rollout e suas regras de ociosidade.
+- Atualizacao automatica consulta apenas Releases **nao-pre-release** pelo endpoint `/releases/latest`, com rollout maior que zero. Mesmo que alguem escreva `rollout=100` numa pre-release, ela nao entra no canal automatico.
+- A senha **nao equivale a autenticao remota**. Ela impede instalacao DEBUG dentro da UI do Bridge, mas um usuario com acesso direto ao APK e permissao de instalacao pode instalar pelo Android/ADB. Para controle forte de acesso seria necessario servidor com autenticacao.
+- **Nao reutilize uma tag versao para outro APK.** A promocao para estavel reaproveita os mesmos bytes e a assinatura corporativa.
+- Este canal DEBUG e uma classificacao de **GitHub Pre-release**. O APK continua assinado com a chave de producao, nao e uma build Android `debuggable`.
+
+
 Aplicativo Android para os coletores CMX TC60 (Android 14), integrando o scanner físico ao **MLOG** por broadcast e, no modo escolhido pelo operador, comandos pelo **Shizuku**.
 
-**Versão do projeto:** `3.5.6` · **Repositório:** `seridoplast/MLOG-Scanner-Bridge` · **Pacote:** `br.com.seridoplast.mlogbridge`.
+**Versão do projeto:** `3.5.8` · **Repositório:** `seridoplast/MLOG-Scanner-Bridge` · **Pacote:** `br.com.seridoplast.mlogbridge`.
 
 ## Funcionalidades
 
@@ -22,18 +33,18 @@ Aplicativo Android para os coletores CMX TC60 (Android 14), integrando o scanner
 
 O Shizuku precisa de inicialização adequada após reinicializações. O atualizador **não consegue iniciar o serviço Shizuku sozinho**. A instalação silenciosa depende também do comportamento do firmware CMX, que deve ser validado no aparelho piloto.
 
-## Teste piloto — v3.5.6 (recuperacao rapida por Volume)
+## Historico do teste piloto — v3.5.6 (recuperacao por Volume)
 
 **Base:** v3.5.4 corrigida derivada do projeto enviado; preserva o instalador Shizuku que ja foi validado no coletor.
 
-- `versionName`: `3.5.6`; `versionCode`: `1030505` (anterior: `1030504`).
+- `versionName`: `3.5.6`; `versionCode`: `1030506` (anterior: `1030505`).
 - **Mudanca:** trocar o retorno por KEYEVENT BACK pelo toque na seta interna do MLOG, mantendo o gatilho apos fechar o teclado: um toque no icone **Volume** seguido de toque na **seta de voltar do MLOG**.
 - **Tela homologada por print:** **Conferencia de Venda**, com titulo e botao "BIPAR PRODUTOS", em **720x1440**, alvo de abertura **(648,175)** e toque de retorno **(55,103)**. Em outras telas ou resolucoes, a acao e ignorada por seguranca.
 - **Rapidez:** pausa experimental de **10 ms entre os comandos**. Sao executados em **uma sessao shell pelo Shizuku**, em vez de dois processos separados com a antiga pausa de 950 ms. **Nao ha garantia de tempo total abaixo de 100 ms**: o Android, o shell e o Flutter adicionam latencia e a navegacao pode levar mais tempo. Se a seta for tocada cedo demais, pode ser necessario aumentar a pausa numa proxima versao.
 - **Gatilho:** fechamento do teclado real (observacao de janelas de acessibilidade); debounce reduzido para 60 ms e polling de reserva a cada 120 ms. Ainda existem salvaguardas de leitura pendente, texto nao enviado, overlay, Shizuku indisponivel e intervalo de recuperacao.
 - A recuperacao **nao injeta nem repete codigos ou Enter**, e nao promete confirmar o retorno da rota Flutter: o teste em hardware deve validar se a conferencia continua intacta e as leituras voltam.
 - **Configuracao:** Ajustes > Bipe Shizuku > "Recuperar leitura ao fechar teclado (Volume)". O botao flutuante "Resetar Bipe" tambem tenta a recuperacao em tela compativel. **O fechamento do teclado serve como gatilho heuristico; o Bridge nao tem confirmacao geral do MLOG de leitura ignorada.**
-- O pipeline do GitHub faz **Release `v3.5.6` com `rollout=0`** no push para `main`. Instale manualmente no coletor piloto e **nao libere o rollout** ate confirmar a navegacao e a ausencia de efeitos colaterais.
+- Historico: v3.5.6 foi publicada pelo fluxo anterior. **Desde v3.5.8**, cada push cria uma pre-release DEBUG, que deve ser testada e aprovada manualmente no GitHub.
 
 ### Passo de verificacao de uma versao piloto
 
@@ -42,7 +53,7 @@ O Shizuku precisa de inicialização adequada após reinicializações. O atuali
 3. Se o Volume nao abrir, se o Android voltar para outra pagina ou se a operacao for interrompida, **desative** "Recuperar leitura ao fechar teclado (Volume)" e mantenha o `rollout=0`.
 4. Registre logs com `adb logcat -d -s MLOGBridge:I` e confira `VOLUME_SHIZUKU_SEQUENCE_OK` e o campo `elapsed_ms`. O status confirma execucao de comandos, **nao** processamento da interface pelo Flutter.
 
-## Teste da correção de instalação — v3.5.2
+## Historico: correção de instalação — v3.5.2
 
 **Mudanças frente à v3.5.1:** correção e diagnóstico do instalador Shizuku, que anteriormente tentava enviar todo o APK a `pm install` em uma única etapa e podia receber `write failed: EPIPE (broken pipe)`. A nova implementação cria uma sessão, transmite o APK e só depois solicita o commit; coleta resposta/erro de cada etapa e abandona sessões que falham. Se a instalação Shizuku falhar ou estiver indisponível, o operador pode escolher **Instalar pelo Android**, sem desinstalar o Bridge e sem ignorar a verificação do APK.
 
@@ -51,7 +62,7 @@ O `versionName` passou a `3.5.2` e o `versionCode` a `1030502`. **Não alteramos
 Teste somente em **um coletor piloto**:
 
 1. Mantenha instalada a versão antiga (3.5.1 ou anterior); **não desinstale nem apague os dados**.
-2. Faça push da `3.5.2`. O workflow compilará e publicará a Release **v3.5.2** automaticamente com `rollout=0` (zero atualização automática).
+2. Historicamente, o workflow publicava a Release **v3.5.2** com `rollout=0`. Na v3.5.8, novos pushes criam pre-releases DEBUG.
 3. Na **versão antiga**, abra **Sobre → Buscar atualização agora** e selecione **Instalar pelo Android** para aplicar a 3.5.2. Se preferir, baixe o APK assinado direto da Release e abra pelo instalador do Android. **Não espere que o novo código de Shizuku funcione antes de instalar a 3.5.2**: nesse momento ainda está rodando o instalador antigo.
 4. Confirme que o coletor já executa a **3.5.2** e que scanner, bipes, Shizuku e preferências continuam funcionando.
 5. Para testar o **novo instalador Shizuku**, publique uma versão posterior (por exemplo `3.5.3`, alterando somente `bridgeVersion`), ainda com `rollout=0`. A partir da **3.5.2**, use **Buscar atualização agora → Instalar via Shizuku** para tentar a instalação da 3.5.3. Se o firmware negar a transferência, o Bridge exibirá a etapa/erro e oferecerá **Instalar pelo Android**.
@@ -62,13 +73,13 @@ Teste somente em **um coletor piloto**:
 ## Gerar e publicar uma atualização
 
 1. Altere **somente** `def bridgeVersion` em `app/build.gradle` para a próxima versão (não reutilize uma tag já lançada).
-2. Faça push na branch `main`. O workflow executa testes, assina o APK, publica em Actions → Artifacts e cria automaticamente uma Release pública `vN.N.N` com o APK assinado e `rollout=0`.
-3. A Release fica disponível para **detecção e download manual**. Com `rollout=0`, a instalação automática permanece bloqueada intencionalmente.
-4. Teste o APK assinado no coletor piloto, verificando o scanner, Shizuku, configuração e instalação. Nunca desinstale a versão anterior como primeira tentativa.
-5. Após aprovar, edite a **descrição da mesma Release** para `rollout=10`, `rollout=25`, `rollout=50`, `rollout=100` conforme o progresso.
-6. As verificações periódicas do Android não são instantâneas e a instalação em segundo plano exige Shizuku e inatividade comprovada do MLOG.
+2. Faça push na branch `main`. O workflow executa testes, assina o APK, publica em Actions → Artifacts e cria automaticamente a **Pre-release DEBUG** `vN.N.N` com `rollout=0`.
+3. Teste pelo **Sobre → Buscar DEBUG (com senha)** na v3.5.8 ou superior; para instalar inicialmente a propria v3.5.8 em um coletor com versao anterior, baixe o APK manualmente no GitHub Releases ou use `adb install -r`.
+4. Confirme scanner, Shizuku, configuração e instalação no piloto. Nunca desinstale a versão anterior como primeira tentativa.
+5. Para aprovar **este exato APK**, edite a release no GitHub: desmarque **Pre-release** e defina na descricao uma linha `rollout=10`, `rollout=25`, `rollout=50` ou `rollout=100`. Se houver opcao, marque esta release como **Latest**.
+6. Somente apos essas duas alterações o atualizador automatico podera instalar o APK aprovado; continuam valendo as regras de Shizuku, ociosidade e periodicidade.
 
-O workflow também admite execução manual por Actions. Se a Release da versão **já existe**, ele não sobrescreve o APK nem altera o rollout. Não substitua uma tag publicada por um APK diferente.
+O workflow também admite execução manual por Actions; no novo fluxo ela publica uma pre-release DEBUG. Se a Release da versão **já existe**, ele não sobrescreve o APK nem altera o rollout. Não substitua uma tag publicada por um APK diferente.
 
 ### Segredos obrigatórios do GitHub Actions
 
@@ -85,7 +96,8 @@ Em **Sobre → Atualizações automáticas**, existem os controles:
 
 - **Verificar atualizações automaticamente**: ativo inicialmente; agendamento de verificação a cada aproximadamente duas horas quando o Android permitir.
 - **Instalar quando o coletor estiver inativo**: ativo inicialmente, mas respeita a porcentagem do rollout e as salvaguardas de foco/inatividade.
-- **Buscar atualização agora**: baixa e verifica imediatamente a última Release aprovada pelo GitHub.
+- **Buscar versao aprovada**: baixa e verifica a ultima Release normal do GitHub.
+- **Buscar DEBUG (com senha)**: consulta pre-releases e permite teste exclusivamente manual. A autorizacao expira apos dois minutos.
 - **Instalar APK já baixado pelo Shizuku**: comando **manual** para testar a instalação em um coletor piloto, independentemente da porcentagem de rollout.
 
 Se a instalação Shizuku falhar com `EPIPE`, o Bridge apresenta a resposta do gerenciador de pacotes e oferece um botão **Instalar pelo Android**, com confirmação do operador. O modo automático apenas registra a falha; ele não abre uma janela no meio da operação.
@@ -105,7 +117,7 @@ Use sempre `install -r`. Se aparecer erro de assinatura incompatível, **não de
 ## Diagnóstico do atualizador
 
 1. Em **Sobre**, consulte a mensagem da última verificação/instalação.
-2. Confira se a Release está **pública**, publicada (não rascunho/prerelease) e contém o arquivo `MLOG-Scanner-Bridge-vN.N.N.apk` e o digest SHA-256.
+2. Para atualizacao automatica, a Release deve estar **publica e aprovada (nao prerelease nem draft)**, conter o APK `MLOG-Scanner-Bridge-vN.N.N.apk` com digest SHA-256 e `rollout=N` maior que zero. Para instalacao DEBUG manual, ela deve estar publicada como **pre-release**.
 3. Verifique o status do Shizuku e a autorização do Bridge.
 4. Confirme se o valor na descrição da Release está como `rollout=N` **sozinho em uma linha**. Uma Release sem essa linha equivale a **0%** por segurança.
 5. Se o aparelho estiver separando, com MLOG em primeiro plano, o Bridge **deve esperar**; não interrompa a separação para forçar atualização.

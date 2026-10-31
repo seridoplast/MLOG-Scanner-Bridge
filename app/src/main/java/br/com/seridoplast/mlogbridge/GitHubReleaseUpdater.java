@@ -27,6 +27,7 @@ import java.util.Locale;
 public final class GitHubReleaseUpdater {
     private static final String REPOSITORY = "seridoplast/MLOG-Scanner-Bridge";
     private static final String API = "https://api.github.com/repos/" + REPOSITORY + "/releases/latest";
+    private static final String DEBUG_API = "https://api.github.com/repos/" + REPOSITORY + "/releases?per_page=30";
     private static final String RELEASE_ASSET_PREFIX = "https://github.com/" + REPOSITORY + "/releases/download/";
     private static final String LEGACY_APK_NAME = "app-release.apk";
     // Matches the verified corporate release certificate in .github/workflows/gerar-apk.yml.
@@ -38,13 +39,17 @@ public final class GitHubReleaseUpdater {
     static final String PREF_VERSION = "update_cached_version";
     static final String PREF_READY = "update_cached_ready";
     static final String PREF_ROLLOUT = "updater_release_rollout_percent";
+    static final String PREF_DEBUG = "update_cached_is_prerelease";
     private GitHubReleaseUpdater() { }
 
     static final class Update {
         final File apk;
         final String tag;
         final long versionCode;
-        Update(File file, String version, long code) { apk=file; tag=version; versionCode=code; }
+        final boolean debug;
+        Update(File file, String version, long code, boolean isDebug) {
+            apk=file; tag=version; versionCode=code; debug=isDebug;
+        }
     }
 
     /** Rechecks package name, monotonically increasing code and pinned signing certificate. */
@@ -63,29 +68,54 @@ public final class GitHubReleaseUpdater {
                 return null;
             }
             verifyApk(pm, context.getPackageName(), apk, expected, tag.substring(1));
-            return new Update(apk,tag,expected);
+            return new Update(apk,tag,expected,sp.getBoolean(PREF_DEBUG,false));
         }
     }
 
-    /** Returns null when already current. No download races between manual and WorkManager. */
+    /** Release /latest excludes GitHub prereleases; unattended upgrades use this channel only. */
     static Update downloadLatest(Context context) throws Exception {
+        JSONObject release = new JSONObject(new String(fetchJson(API), "UTF-8"));
+        if(!BridgeUpdateChannel.isAutoChannel(release.optBoolean("draft",false),release.optBoolean("prerelease",false)))
+            throw new IOException("A release consultada nao esta aprovada para atualizacao automatica.");
+        return downloadRelease(context, release, false);
+    }
+
+    /** Explicit operator-only preview of the newest published GitHub prerelease. */
+    static Update downloadDebug(Context context) throws Exception {
+        if(!DebugUpdateAccess.allowed()) throw new SecurityException("Senha de teste necessaria.");
+        JSONArray releases=new JSONArray(new String(fetchJson(DEBUG_API),"UTF-8"));
+        JSONObject latest=null;
+        long highest=-1L;
+        for(int i=0;i<releases.length();i++) {
+            JSONObject candidate=releases.optJSONObject(i);
+            if(candidate==null || !BridgeUpdateChannel.isManualTest(
+                candidate.optBoolean("draft",false),candidate.optBoolean("prerelease",false)))continue;
+            long v=GitHubReleaseVersion.versionCode(candidate.optString("tag_name",""));
+            if(v>highest) {latest=candidate;highest=v;}
+        }
+        if(latest==null)throw new IOException("Nenhuma versao DEBUG publicada no GitHub Releases.");
+        return downloadRelease(context,latest,true);
+    }
+
+    /** Shared checksum/signature checks are identical for approved and test APKs. */
+    private static Update downloadRelease(Context context, JSONObject release, boolean debug) throws Exception {
         synchronized (UPDATE_LOCK) {
             File temp=null;
             try {
-                JSONObject release = new JSONObject(new String(fetchJson(API), "UTF-8"));
+                if (debug && !DebugUpdateAccess.allowed()) throw new SecurityException("Senha DEBUG expirada.");
+                if (!debug && !BridgeUpdateChannel.isAutoChannel(release.optBoolean("draft",false),
+                        release.optBoolean("prerelease",false)))
+                    throw new IOException("Release nao aprovada.");
+                if (debug && !BridgeUpdateChannel.isManualTest(release.optBoolean("draft",false),
+                        release.optBoolean("prerelease",false)))
+                    throw new IOException("Release nao identificada como DEBUG.");
                 String tag=release.optString("tag_name", "");
-                int rollout=BridgeRolloutPolicy.percentage(release.optString("body", ""));
+                int rollout=debug ? 0 : BridgeRolloutPolicy.percentage(release.optString("body", ""));
                 long availableCode=GitHubReleaseVersion.versionCode(tag);
                 if(availableCode < 0) throw new IOException("Release sem versao valida: " + tag);
                 PackageManager pm=context.getPackageManager();
                 long currentCode=code(pm.getPackageInfo(context.getPackageName(),0));
-                if(availableCode <= currentCode) {
-                    context.getSharedPreferences(ScanCoordinator.PREFS, Context.MODE_PRIVATE)
-                        .edit().putBoolean(PREF_READY,false).apply();
-                    return null;
-                }
-                context.getSharedPreferences(ScanCoordinator.PREFS, Context.MODE_PRIVATE)
-                    .edit().putInt(PREF_ROLLOUT, rollout).apply();
+                if(availableCode <= currentCode) return null; // Preserve existing cache (incl. DEBUG).
                 JSONArray assets=release.optJSONArray("assets");
                 JSONObject apkAsset=null;
                 String wanted="MLOG-Scanner-Bridge-"+tag+".apk";
@@ -110,8 +140,9 @@ public final class GitHubReleaseUpdater {
                 if(cached.isFile() && tag.equals(sp.getString(PREF_VERSION,""))
                     && expectedHash.equals(sha256(cached))) {
                     verifyApk(pm,context.getPackageName(),cached,availableCode,tag.substring(1));
-                    sp.edit().putBoolean(PREF_READY,true).apply();
-                    return new Update(cached,tag,availableCode);
+                    sp.edit().putBoolean(PREF_READY,true).putBoolean(PREF_DEBUG,debug)
+                        .putInt(PREF_ROLLOUT,rollout).apply();
+                    return new Update(cached,tag,availableCode,debug);
                 }
                 temp=new File(dir,"github-download-temp.apk");
                 String actualHash=downloadApk(url,temp);
@@ -120,8 +151,9 @@ public final class GitHubReleaseUpdater {
                 if(cached.exists() && !cached.delete()) throw new IOException("Nao foi possivel remover APK anterior.");
                 if(!temp.renameTo(cached)) throw new IOException("Nao foi possivel finalizar APK verificado.");
                 temp=null;
-                sp.edit().putString(PREF_VERSION,tag).putBoolean(PREF_READY,true).apply();
-                return new Update(cached,tag,availableCode);
+                sp.edit().putString(PREF_VERSION,tag).putBoolean(PREF_READY,true)
+                    .putBoolean(PREF_DEBUG,debug).putInt(PREF_ROLLOUT,rollout).apply();
+                return new Update(cached,tag,availableCode,debug);
             } finally {
                 if(temp!=null) temp.delete();
             }
@@ -148,20 +180,29 @@ public final class GitHubReleaseUpdater {
     private static void postStatus(Callback cb, String text) { UI.post(() -> cb.status(text)); }
 
     public static void checkAndDownload(Activity activity, Callback callback) {
+        checkAndDownload(activity,callback,false);
+    }
+
+    public static void checkDebugAndDownload(Activity activity, Callback callback) {
+        checkAndDownload(activity,callback,true);
+    }
+
+    private static void checkAndDownload(Activity activity, Callback callback, boolean debug) {
         final Context context=activity.getApplicationContext();
         new Thread(() -> {
             try {
-                postStatus(callback, "Consultando GitHub Releases...");
-                Update found=downloadLatest(context);
+                postStatus(callback, debug ? "Consultando versoes DEBUG..." : "Consultando versao aprovada...");
+                Update found=debug ? downloadDebug(context) : downloadLatest(context);
                 if(found==null) {
-                    UI.post(() -> callback.upToDate("Ja esta na ultima versao publicada."));
+                    UI.post(() -> callback.upToDate(debug ? "Ja possui a versao DEBUG mais recente."
+                        : "Ja esta na ultima versao aprovada."));
                 } else {
                     UI.post(() -> callback.ready(found.apk,found.tag));
                 }
             } catch(Exception ex) {
                 UI.post(() -> callback.error(ex.getMessage()==null?"Falha na consulta.":ex.getMessage()));
             }
-        },"bridge-github-update").start();
+        },debug ? "bridge-debug-update" : "bridge-github-update").start();
     }
 
     private static long code(PackageInfo info) {

@@ -24,6 +24,10 @@ public final class BridgeIdleInstallWorker extends Worker {
         try {update=GitHubReleaseUpdater.cachedVerified(ctx);}
         catch(Exception ex) {BridgeUpdater.status(ctx,"APK em cache invalido: "+ex.getMessage());return;}
         if(update==null)return;
+        if(update.debug) {
+            BridgeUpdater.status(ctx,"APK DEBUG aguardando instalacao manual autorizada por senha.");
+            return;
+        }
         int rollout=sp.getInt(GitHubReleaseUpdater.PREF_ROLLOUT,0);
         String androidId=Settings.Secure.getString(ctx.getContentResolver(), Settings.Secure.ANDROID_ID);
         if(!BridgeRolloutPolicy.eligible(androidId,rollout)) {

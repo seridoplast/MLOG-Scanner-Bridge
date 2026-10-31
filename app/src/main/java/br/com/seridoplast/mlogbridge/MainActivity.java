@@ -697,16 +697,17 @@ public final class MainActivity extends Activity {
         String installedVersion="";
         try{installedVersion=getPackageManager().getPackageInfo(getPackageName(),0).versionName;}
         catch(Exception ignored){installedVersion="3.2.3";}
-        title("Sobre","MLOG Bridge TESTE · v"+installedVersion);
+        title("Sobre","MLOG Bridge · v"+installedVersion);
         LinearLayout updates=card();updates.addView(label("Atualizações automáticas",17,ink,true));
-        subtitle(updates,"GitHub Releases → APK corporativo verificado → instalacao pelo Shizuku quando o coletor estiver livre.");
+        subtitle(updates,"Estavel (aprovada): atualizacao automatica. DEBUG (pre-release): somente instalacao manual com senha.");
         check(updates,"Verificar atualizacoes automaticamente",BridgeUpdater.PREF_ENABLED,true);
         check(updates,"Instalar quando o coletor estiver inativo",BridgeUpdater.PREF_INSTALL,true);
-        subtitle(updates,"Liberacao gradual controlada no GitHub (0% a 100%). Com 0%, apenas download/manual. O Bridge nunca instala enquanto o MLOG estiver ativo na tela.");
+        subtitle(updates,"No GitHub, so versoes aprovadas e com rollout maior que 0 podem instalar automaticamente quando o coletor estiver livre.");
         githubUpdateStatus=label("Versão instalada: "+installedVersion+"\n"+
             prefs.getString(BridgeUpdater.LAST_STATUS,"Nenhuma verificacao automatica registrada."),13,muted,false);
         space(updates,9);updates.addView(githubUpdateStatus);
-        button(updates,"Buscar atualizacao agora",true,this::checkGitHubUpdate);
+        button(updates,"Buscar versao aprovada",true,this::checkGitHubUpdate);
+        button(updates,"Buscar DEBUG (com senha)",false,this::checkDebugGitHubUpdate);
         button(updates,"Instalar APK ja baixado pelo Shizuku",false,this::installCachedShizuku);
         subtitle(updates,"Se o Shizuku estiver indisponivel, a instalacao manual pelo Android continua possivel. Mantenha a mesma assinatura do APK.");
         LinearLayout about=card();about.addView(label("Integração local",17,ink,true));
@@ -719,7 +720,43 @@ public final class MainActivity extends Activity {
     private void setUpdateStatus(String text){
         if(githubUpdateStatus!=null) githubUpdateStatus.setText(text);
     }
+    private void requireDebugPassword(Runnable afterUnlock) {
+        if(DebugUpdateAccess.allowed()) { afterUnlock.run(); return; }
+        EditText password=new EditText(this);
+        password.setSingleLine(true);
+        password.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        int padding=dp(18);
+        password.setPadding(padding,padding,padding,padding);
+        new AlertDialog.Builder(this)
+            .setTitle("Autorizar versao DEBUG")
+            .setMessage("Somente testes no coletor piloto. A senha nao e salva no aparelho.")
+            .setView(password)
+            .setPositiveButton("Continuar",(d,w)->{
+                if(DebugUpdateAccess.unlock(password.getText().toString())) afterUnlock.run();
+                else { setUpdateStatus("Senha DEBUG incorreta. Nenhuma instalacao autorizada."); toast("Senha incorreta."); }
+                password.getText().clear();
+            })
+            .setNegativeButton("Cancelar",null).show();
+    }
+
+    private void checkDebugGitHubUpdate() {
+        requireDebugPassword(()->checkGitHubUpdate(true));
+    }
+
     private void installCachedShizuku(){
+        try {
+            GitHubReleaseUpdater.Update update=GitHubReleaseUpdater.cachedVerified(this);
+            if(update==null){setUpdateStatus("Nao ha APK novo no armazenamento.");return;}
+            if(update.debug && !DebugUpdateAccess.allowed()) {
+                requireDebugPassword(this::installCachedShizuku);
+                return;
+            }
+        } catch(Exception ex) {setUpdateStatus("Falha ao validar APK: "+ex.getMessage());return;}
+        installCachedShizukuAuthorized();
+    }
+
+    private void installCachedShizukuAuthorized(){
+
         if(!ShizukuApkInstaller.ready()){
             setUpdateStatus("Shizuku indisponivel. Voce pode instalar pelo Android.");
             new AlertDialog.Builder(this)
@@ -747,10 +784,12 @@ public final class MainActivity extends Activity {
             })
             .setNegativeButton("Cancelar",null).show();
     }
-    private void checkGitHubUpdate(){
+    private void checkGitHubUpdate(){ checkGitHubUpdate(false); }
+    private void checkGitHubUpdate(boolean debug){
+        if(debug && !DebugUpdateAccess.allowed()) {requireDebugPassword(()->checkGitHubUpdate(true));return;}
         if(githubChecking){toast("Verificacao em andamento.");return;}
         githubChecking=true;
-        GitHubReleaseUpdater.checkAndDownload(this,new GitHubReleaseUpdater.Callback(){
+        GitHubReleaseUpdater.Callback callback=new GitHubReleaseUpdater.Callback(){
             @Override public void status(String text){setUpdateStatus(text);}
             @Override public void upToDate(String text){
                 githubChecking=false;setUpdateStatus(text);BridgeUpdater.status(MainActivity.this,text);
@@ -763,25 +802,44 @@ public final class MainActivity extends Activity {
             @Override public void ready(File file,String tag){
                 githubChecking=false;
                 int rollout=prefs.getInt(GitHubReleaseUpdater.PREF_ROLLOUT,0);
-                BridgeUpdater.status(MainActivity.this,"APK "+tag+" verificado, liberacao "+rollout+"%.");
-                setUpdateStatus("APK "+tag+" validado. Rollout automatico: "+rollout+"%.");
+                BridgeUpdater.status(MainActivity.this,"APK "+tag+" verificado ("+(debug?"DEBUG":"ESTAVEL")+").");
+                setUpdateStatus(debug ? "APK DEBUG "+tag+" validado. Instale apenas no piloto."
+                    : "APK ESTAVEL "+tag+" validado. Rollout: "+rollout+"%.");
                 new AlertDialog.Builder(MainActivity.this)
-                    .setTitle("Atualizacao assinada: "+tag)
-                    .setMessage("O APK passou na verificacao de integridade, pacote e certificado. Instalar agora encerra o Bridge por alguns instantes.")
+                    .setTitle((debug?"DEBUG (teste): ":"Atualizacao aprovada: ")+tag)
+                    .setMessage("APK verificado: pacote, hash e assinatura corporativa. "
+                        +(debug?"Esta versao nao sera instalada automaticamente. ":"")
+                        +"Instalar agora reinicia o Bridge.")
                     .setPositiveButton("Instalar via Shizuku",(d,w)->installCachedShizuku())
                     .setNeutralButton("Instalar pelo Android",(d,w)->installVerifiedApk(file))
                     .setNegativeButton("Depois",null).show();
             }
-        });
+        };
+        if(debug) GitHubReleaseUpdater.checkDebugAndDownload(this,callback);
+        else GitHubReleaseUpdater.checkAndDownload(this,callback);
     }
     private void installCachedViaAndroid(){
         try {
             GitHubReleaseUpdater.Update checked=GitHubReleaseUpdater.cachedVerified(this);
             if(checked==null){setUpdateStatus("Nao ha APK atualizado e validado em cache.");return;}
+            if(checked.debug && !DebugUpdateAccess.allowed()) {
+                requireDebugPassword(this::installCachedViaAndroid);
+                return;
+            }
             installVerifiedApk(checked.apk);
         } catch(Exception ex) {setUpdateStatus("Falha ao verificar APK para Android: "+ex.getMessage());}
     }
     private void installVerifiedApk(File apk){
+        try {
+            GitHubReleaseUpdater.Update verified=GitHubReleaseUpdater.cachedVerified(this);
+            if(verified==null || apk==null || !verified.apk.equals(apk)) {
+                setUpdateStatus("Instalacao cancelada: APK nao verificado no cache.");return;
+            }
+            if(verified.debug && !DebugUpdateAccess.allowed()) {
+                requireDebugPassword(()->installVerifiedApk(apk));
+                return;
+            }
+        } catch(Exception ex) {setUpdateStatus("APK invalido: "+ex.getMessage());return;}
         if(apk==null || !apk.isFile()){setUpdateStatus("Arquivo da atualização não encontrado.");return;}
         if(Build.VERSION.SDK_INT>=26 && !getPackageManager().canRequestPackageInstalls()){
             githubPendingInstall=apk;
