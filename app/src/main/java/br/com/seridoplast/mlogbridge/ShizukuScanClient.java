@@ -66,6 +66,9 @@ final class ShizukuScanClient {
         } catch(RuntimeException ex) {return false;}
     }
 
+    /** Nao abrir a camera enquanto ha comandos de leitura na fila Shizuku. */
+    boolean hasPendingScans(){return pending.get()>0;}
+
     /** No coalescing by barcode value: two deliberate reads must remain two. */
     boolean scan(String code) {
         if(!ShizukuScanMode.supported(code)){

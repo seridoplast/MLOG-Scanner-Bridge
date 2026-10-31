@@ -220,11 +220,12 @@ public final class FloatingToolsService extends Service {
             header.addView(button("−",this::collapse));layout.addView(header);
             layout.addView(separator());
             SharedPreferences pref=ScanAssistState.prefs(this);
-            // 1º botão: reaplica a configuração CMX (não exige Shizuku).
+            // 1º botão: reaplica broadcast CMX e recupera a rota do MLOG
+            // abrindo/fechando a camera, se estiver na tela de Separacao.
             TextView reset=button("⟳ Resetar Bipe",()->{
                 boolean ok=NativeScannerController.configure(this);
-                statusText=ok?"Configuração broadcast enviada ao CMX. Teste uma leitura.":
-                    "Não foi possível reaplicar broadcast do CMX.";
+                statusText=ok?"Broadcast CMX reaplicado. Recuperacao do MLOG solicitada.":
+                    "Broadcast CMX nao confirmado. Recuperacao do MLOG solicitada.";
                 android.widget.Toast.makeText(this,statusText,android.widget.Toast.LENGTH_LONG).show();
                 collapse();
                 MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
