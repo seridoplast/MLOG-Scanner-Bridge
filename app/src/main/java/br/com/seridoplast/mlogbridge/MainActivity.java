@@ -63,7 +63,8 @@ public final class MainActivity extends Activity {
     private int primary, primarySoft, surfaceAlt, success, amber, heroBase;
     private LinearLayout root, content, footer;
     private TextView preview, lastStatus, barcodeFormatStatus, barcodeArtifactStatus, barcodeFieldsStatus, serviceState, shizukuSettingsStatus, scannerConnectionStatus;
-    private TextView scannerConnectionTitle, scannerConnectionDot, scanHint, historyCount;
+    private TextView scannerConnectionTitle, scanHint, historyCount;
+    private ImageView scannerConnectionDot;
     private LinearLayout recentReadsList;
     private String lastRenderedRead="";
     private final ArrayDeque<ScanRecord> recentReads = new ArrayDeque<>();
@@ -151,11 +152,13 @@ public final class MainActivity extends Activity {
                 boolean shizuku=prefs.getBoolean(ShizukuScanMode.PREF,false);
                 boolean active=MlogFocusAccessibilityService.current()!=null;
                 boolean ready=shizukuAuthorized();
-                serviceState.setText(!shizuku?"Ative BipXuco em Ajustes":
-                    ready && active?"✓ BipXuco pronto":
-                    !ready?"⚠ Ative o Shizuku":"⚠ Ative a acessibilidade");
-                serviceState.setTextColor(( !shizuku || !ready || !active )?0xffd97706:
-                    active?0xff228b58:muted);
+                boolean statusOk=shizuku && ready && active;
+                serviceState.setText(!shizuku?"Ative Bipe Shizuku em Ajustes":
+                    statusOk?"Bipe Shizuku pronto":
+                    !ready?"Ative o Shizuku":"Ative a acessibilidade");
+                serviceState.setTextColor(statusOk?success:amber);
+                leadingIcon(serviceState,statusOk?R.drawable.ui_check_circle:R.drawable.ui_alert_circle,
+                    statusOk?success:amber,16);
             }
             if(prefs.getBoolean(ShizukuScanMode.PREF,false))
                 ShizukuHealthMonitor.refresh(MainActivity.this);
@@ -292,6 +295,15 @@ public final class MainActivity extends Activity {
         view.setLayoutParams(new LinearLayout.LayoutParams(dp(size),dp(size)));
         return view;
     }
+    private void leadingIcon(TextView view,int res,int tint,int size){
+        android.graphics.drawable.Drawable drawable=getDrawable(res);
+        if(drawable==null)return;
+        drawable=drawable.mutate();
+        drawable.setTint(tint);
+        drawable.setBounds(0,0,dp(size),dp(size));
+        view.setCompoundDrawablesRelative(drawable,null,null,null);
+        view.setCompoundDrawablePadding(dp(8));
+    }
     private TextView capsule(String value,int color,int back){
         TextView v=label(value,11,color,true);
         v.setGravity(Gravity.CENTER);v.setPadding(dp(11),dp(6),dp(11),dp(6));
@@ -334,16 +346,17 @@ public final class MainActivity extends Activity {
         name.setImageResource(darkNow()?R.drawable.brand_name_dark:R.drawable.brand_name_light);
         name.setScaleType(ImageView.ScaleType.FIT_START);
         name.setContentDescription("Seridóplast MLOG Bridge");
-        branding.addView(name,new LinearLayout.LayoutParams(dp(124),dp(29)));
-        branding.addView(label("SCANNER BRIDGE",9,muted,true));
+        branding.addView(name,new LinearLayout.LayoutParams(dp(140),dp(38)));
         LinearLayout.LayoutParams blp=new LinearLayout.LayoutParams(-2,-2);blp.leftMargin=dp(8);
         left.addView(branding,blp);
         head.addView(left,new LinearLayout.LayoutParams(0,-2,1));
-        TextView version=capsule("v3.6.2",primary,primarySoft);
+        TextView version=capsule("v3.6.3",primary,primarySoft);
         LinearLayout.LayoutParams vlp=new LinearLayout.LayoutParams(-2,-2);vlp.rightMargin=dp(8);
         head.addView(version,vlp);
-        TextView moon=label(darkNow()?"☀":"☾",23,ink,false);
-        moon.setGravity(Gravity.CENTER);moon.setBackground(shape(card,line,13));
+        ImageView moon=icon(darkNow()?R.drawable.ui_sun:R.drawable.ui_moon,ink,22);
+        moon.setPadding(dp(11),dp(11),dp(11),dp(11));
+        moon.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        moon.setBackground(shape(card,line,13));
         moon.setContentDescription("Alternar tema com toque na tela");
         moon.setOnTouchListener((v,event)->{
             if(event.getActionMasked()==MotionEvent.ACTION_UP){
@@ -469,7 +482,9 @@ public final class MainActivity extends Activity {
     }
     private void updateSetupStep(TextView t,boolean ready,String name){
         if(t==null)return;
-        t.setText((ready?"✓  ":"○  ")+name+(ready?"  ·  Ativado":"  ·  Configurar"));
+        t.setText(name+(ready?"  ·  Ativado":"  ·  Configurar"));
+        leadingIcon(t,ready?R.drawable.ui_check_circle:R.drawable.ui_circle,
+            ready?success:muted,17);
         t.setTextColor(ready?success:ink);
         t.setBackground(shape(ready?primarySoft:surfaceAlt,ready?0:line,12));
         t.setContentDescription(name+(ready?", concluído":", pendente"));
@@ -501,7 +516,7 @@ public final class MainActivity extends Activity {
         showSetupWarning();
         LinearLayout topCard=card();
         LinearLayout top=row();
-        scannerConnectionDot=label("●",16,success,true);
+        scannerConnectionDot=icon(R.drawable.ui_check_circle,success,22);
         top.addView(scannerConnectionDot);
         LinearLayout topText=column();
         scannerConnectionTitle=label("Leitor detectado",16,ink,true);
@@ -545,7 +560,7 @@ public final class MainActivity extends Activity {
         codePlate.addView(preview);
         lastStatus=label("Nenhuma leitura ainda",12,0xffbdd0ef,false);
         lastStatus.setGravity(Gravity.CENTER);space(codePlate,5);codePlate.addView(lastStatus);
-        serviceState=label("Verificando BipXuco...",12,0xffb9d1fc,false);
+        serviceState=label("Verificando Bipe Shizuku...",12,0xffb9d1fc,false);
         serviceState.setGravity(Gravity.CENTER);space(testCard,12);testCard.addView(serviceState);
         LinearLayout actions=row();actions.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams alp=new LinearLayout.LayoutParams(-1,-2);alp.topMargin=dp(17);
@@ -584,9 +599,12 @@ public final class MainActivity extends Activity {
         boolean ready=available && prefs.getBoolean(ShizukuScanMode.PREF,false)
             && shizukuAuthorized() && accessibilityReady();
         if(scannerConnectionTitle!=null)scannerConnectionTitle.setText(available?"Leitor disponível":"Leitor não detectado");
-        if(scannerConnectionDot!=null)scannerConnectionDot.setTextColor(ready?success:amber);
+        if(scannerConnectionDot!=null){
+            scannerConnectionDot.setImageResource(ready?R.drawable.ui_check_circle:R.drawable.ui_alert_circle);
+            scannerConnectionDot.setColorFilter(ready?success:amber,android.graphics.PorterDuff.Mode.SRC_IN);
+        }
         if(scannerConnectionStatus!=null){
-            scannerConnectionStatus.setText(ready?"BipXuco pronto para testar":
+            scannerConnectionStatus.setText(ready?"Bipe Shizuku pronto para testar":
                 !available?"Serviço CMX não localizado":"Confira Shizuku e acessibilidade");
             scannerConnectionStatus.setTextColor(ready?success:amber);
         }
@@ -668,11 +686,12 @@ public final class MainActivity extends Activity {
         if(shizukuSettingsStatus==null)return;
         boolean ready=shizukuAuthorized();
         boolean accessible=accessibilityReady();
-        shizukuSettingsStatus.setText(ready && accessible?
-            "✓ Pronto":
-            !ready?"⚠ Inicie o Shizuku":
-            "⚠ Ative a acessibilidade");
-        shizukuSettingsStatus.setTextColor(ready && accessible?success:amber);
+        boolean statusOk=ready && accessible;
+        shizukuSettingsStatus.setText(statusOk?"Pronto":
+            !ready?"Inicie o Shizuku":"Ative a acessibilidade");
+        shizukuSettingsStatus.setTextColor(statusOk?success:amber);
+        leadingIcon(shizukuSettingsStatus,statusOk?R.drawable.ui_check_circle:R.drawable.ui_alert_circle,
+            statusOk?success:amber,16);
     }
     private void selectShizukuMode(){
         if(!accessibilityReady()){
@@ -716,7 +735,7 @@ public final class MainActivity extends Activity {
         displayPage();
         ShizukuHealthMonitor.refresh(this);
         ensureShizukuNotificationPermission();
-        toast("BipXuco ativado. Teste uma leitura no MLOG.");
+        toast("Bipe Shizuku ativado. Teste uma leitura no MLOG.");
     }
     private void selectReadMode(){
         if(!NativeScannerController.isInstalled(this)){
@@ -746,7 +765,7 @@ public final class MainActivity extends Activity {
         LinearLayout lineHead=row();
         lineHead.addView(icon(R.drawable.ui_scan,primary,24));
         LinearLayout modeName=column();
-        modeName.addView(label("BipXuco",18,ink,true));
+        modeName.addView(label("Bipe Shizuku",18,ink,true));
         modeName.addView(label("Leitura via Shizuku",12,muted,false));
         LinearLayout.LayoutParams mn=new LinearLayout.LayoutParams(0,-2,1);mn.leftMargin=dp(10);
         lineHead.addView(modeName,mn);mode.addView(lineHead);
@@ -924,13 +943,23 @@ public final class MainActivity extends Activity {
                 String[] labels=new String[items.size()];
                 for(int i=0;i<items.size();i++){
                     GitHubReleaseUpdater.ReleaseInfo item=items.get(i);
-                    labels[i]=item.tag+(item.prerelease?"  ·  TESTE 🔒":"  ·  ESTÁVEL")
+                    labels[i]=item.tag+(item.prerelease?"  ·  TESTE":"  ·  ESTÁVEL")
                         +(item.versionCode<=installed?"  ·  instalada/anterior":"");
                 }
                 setUpdateStatus(items.size()+" versoes encontradas.");
+                android.widget.ArrayAdapter<String> adapter=new android.widget.ArrayAdapter<String>(
+                    MainActivity.this,android.R.layout.simple_list_item_1,labels){
+                    @Override public View getView(int position,View convertView,android.view.ViewGroup parent){
+                        TextView itemView=(TextView)super.getView(position,convertView,parent);
+                        boolean test=items.get(position).prerelease;
+                        leadingIcon(itemView,test?R.drawable.ui_lock:R.drawable.ui_check_circle,
+                            test?amber:success,18);
+                        return itemView;
+                    }
+                };
                 new AlertDialog.Builder(MainActivity.this)
                     .setTitle("Versões disponíveis")
-                    .setItems(labels,(dialog,index)->{
+                    .setAdapter(adapter,(dialog,index)->{
                         GitHubReleaseUpdater.ReleaseInfo choice=items.get(index);
                         if(choice.versionCode<=installed){
                             setUpdateStatus("Versao instalada ou anterior; downgrade bloqueado.");return;

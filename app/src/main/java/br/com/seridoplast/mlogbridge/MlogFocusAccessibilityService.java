@@ -95,7 +95,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     /** Resetar Bipe: chamado apos recolher o painel flutuante. */
     void requestShizukuFocusRecovery(){
         if(!prefs().getBoolean(ShizukuScanMode.PREF,false)){
-            volumeFeedback(true,"Recuperacao por Volume exige BipXuco (Shizuku).");
+            volumeFeedback(true,"Recuperacao por Volume exige Bipe Shizuku (Shizuku).");
             return;
         }
         final int epoch=++recoveryEpoch;

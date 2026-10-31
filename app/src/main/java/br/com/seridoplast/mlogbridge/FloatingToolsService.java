@@ -94,6 +94,19 @@ public final class FloatingToolsService extends Service {
         t.setGravity(Gravity.CENTER);t.setBackground(bg(0xff353535,12));
         t.setOnClickListener(v->cb.run()); return t;
     }
+    private TextView iconButton(String value,int iconRes,Runnable callback){
+        TextView t=button(value,callback);
+        leadingIcon(t,iconRes,0xffffffff,17);
+        return t;
+    }
+    private void leadingIcon(TextView view,int res,int tint,int size){
+        android.graphics.drawable.Drawable drawable=getDrawable(res);
+        if(drawable==null)return;
+        drawable=drawable.mutate();drawable.setTint(tint);
+        drawable.setBounds(0,0,dp(size),dp(size));
+        view.setCompoundDrawablesRelative(drawable,null,null,null);
+        view.setCompoundDrawablePadding(dp(8));
+    }
     private void collapse(){
         try{
             InputMethodManager imm=(InputMethodManager)getSystemService(Context.INPUT_METHOD_SERVICE);
@@ -221,12 +234,12 @@ public final class FloatingToolsService extends Service {
             header.setGravity(Gravity.CENTER_VERTICAL);
             TextView title=label("MLOG • Ferramentas",16,true);
             header.addView(title,new LinearLayout.LayoutParams(0,-2,1));
-            header.addView(button("−",this::collapse));layout.addView(header);
+            header.addView(iconButton("",R.drawable.ui_minus,this::collapse));layout.addView(header);
             layout.addView(separator());
             SharedPreferences pref=ScanAssistState.prefs(this);
             // Reaplica broadcast CMX e tenta recuperar a Conferencia de Venda
             // tocando no Volume e voltando imediatamente, quando homologado.
-            TextView reset=button("⟳ Resetar Bipe",()->{
+            TextView reset=iconButton("Resetar Bipe",R.drawable.ui_refresh,()->{
                 boolean ok=NativeScannerController.configure(this);
                 statusText=ok?"Configuracao CMX enviada. Verificando Volume...":
                     "CMX nao confirmou a configuracao. Verificando Volume...";
@@ -240,7 +253,9 @@ public final class FloatingToolsService extends Service {
             layout.addView(reset,new LinearLayout.LayoutParams(-1,-2));
             if(pref.getBoolean(ShizukuScanMode.PREF,false)){
                 boolean ok=ShizukuHealthMonitor.ready();
-                TextView state=muted(ok?"✓ Shizuku ativo":"⚠ Shizuku parado",12);
+                TextView state=muted(ok?"Shizuku ativo":"Shizuku parado",12);
+                leadingIcon(state,ok?R.drawable.ui_check_circle:R.drawable.ui_alert_circle,
+                    ok?green:red,15);
                 if(!ok)state.setTextColor(red);
                 LinearLayout.LayoutParams statusLp=new LinearLayout.LayoutParams(-1,-2);
                 statusLp.topMargin=dp(6);layout.addView(state,statusLp);
@@ -256,7 +271,7 @@ public final class FloatingToolsService extends Service {
             // O recurso protegido só aparece no flutuante quando liberado em Ajustes.
             if(ScanAssistState.isBatch(this)){
             layout.addView(separator());
-            TextView batchTitle=button("Bipes automáticos  ▾",()->{
+            TextView batchTitle=iconButton("Bipes automáticos",R.drawable.ui_chevron_down,()->{
                 batchDrawerOpen=!batchDrawerOpen;
                 draw(true);
             });
@@ -281,7 +296,7 @@ public final class FloatingToolsService extends Service {
                 amount.setText(String.valueOf(ScanAssistState.clamp(pref.getInt(ScanAssistState.COUNT,1))));
                 row.addView(amount,new LinearLayout.LayoutParams(dp(65),dp(48)));
                 drawer.addView(row,rlp);
-                TextView arm=button("▶ Armar próximo bipe",()->{
+                TextView arm=iconButton("Armar próximo bipe",R.drawable.ui_play,()->{
                     int count;
                     try{count=Integer.parseInt(amount.getText().toString());}
                     catch(NumberFormatException ex){count=0;}
@@ -307,7 +322,7 @@ public final class FloatingToolsService extends Service {
                 });
                 LinearLayout.LayoutParams alp=new LinearLayout.LayoutParams(-1,-2);
                 alp.topMargin=dp(12);drawer.addView(arm,alp);
-                TextView stop=button("■ Cancelar bipes automáticos",()->{
+                TextView stop=iconButton("Cancelar bipes automáticos",R.drawable.ui_square,()->{
                     pref.edit().putBoolean(ScanAssistState.ARMED,false).apply();
                     MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
                     if(svc!=null)svc.cancelAutoCount("Bipes automáticos cancelados.");
