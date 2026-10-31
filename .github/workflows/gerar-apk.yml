@@ -249,7 +249,7 @@ jobs:
              "app/build/outputs/apk/release/MLOG-Scanner-Bridge-v${VERSION}.apk"
 
       - name: Publicar Release vN.N.N com APK assinado
-        if: github.event_name == 'workflow_dispatch' && inputs.publish_release && github.event.repository.private == false
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -260,6 +260,11 @@ jobs:
             echo '::error::versionName precisa seguir N.N.N, ex.: 3.2.3'
             exit 1
           }
+          # Push publica com rollout 0: primeiro validar no coletor piloto.
+          ROLLOUT_PERCENT=0
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            ROLLOUT_PERCENT="${{ inputs.rollout_percent }}"
+          fi
           TAG="v${VERSION}"
           ASSET="app/build/outputs/apk/release/MLOG-Scanner-Bridge-${TAG}.apk"
           test -s "$ASSET"
@@ -268,7 +273,7 @@ jobs:
           else
             gh release create "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" --title "MLOG Scanner Bridge ${TAG}" \
-              --notes "rollout=${{ inputs.rollout_percent }}" \
+              --notes "rollout=${ROLLOUT_PERCENT}" \
               --latest
           fi
 
