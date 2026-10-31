@@ -156,8 +156,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         },VOLUME_DEBOUNCE_MS);
     }
 
-    /** Somente a Conferencia de Venda em 720x1440 foi homologada para
-     * estes dois toques. Outras telas nunca recebem esta sequencia. */
+    /** Piloto 720x1440: Conferencia de Venda OU Separacao, desde que
+     * o cabecalho e o botao Volume exato estejam expostos na arvore.
+     * Os toques ficam bloqueados em telas/modalidades desconhecidas. */
     private boolean isVolumeRecoveryReady(AccessibilityNodeInfo root){
         if(root==null || root.getPackageName()==null ||
            !ScanCoordinator.TARGET.contentEquals(root.getPackageName()))return false;
@@ -167,8 +168,11 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         // O segundo toque usa coordenada fixa para a seta do MLOG. Jamais
         // executar em outros tamanhos ou telas, mesmo com um botao Volume.
         return VolumeRecoveryTarget.isReferenceSize(size.x,size.y) &&
-            VolumeRecoveryTarget.isConference(info.screen,
-                info.hasConferencePageTitle,info.hasConferenceProductAction);
+            (VolumeRecoveryTarget.isConference(info.screen,
+                info.hasConferencePageTitle,info.hasConferenceProductAction) ||
+             VolumeRecoveryTarget.isSeparation(info.screen,
+                info.hasSeparationHeader,info.hasSeparationControls,
+                info.hasVolumeHeaderLabel,info.hasVolumeHeaderButton));
     }
 
     private void volumeFeedback(boolean manual,String message){
@@ -2523,6 +2527,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         String screen="desconhecida";
         boolean login,hasActivitiesTitle,hasConferenceTitle,hasConsultation,dialog,noActivities,hasStart,hasQuantity,hasSeparationControls,hasOrderTitle;
         boolean hasConferencePageTitle,hasConferenceInitialPrompt,hasConferenceProductAction,hasEntryConferenceTitle;
+        boolean hasSeparationHeader,hasVolumeHeaderLabel,hasVolumeHeaderButton;
         AccessibilityNodeInfo keyboard,searchField;
         final List<AccessibilityNodeInfo> editors=new ArrayList<>();
         final List<AccessibilityNodeInfo> clicks=new ArrayList<>();
@@ -2542,6 +2547,18 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         for(AccessibilityNodeInfo n:nodes){
             if(!n.isVisibleToUser())continue;
             String t=tag(n);
+            // O diagnostico de 31/10 mostrou que a tela usada era "Separacao",
+            // e nao "Conferencia de Venda". O botao Volume existe em ambas.
+            if("separacao".equals(t.trim()))v.hasSeparationHeader=true;
+            if(t.contains("volume:"))v.hasVolumeHeaderLabel=true;
+            CharSequence nodeClass=n.getClassName();
+            if(n.isClickable() && n.isEnabled() && nodeClass!=null &&
+               "android.widget.Button".contentEquals(nodeClass)){
+                Rect rect=new Rect();n.getBoundsInScreen(rect);
+                if(VolumeRecoveryTarget.isVerifiedHeaderButton(
+                    rect.left,rect.top,rect.right,rect.bottom))
+                    v.hasVolumeHeaderButton=true;
+            }
             if(has(t,"bipar atividades de separacao","bipar atividade de separacao","bipar atividades"))v.hasActivitiesTitle=true;
             if(has(t,"nenhuma atividade registrada"))v.noActivities=true;
             if(has(t,"iniciar"))v.hasStart=true;

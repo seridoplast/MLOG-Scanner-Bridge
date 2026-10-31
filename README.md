@@ -2,7 +2,7 @@
 
 Aplicativo Android para os coletores CMX TC60 (Android 14), integrando o scanner físico ao **MLOG** por broadcast e, no modo escolhido pelo operador, comandos pelo **Shizuku**.
 
-**Versão do projeto:** `3.5.5` · **Repositório:** `seridoplast/MLOG-Scanner-Bridge` · **Pacote:** `br.com.seridoplast.mlogbridge`.
+**Versão do projeto:** `3.5.6` · **Repositório:** `seridoplast/MLOG-Scanner-Bridge` · **Pacote:** `br.com.seridoplast.mlogbridge`.
 
 ## Funcionalidades
 
@@ -22,18 +22,18 @@ Aplicativo Android para os coletores CMX TC60 (Android 14), integrando o scanner
 
 O Shizuku precisa de inicialização adequada após reinicializações. O atualizador **não consegue iniciar o serviço Shizuku sozinho**. A instalação silenciosa depende também do comportamento do firmware CMX, que deve ser validado no aparelho piloto.
 
-## Teste piloto — v3.5.5 (recuperacao rapida por Volume)
+## Teste piloto — v3.5.6 (recuperacao rapida por Volume)
 
 **Base:** v3.5.4 corrigida derivada do projeto enviado; preserva o instalador Shizuku que ja foi validado no coletor.
 
-- `versionName`: `3.5.5`; `versionCode`: `1030505` (anterior: `1030504`).
+- `versionName`: `3.5.6`; `versionCode`: `1030505` (anterior: `1030504`).
 - **Mudanca:** trocar o retorno por KEYEVENT BACK pelo toque na seta interna do MLOG, mantendo o gatilho apos fechar o teclado: um toque no icone **Volume** seguido de toque na **seta de voltar do MLOG**.
 - **Tela homologada por print:** **Conferencia de Venda**, com titulo e botao "BIPAR PRODUTOS", em **720x1440**, alvo de abertura **(648,175)** e toque de retorno **(55,103)**. Em outras telas ou resolucoes, a acao e ignorada por seguranca.
 - **Rapidez:** pausa experimental de **10 ms entre os comandos**. Sao executados em **uma sessao shell pelo Shizuku**, em vez de dois processos separados com a antiga pausa de 950 ms. **Nao ha garantia de tempo total abaixo de 100 ms**: o Android, o shell e o Flutter adicionam latencia e a navegacao pode levar mais tempo. Se a seta for tocada cedo demais, pode ser necessario aumentar a pausa numa proxima versao.
 - **Gatilho:** fechamento do teclado real (observacao de janelas de acessibilidade); debounce reduzido para 60 ms e polling de reserva a cada 120 ms. Ainda existem salvaguardas de leitura pendente, texto nao enviado, overlay, Shizuku indisponivel e intervalo de recuperacao.
 - A recuperacao **nao injeta nem repete codigos ou Enter**, e nao promete confirmar o retorno da rota Flutter: o teste em hardware deve validar se a conferencia continua intacta e as leituras voltam.
 - **Configuracao:** Ajustes > Bipe Shizuku > "Recuperar leitura ao fechar teclado (Volume)". O botao flutuante "Resetar Bipe" tambem tenta a recuperacao em tela compativel. **O fechamento do teclado serve como gatilho heuristico; o Bridge nao tem confirmacao geral do MLOG de leitura ignorada.**
-- O pipeline do GitHub faz **Release `v3.5.5` com `rollout=0`** no push para `main`. Instale manualmente no coletor piloto e **nao libere o rollout** ate confirmar a navegacao e a ausencia de efeitos colaterais.
+- O pipeline do GitHub faz **Release `v3.5.6` com `rollout=0`** no push para `main`. Instale manualmente no coletor piloto e **nao libere o rollout** ate confirmar a navegacao e a ausencia de efeitos colaterais.
 
 ### Passo de verificacao de uma versao piloto
 
@@ -119,3 +119,17 @@ A atualização automática não substitui MDM nem é infalível: o Android cont
 `app/` — Android Java e recursos · `.github/workflows/gerar-apk.yml` — testes e build/Release · `tests/` — testes Java · `branding/` e `assets/` — imagens · `README.md` — documentação.
 
 Não há outros documentos `.md`/`.txt` versionados neste pacote.
+
+
+### v3.5.6 - recuperacao por Volume na Separacao
+
+O diagnostico do coletor identificou a tela **Separacao**, enquanto a v3.5.5
+bloqueava a recuperacao por permitir apenas Conferencia de Venda. A rotina
+Volume (648,175) -> 10 ms -> seta (55,103) agora aceita **Separacao** somente
+quando a arvore de acessibilidade confirma o titulo, os controles da separacao,
+o rotulo Volume e o botao de cabecalho na posicao homologada (720x1440).
+Mantidos Shizuku, assinatura corporativa, instalacao e rollout.
+
+**Importante:** o acionamento automatico atual e o fechamento do teclado;
+nao ha comprovacao universal de leitura ignorada pelo MLOG. Use Resetar Bipe
+para acionar manualmente se a falha ocorrer sem evento do teclado.

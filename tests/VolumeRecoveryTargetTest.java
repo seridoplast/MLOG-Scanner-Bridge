@@ -4,6 +4,16 @@ public final class VolumeRecoveryTargetTest {
     public static void main(String[] args){
         yes(VolumeRecoveryTarget.isConference("conferencia_produto",true,true));
         yes(!VolumeRecoveryTarget.isConference("separacao",true,true));
+        // Diagnostico real: tela Separacao, rotulo Volume, botao (616,140)-(664,188).
+        yes(VolumeRecoveryTarget.isVerifiedHeaderButton(616,140,664,188));
+        yes(VolumeRecoveryTarget.isSeparation("separacao",true,true,true,true));
+        yes(!VolumeRecoveryTarget.isSeparation("separacao",false,true,true,true));
+        yes(!VolumeRecoveryTarget.isSeparation("separacao",true,false,true,true));
+        yes(!VolumeRecoveryTarget.isSeparation("separacao",true,true,false,true));
+        yes(!VolumeRecoveryTarget.isSeparation("separacao",true,true,true,false));
+        yes(!VolumeRecoveryTarget.isSeparation("atividades",true,true,true,true));
+        yes(!VolumeRecoveryTarget.isVerifiedHeaderButton(558,268,654,364));
+        yes(!VolumeRecoveryTarget.isVerifiedHeaderButton(616,550,664,598));
         yes(!VolumeRecoveryTarget.isConference("conferencia_inicio",true,true));
         yes(!VolumeRecoveryTarget.isConference("conferencia_produto",false,true));
         yes(!VolumeRecoveryTarget.isConference("conferencia_produto",true,false));

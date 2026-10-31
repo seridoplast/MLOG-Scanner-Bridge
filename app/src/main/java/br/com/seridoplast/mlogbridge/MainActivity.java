@@ -579,7 +579,7 @@ public final class MainActivity extends Activity {
         if(shizuku){
             check(modeShizuku,"Recuperar leitura ao fechar teclado (Volume)",
                 "camera_auto_recovery_v348",true);
-            subtitle(modeShizuku,"Na Conferencia de Venda (720x1440): toca Volume (648,175), " +
+            subtitle(modeShizuku,"Em Conferencia de Venda ou Separacao (720x1440): toca Volume (648,175), " +
                 "aguarda 10 ms e toca a seta interna do MLOG (55,103), via Shizuku. " +
                 "Acionado ao fechar o teclado; nao confirma leitura ignorada pelo MLOG. " +
                 "Disponivel tambem no botao Resetar Bipe. Desative se interferir.");

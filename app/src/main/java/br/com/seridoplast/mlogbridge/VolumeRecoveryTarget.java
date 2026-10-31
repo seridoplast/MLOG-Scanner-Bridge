@@ -1,8 +1,9 @@
 package br.com.seridoplast.mlogbridge;
 
 /**
- * Alvo experimental do botao Volume na Conferencia de Venda (print 720x1440).
- * Nao presumir o mesmo icone em outras telas do MLOG.
+ * Alvo experimental do botao Volume em Conferencia de Venda e Separacao.
+ * O diagnostico XML 31/10 confirmou o botao [616,140][664,188]
+ * no cabecalho da Separacao 720x1440. Nada de coordenadas em outras telas.
  * Sem dependencias Android para permitir testes no CI.
  */
 final class VolumeRecoveryTarget {
@@ -20,6 +21,25 @@ final class VolumeRecoveryTarget {
 
     static boolean isConference(String screen,boolean hasPageTitle,boolean hasProductAction){
         return "conferencia_produto".equals(screen) && hasPageTitle && hasProductAction;
+    }
+
+    /** A tela Separacao so e permitida com 4 sinais independentes.
+     * Nao aceitar telas de atividade, dialogos ou outras janelas. */
+    static boolean isSeparation(String screen,boolean hasHeader,
+        boolean hasControls,boolean hasVolumeLabel,boolean hasHeaderButton){
+        return "separacao".equals(screen) && hasHeader && hasControls &&
+            hasVolumeLabel && hasHeaderButton;
+    }
+
+    /** O toque homologado precisa cair num botao pequeno do cabecalho.
+     * Valores observados no dump XML: [616,140][664,188]. */
+    static boolean isVerifiedHeaderButton(int left,int top,int right,int bottom){
+        int width=right-left, height=bottom-top;
+        return width>=24 && width<=110 && height>=24 && height<=110 &&
+            left<=x(REFERENCE_WIDTH) && right>x(REFERENCE_WIDTH) &&
+            top<=y(REFERENCE_HEIGHT) && bottom>y(REFERENCE_HEIGHT) &&
+            nearHeaderVolume((left+right)/2,(top+bottom)/2,
+                REFERENCE_WIDTH,REFERENCE_HEIGHT);
     }
 
     static boolean isReferenceSize(int width,int height){
