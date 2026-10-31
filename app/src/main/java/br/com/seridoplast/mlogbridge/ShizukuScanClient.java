@@ -3,12 +3,15 @@ package br.com.seridoplast.mlogbridge;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.util.Log;
+import android.os.Handler;
+import android.os.Looper;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicBoolean;
 import rikka.shizuku.Shizuku;
 import rikka.shizuku.ShizukuRemoteProcess;
 
@@ -27,6 +30,8 @@ final class ShizukuScanClient {
         return thread;
     });
     private final AtomicInteger pending=new AtomicInteger();
+    private final AtomicBoolean cameraBusy=new AtomicBoolean(false);
+    private final Handler main=new Handler(Looper.getMainLooper());
     private volatile boolean attached;
     private final Shizuku.OnBinderDeadListener died;
     private final Shizuku.OnBinderReceivedListener arrived;
@@ -67,12 +72,16 @@ final class ShizukuScanClient {
     }
 
     /** Nao abrir a camera enquanto ha comandos de leitura na fila Shizuku. */
-    boolean hasPendingScans(){return pending.get()>0;}
+    boolean hasPendingScans(){return pending.get()>0 || cameraBusy.get();}
 
     /** No coalescing by barcode value: two deliberate reads must remain two. */
     boolean scan(String code) {
         if(!ShizukuScanMode.supported(code)){
             ScanCoordinator.status(context,"Formato do codigo nao suportado; leitura bloqueada.");
+            return false;
+        }
+        if(cameraBusy.get()){
+            ScanCoordinator.status(context,"Recuperacao da camera em andamento. Bipe novamente depois.");
             return false;
         }
         if(!ready()){
@@ -118,12 +127,61 @@ final class ShizukuScanClient {
         }
     }
 
+    interface CameraRecoveryCallback {
+        void onComplete(boolean tapOk,boolean backOk);
+    }
+
+    /** Repete os dois comandos ADB validados no CMX, sem shell -c. */
+    boolean recoverCamera(int x,int y,int pauseMs,CameraRecoveryCallback callback){
+        if(callback==null || x<1 || y<1 || x>4096 || y>4096 ||
+           pauseMs<350 || pauseMs>1800 || !ready() || pending.get()!=0 ||
+           !cameraBusy.compareAndSet(false,true))return false;
+        try{
+            worker.execute(()->{
+                boolean tapped=false,backed=false;
+                try{
+                    if(!ready())return;
+                    tapped=runRemoteInput("tap",String.valueOf(x),String.valueOf(y));
+                    Log.i("MLOGBridge",tapped?"CAMERA_SHIZUKU_TAP_OK":"CAMERA_SHIZUKU_TAP_FAILED");
+                    if(tapped){
+                        Thread.sleep(pauseMs);
+                        if(ready())backed=runRemoteInput("keyevent","4");
+                        Log.i("MLOGBridge",backed?"CAMERA_SHIZUKU_BACK_OK":"CAMERA_SHIZUKU_BACK_FAILED");
+                    }
+                }catch(Exception ex){
+                    if(ex instanceof InterruptedException)Thread.currentThread().interrupt();
+                    Log.w("MLOGBridge","CAMERA_SHIZUKU_COMMAND_FAILED",ex);
+                }finally{
+                    final boolean tapResult=tapped,backResult=backed;
+                    cameraBusy.set(false);
+                    main.post(()->callback.onComplete(tapResult,backResult));
+                }
+            });
+            return true;
+        }catch(RuntimeException ex){
+            cameraBusy.set(false);
+            Log.w("MLOGBridge","CAMERA_SHIZUKU_QUEUE_FAILED",ex);
+            return false;
+        }
+    }
+
     private boolean runInput(String operation,String argument) throws Exception {
         if(!"text".equals(operation) && !"keyevent".equals(operation))return false;
+        return runRemoteInput(operation,argument);
+    }
+
+    /** Argumentos separados: nunca interpretar codigos como comando de shell. */
+    private boolean runRemoteInput(String operation,String... arguments) throws Exception {
+        if(!"text".equals(operation) && !"keyevent".equals(operation) &&
+           !"tap".equals(operation))return false;
+        if("tap".equals(operation) && arguments.length!=2)return false;
+        if(!"tap".equals(operation) && arguments.length!=1)return false;
         final Method method=Shizuku.class.getDeclaredMethod("newProcess",
                 String[].class,String[].class,String.class);
         method.setAccessible(true);
-        final String[] argv={"/system/bin/input",operation,argument};
+        final String[] argv=new String[arguments.length+2];
+        argv[0]="/system/bin/input";argv[1]=operation;
+        System.arraycopy(arguments,0,argv,2,arguments.length);
         Object result;
         try {
             result=method.invoke(null,(Object)argv,null,null);

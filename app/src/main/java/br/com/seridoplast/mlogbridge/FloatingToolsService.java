@@ -30,6 +30,10 @@ import android.widget.TextView;
 public final class FloatingToolsService extends Service {
     private static FloatingToolsService visible;
     static boolean isRunning(){return visible!=null && visible.view!=null;}
+    static boolean isBatchInputOpen(){
+        FloatingToolsService svc=visible;
+        return svc!=null && svc.expanded && svc.batchDrawerOpen && ScanAssistState.isBatch(svc);
+    }
     private final Handler main = new Handler(Looper.getMainLooper());
     private WindowManager wm;
     private WindowManager.LayoutParams params;
@@ -224,12 +228,14 @@ public final class FloatingToolsService extends Service {
             // abrindo/fechando a camera, se estiver na tela de Separacao.
             TextView reset=button("⟳ Resetar Bipe",()->{
                 boolean ok=NativeScannerController.configure(this);
-                statusText=ok?"Broadcast CMX reaplicado. Recuperacao do MLOG solicitada.":
-                    "Broadcast CMX nao confirmado. Recuperacao do MLOG solicitada.";
-                android.widget.Toast.makeText(this,statusText,android.widget.Toast.LENGTH_LONG).show();
+                statusText=ok?"Configuracao CMX enviada. Verificando camera...":
+                    "CMX nao confirmou a configuracao. Verificando camera...";
                 collapse();
                 MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
                 if(svc!=null)svc.requestShizukuFocusRecovery();
+                else android.widget.Toast.makeText(this,
+                    "Acessibilidade do Bridge desligada; nao foi possivel recuperar.",
+                    android.widget.Toast.LENGTH_LONG).show();
             });
             layout.addView(reset,new LinearLayout.LayoutParams(-1,-2));
             if(pref.getBoolean(ShizukuScanMode.PREF,false)){
