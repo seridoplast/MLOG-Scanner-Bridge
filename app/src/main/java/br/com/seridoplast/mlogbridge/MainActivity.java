@@ -66,7 +66,7 @@ public final class MainActivity extends Activity {
         if(code!=SHIZUKU_REQUEST)return;
         handler.post(()->{
             if(result==android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                toast("Shizuku autorizado. Toque em Ativar Bipe Shizuku.");
+                toast("Shizuku autorizado.");
             } else toast("Shizuku nao autorizado. O modo atual foi mantido.");
             if(!isFinishing())displayPage();
         });
@@ -123,12 +123,10 @@ public final class MainActivity extends Activity {
                 boolean shizuku=prefs.getBoolean(ShizukuScanMode.PREF,false);
                 boolean active=MlogFocusAccessibilityService.current()!=null;
                 boolean ready=shizukuAuthorized();
-                serviceState.setText(shizuku?(ready && active?"✓ Scanner pronto: Shizuku + acessibilidade":
-                    !ready?"⚠ Scanner indisponível: abra o Shizuku e toque em Iniciar":
-                        "⚠ Shizuku ligado; ative a acessibilidade do Bridge"):
-                    active?"✓ Bipe Normal: acessibilidade ativa":
-                    "⚠ Bipe Normal: acessibilidade desativada");
-                serviceState.setTextColor(shizuku && (!ready || !active)?0xffd97706:
+                serviceState.setText(!shizuku?"Ative Bipe XU em Ajustes":
+                    ready && active?"✓ Scanner pronto":
+                    !ready?"⚠ Ative o Shizuku":"⚠ Ative a acessibilidade");
+                serviceState.setTextColor(( !shizuku || !ready || !active )?0xffd97706:
                     active?0xff228b58:muted);
             }
             if(prefs.getBoolean(ShizukuScanMode.PREF,false))
@@ -171,6 +169,15 @@ public final class MainActivity extends Activity {
         if(!ScanAssistState.AUTO_BIPS_ENABLED){
             prefs.edit().putBoolean(ScanAssistState.ARMED,false)
                 .putBoolean(ScanAssistState.BATCH,false).apply();
+        }
+        // v3.5.9: interface usa apenas Shizuku; codigo do Bipe Normal permanece
+        // para compatibilidade, mas nao e selecionavel pela interface.
+        if(!prefs.getBoolean("shizuku_only_v359",false)){
+            prefs.edit().putBoolean("shizuku_only_v359",true)
+                .putBoolean(ShizukuScanMode.PREF,true)
+                .putBoolean(BridgeEnterPolicy.PREFERENCE,false)
+                .putBoolean("guided_taps",false)
+                .putBoolean("layout_fallback",false).apply();
         }
         themeChoice=prefs.getString("theme_choice","auto");
         // Corrige preferencia que podia ter sido alterada por Enter do scanner
@@ -421,47 +428,23 @@ public final class MainActivity extends Activity {
 
     private void home(){
         showSetupWarning();
-        title("Leitura de códigos",prefs.getBoolean(ShizukuScanMode.PREF,false)?
-            "Bipe Shizuku: código + Enter sem abrir teclado.":
-            "Bipe Normal: leitura assistida por acessibilidade.");
-        subtitle(content,"Modo ativo: "+(prefs.getBoolean(ShizukuScanMode.PREF,false)?
-            "Bipe Shizuku":"Bipe Normal"));
+        title("Scanner",null);
         LinearLayout sample=card();
-        TextView statusLabel=label("TESTE DO SCANNER",11,muted,true);sample.addView(statusLabel);
-        space(sample,20);
-        TextView scanner=label("▥",43,ink,true);scanner.setGravity(Gravity.CENTER);sample.addView(scanner);
-        preview=label(lastSample==null?"Aguardando leitura...":BarcodeCleaner.clean(lastSample),19,ink,true);
-        preview.setGravity(Gravity.CENTER);preview.setTextIsSelectable(true);sample.addView(preview);
-        lastStatus=label(scanCount==0?"Aperte o gatilho do coletor":"Leitura "+scanCount,12,muted,false);
-        lastStatus.setGravity(Gravity.CENTER);space(sample,9);sample.addView(lastStatus);
-        barcodeFormatStatus=label("Formato lido: "+(lastSymbology==null?"Aguardando leitura":lastSymbology),14,ink,true);
-        barcodeFormatStatus.setGravity(Gravity.CENTER);
-        space(sample,6);sample.addView(barcodeFormatStatus);
-        space(sample,4);
-        barcodeFieldsStatus=label(lastSample==null?"O CMX ainda não enviou metadados.":
-            BarcodeFormatLabel.UNKNOWN.equals(lastSymbology)?
-                "CMX não informou o tipo. Campos recebidos: "+lastMetadataFields:
-                "Simbologia informada pelo leitor.",11,muted,false);
-        barcodeFieldsStatus.setGravity(Gravity.CENTER);
-        sample.addView(barcodeFieldsStatus);
-        space(sample,10);
-        barcodeArtifactStatus=label(lastSample==null?
-            "Aguardando leitura para verificar caracteres invisíveis.":
-            BarcodeArtifactReport.describe(lastSample),12,muted,false);
-        barcodeArtifactStatus.setGravity(Gravity.CENTER);
-        barcodeArtifactStatus.setTextColor(lastSample!=null &&
-            BarcodeArtifactReport.describe(lastSample).startsWith("Atenção:")?0xffd97706:muted);
-        sample.addView(barcodeArtifactStatus);
-        space(sample,18);
+        sample.addView(label("Última leitura",13,muted,true));
+        preview=label(lastSample==null?"Aguardando...":BarcodeCleaner.clean(lastSample),21,ink,true);
+        preview.setGravity(Gravity.CENTER);preview.setTextIsSelectable(true);
+        space(sample,12);sample.addView(preview);
+        lastStatus=label(scanCount==0?"Pronto para testar":"Leituras: "+scanCount,12,muted,false);
+        lastStatus.setGravity(Gravity.CENTER);sample.addView(lastStatus);
         LinearLayout service=card();
-        service.addView(label("Serviço",17,ink,true));
-        serviceState=label("Verificando acessibilidade...",14,muted,false);
+        service.addView(label("Status do Bridge",17,ink,true));
+        serviceState=label("Verificando...",14,muted,false);
         space(service,8);service.addView(serviceState);
+        button(service,"Abrir MLOG",true,this::openMlog);
         LinearLayout tools=card();
-        tools.addView(label("Ferramentas flutuantes",17,ink,true));
-        subtitle(tools,"Tratador de caracteres e ajustes rápidos.");
-        button(tools,"Ativar / abrir botão flutuante",true,this::openFloatingTools);
-        button(tools,"Desativar botão flutuante",false,()->{
+        tools.addView(label("Ferramentas",17,ink,true));
+        button(tools,"Abrir botão flutuante",true,this::openFloatingTools);
+        button(tools,"Desligar botão flutuante",false,()->{
             stopService(new Intent(this,FloatingToolsService.class));
             prefs.edit().putBoolean("floating_auto_start_v302",false)
                 .putBoolean(ScanAssistState.CLEAN,false)
@@ -469,8 +452,6 @@ public final class MainActivity extends Activity {
                 .putBoolean(ScanAssistState.ARMED,false).apply();
             toast("Ferramentas desligadas.");
         });
-        button(service,"Abrir MLOG",true,this::openMlog);
-        button(service,"Acessibilidade do Android",false,()->startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
     }
     /** Os tres caminhos sao mutuamente exclusivos:
      * (A) Antigo = broadcast + acessibilidade; (B) Zebra Profile0 = CMX keyboard;
@@ -489,9 +470,9 @@ public final class MainActivity extends Activity {
         boolean ready=shizukuAuthorized();
         boolean accessible=accessibilityReady();
         shizukuSettingsStatus.setText(ready && accessible?
-            "✓ Shizuku conectado; scanner pronto":
-            !ready?"⚠ Shizuku desligado/sem autorização: leituras bloqueadas":
-            "⚠ Shizuku ligado; ative a acessibilidade do Bridge");
+            "✓ Pronto":
+            !ready?"⚠ Inicie o Shizuku":
+            "⚠ Ative a acessibilidade");
         shizukuSettingsStatus.setTextColor(ready && accessible?0xff228b58:0xffd97706);
     }
     private void selectShizukuMode(){
@@ -561,103 +542,32 @@ public final class MainActivity extends Activity {
         toast("Bipe Normal selecionado; modo broadcast solicitado.");
     }
     private void settings(){
-        title("Ajustes","Selecione um modo de leitura.");
-        final boolean shizuku=prefs.getBoolean(ShizukuScanMode.PREF,false);
-        LinearLayout modeShizuku=card();
-        modeShizuku.addView(label(shizuku?"✓ Bipe Shizuku · Ativo":"Bipe Shizuku",18,ink,true));
-        subtitle(modeShizuku,"CMX por broadcast exclusivo → Shizuku (shell) → codigo e Enter. " +
-            "Sem abrir teclado e sem escrever pela acessibilidade. Requer servico Shizuku " +
-            "iniciado e autorizacao; apos reiniciar o coletor, reinicie o Shizuku.");
-        shizukuSettingsStatus=label("Verificando serviço...",13,muted,true);
-        modeShizuku.addView(shizukuSettingsStatus);
+        title("Ajustes",null);
+        LinearLayout mode=card();
+        mode.addView(label("Bipe XU · Shizuku",18,ink,true));
+        shizukuSettingsStatus=label("Verificando...",13,muted,true);
+        mode.addView(shizukuSettingsStatus);
         updateShizukuUiStatus();
-        subtitle(modeShizuku,accessibilityReady()?"✓ Receptor de scanner ativo":
-            "⚠ Ative acessibilidade para receber os broadcasts");
-        button(modeShizuku,shizuku?"✓ Bipe Shizuku selecionado":"Ativar Bipe Shizuku",
-            shizuku,()->selectShizukuMode());
-        button(modeShizuku,"Abrir acessibilidade do Bridge",false,this::openAccessibilitySettings);
-        if(shizuku){
-            check(modeShizuku,"Recuperar leitura ao fechar teclado (Volume)",
-                "camera_auto_recovery_v348",true);
-            subtitle(modeShizuku,"Em Conferencia de Venda ou Separacao (720x1440): toca Volume (648,175), " +
-                "aguarda 10 ms e toca a seta interna do MLOG (55,103), via Shizuku. " +
-                "Acionado ao fechar o teclado; nao confirma leitura ignorada pelo MLOG. " +
-                "Disponivel tambem no botao Resetar Bipe. Desative se interferir.");
-            button(modeShizuku,"Reaplicar broadcast exclusivo no CMX",false,()->
-                toast(NativeScannerController.configure(this)?"Comandos enviados.":
-                    "Falha ao configurar scanner."));
-            subtitle(modeShizuku,"O modo testa exatamente os comandos ADB que funcionaram. " +
-                "O envio pode ser mais lento por usar o executavel input do Android. " +
-                "Codigo injetado nao confirma registro no MLOG; confira a conferencia.");
-        }
-        LinearLayout modeOld=card();
-        modeOld.addView(label(shizuku?"Bipe Normal":"✓ Bipe Normal · Ativo",18,ink,true));
-        subtitle(modeOld,"Leitor nativo + foco e Enter pela acessibilidade.");
-        button(modeOld,shizuku?"Ativar Bipe Normal":
-            (prefs.getBoolean("legacy_options_expanded_v327",true)?"Ocultar ajustes":"Configurar Bipe Normal"),
-            !shizuku,this::selectReadMode);
-        if(!shizuku && prefs.getBoolean("legacy_options_expanded_v327",true)){
-            space(modeOld,8);
-            check(modeOld,"Leitura assistida","enabled",true);
-            check(modeOld,"Detectar botao de teclado","layout_fallback",true);
-            check(modeOld,"Toques guiados em telas reconhecidas","guided_taps",true);
-            check(modeOld,"Enter pelo Bridge",BridgeEnterPolicy.PREFERENCE,true);
-            check(modeOld,"Repetir ao segurar gatilho 1 s (teste)",
-                NativeScannerController.LONG_HOLD_PREF,false);
-            button(modeOld,"Reaplicar configuracao do leitor",false,()->{
-                boolean ok=NativeScannerController.configure(this);
-                toast(ok?"Comandos enviados ao scanner.":"Nao foi possivel configurar scanner.");
-            });
-            button(modeOld,"Abrir Acessibilidade",false,this::openAccessibilitySettings);
-        }
-        if(!shizuku){
-        LinearLayout tempo=card();
-        tempo.addView(label("Intervalo entre leituras (ms)",17,ink,true));
-        int current=prefs.getInt(ScanAssistState.CLICK_COOLDOWN_MS,100);
-        TextView timeLabel=label("Atual: "+current+" ms",14,ink,true);
-        space(tempo,8);tempo.addView(timeLabel);
-        LinearLayout rowTime=row();
-        EditText value=new EditText(this);
-        value.setInputType(InputType.TYPE_CLASS_NUMBER);
-        value.setSingleLine(true);
-        value.setText(String.valueOf(current));
-        value.setTextColor(ink);
-        rowTime.addView(value,new LinearLayout.LayoutParams(0,dp(54),1));
-        rowTime.addView(label(" ms",13,muted,false));
-        tempo.addView(rowTime);
-        button(tempo,"Aplicar intervalo",true,()->{
-            int ms;
-            try{ms=Integer.parseInt(value.getText().toString().trim());}
-            catch(NumberFormatException ex){toast("Informe um inteiro de 0 ms ou mais.");return;}
-            if(ms<0){toast("Valor nao pode ser negativo.");return;}
-            prefs.edit().putInt(ScanAssistState.CLICK_COOLDOWN_MS,ms).apply();
-            MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
-            if(svc!=null)svc.updateClickCooldownMs(ms);
-            timeLabel.setText("Atual: "+ms+" ms");
-            toast("Intervalo aplicado: "+ms+" ms");
-        });
-        }
+        button(mode,"Ativar / reconectar Shizuku",true,this::selectShizukuMode);
+        button(mode,"Acessibilidade",false,this::openAccessibilitySettings);
+        check(mode,"Recuperar leitura (Volume)","camera_auto_recovery_v348",true);
+        button(mode,"Reconfigurar scanner",false,()->
+            toast(NativeScannerController.configure(this)?"Scanner configurado.":"Falha no scanner."));
         LinearLayout appearance=card();
-        appearance.addView(label("Aparencia",17,ink,true));
+        appearance.addView(label("Aparência",17,ink,true));
         LinearLayout themes=row();
         for(String[] opt:new String[][]{{"auto","Sistema"},{"dark","Escuro"},{"light","Claro"}}){
             TextView choice=action(opt[1],opt[0].equals(themeChoice),()->chooseTheme(opt[0]));
-            LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(0,-2,1);
-            p.leftMargin=dp(4);themes.addView(choice,p);
+            LinearLayout.LayoutParams c=new LinearLayout.LayoutParams(0,-2,1);
+            c.leftMargin=dp(4);themes.addView(choice,c);
         }
         space(appearance,10);appearance.addView(themes);
-        // Ultimo ajuste: protegido por senha, inicialmente desligado em qualquer atualização.
         LinearLayout automatic=card();
         automatic.addView(label("Bipes automáticos",17,ink,true));
-        subtitle(automatic,"1 leitura física e repetições assistidas. No Shizuku, cada repetição exige incremento visível de SEPARADO no mesmo produto.");
         boolean enabled=ScanAssistState.isBatch(this);
-        subtitle(automatic,enabled?"✓ Ativo — configure a quantidade no botão flutuante.":
-            "Desativado — não aparece no botão flutuante.");
-        button(automatic,enabled?"Desativar bipes automáticos":"Ativar com senha",enabled,()->{
+        button(automatic,enabled?"Desativar":"Ativar com senha",enabled,()->{
             if(ScanAssistState.isBatch(this)){
-                ScanAssistState.disable(this);
-                displayPage();
-                toast("Bipes automáticos desativados.");
+                ScanAssistState.disable(this);displayPage();toast("Bipes automáticos desativados.");
             } else requireAutoBipsPassword();
         });
     }
@@ -696,61 +606,28 @@ public final class MainActivity extends Activity {
     private void about(){
         String installedVersion="";
         try{installedVersion=getPackageManager().getPackageInfo(getPackageName(),0).versionName;}
-        catch(Exception ignored){installedVersion="3.2.3";}
-        title("Sobre","MLOG Bridge · v"+installedVersion);
-        LinearLayout updates=card();updates.addView(label("Atualizações automáticas",17,ink,true));
-        subtitle(updates,"Estavel (aprovada): atualizacao automatica. DEBUG (pre-release): somente instalacao manual com senha.");
-        check(updates,"Verificar atualizacoes automaticamente",BridgeUpdater.PREF_ENABLED,true);
-        check(updates,"Instalar quando o coletor estiver inativo",BridgeUpdater.PREF_INSTALL,true);
-        subtitle(updates,"No GitHub, so versoes aprovadas e com rollout maior que 0 podem instalar automaticamente quando o coletor estiver livre.");
-        githubUpdateStatus=label("Versão instalada: "+installedVersion+"\n"+
-            prefs.getString(BridgeUpdater.LAST_STATUS,"Nenhuma verificacao automatica registrada."),13,muted,false);
+        catch(Exception ignored){installedVersion="?";}
+        title("Sobre · v"+installedVersion,null);
+        LinearLayout updates=card();updates.addView(label("Atualizações",17,ink,true));
+        check(updates,"Buscar automaticamente",BridgeUpdater.PREF_ENABLED,true);
+        check(updates,"Instalar quando inativo",BridgeUpdater.PREF_INSTALL,true);
+        githubUpdateStatus=label(prefs.getString(BridgeUpdater.LAST_STATUS,"Aguardando verificação."),13,muted,false);
         space(updates,9);updates.addView(githubUpdateStatus);
-        button(updates,"Buscar versao aprovada",true,this::checkGitHubUpdate);
-        button(updates,"Buscar DEBUG (com senha)",false,this::checkDebugGitHubUpdate);
-        button(updates,"Instalar APK ja baixado pelo Shizuku",false,this::installCachedShizuku);
-        subtitle(updates,"Se o Shizuku estiver indisponivel, a instalacao manual pelo Android continua possivel. Mantenha a mesma assinatura do APK.");
-        LinearLayout about=card();about.addView(label("Integração local",17,ink,true));
-        subtitle(about,"Integração do leitor nativo com o MLOG.");
+        button(updates,"Buscar atualização",true,this::checkGitHubUpdate);
+        button(updates,"Instalar APK baixado",false,this::installCachedShizuku);
         LinearLayout control=card();control.addView(label("Permissões",17,ink,true));
-        button(control,"Informações do app",false,()->startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName()))));
         button(control,"Acessibilidade",false,()->startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
-        subtitle(control,accessibilityReady()?"Acessibilidade: ativa":"Acessibilidade: verificar ou reativar após atualizar");
+        button(control,"Informações do app",false,()->startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            Uri.parse("package:"+getPackageName()))));
     }
     private void setUpdateStatus(String text){
         if(githubUpdateStatus!=null) githubUpdateStatus.setText(text);
     }
-    private void requireDebugPassword(Runnable afterUnlock) {
-        if(DebugUpdateAccess.allowed()) { afterUnlock.run(); return; }
-        EditText password=new EditText(this);
-        password.setSingleLine(true);
-        password.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        int padding=dp(18);
-        password.setPadding(padding,padding,padding,padding);
-        new AlertDialog.Builder(this)
-            .setTitle("Autorizar versao DEBUG")
-            .setMessage("Somente testes no coletor piloto. A senha nao e salva no aparelho.")
-            .setView(password)
-            .setPositiveButton("Continuar",(d,w)->{
-                if(DebugUpdateAccess.unlock(password.getText().toString())) afterUnlock.run();
-                else { setUpdateStatus("Senha DEBUG incorreta. Nenhuma instalacao autorizada."); toast("Senha incorreta."); }
-                password.getText().clear();
-            })
-            .setNegativeButton("Cancelar",null).show();
-    }
-
-    private void checkDebugGitHubUpdate() {
-        requireDebugPassword(()->checkGitHubUpdate(true));
-    }
-
     private void installCachedShizuku(){
         try {
             GitHubReleaseUpdater.Update update=GitHubReleaseUpdater.cachedVerified(this);
             if(update==null){setUpdateStatus("Nao ha APK novo no armazenamento.");return;}
-            if(update.debug && !DebugUpdateAccess.allowed()) {
-                requireDebugPassword(this::installCachedShizuku);
-                return;
-            }
+            if(update.debug){setUpdateStatus("APK de teste: instale via USB.");return;}
         } catch(Exception ex) {setUpdateStatus("Falha ao validar APK: "+ex.getMessage());return;}
         installCachedShizukuAuthorized();
     }
@@ -784,48 +661,35 @@ public final class MainActivity extends Activity {
             })
             .setNegativeButton("Cancelar",null).show();
     }
-    private void checkGitHubUpdate(){ checkGitHubUpdate(false); }
-    private void checkGitHubUpdate(boolean debug){
-        if(debug && !DebugUpdateAccess.allowed()) {requireDebugPassword(()->checkGitHubUpdate(true));return;}
-        if(githubChecking){toast("Verificacao em andamento.");return;}
+    private void checkGitHubUpdate(){
+        if(githubChecking){toast("Verificação em andamento.");return;}
         githubChecking=true;
-        GitHubReleaseUpdater.Callback callback=new GitHubReleaseUpdater.Callback(){
+        GitHubReleaseUpdater.checkAndDownload(this,new GitHubReleaseUpdater.Callback(){
             @Override public void status(String text){setUpdateStatus(text);}
             @Override public void upToDate(String text){
                 githubChecking=false;setUpdateStatus(text);BridgeUpdater.status(MainActivity.this,text);
             }
             @Override public void error(String message){
-                githubChecking=false;
-                setUpdateStatus("Nao foi possivel atualizar: "+message);
+                githubChecking=false;setUpdateStatus("Falha: "+message);
                 BridgeUpdater.status(MainActivity.this,"Falha na verificacao manual: "+message);
             }
             @Override public void ready(File file,String tag){
                 githubChecking=false;
-                int rollout=prefs.getInt(GitHubReleaseUpdater.PREF_ROLLOUT,0);
-                BridgeUpdater.status(MainActivity.this,"APK "+tag+" verificado ("+(debug?"DEBUG":"ESTAVEL")+").");
-                setUpdateStatus(debug ? "APK DEBUG "+tag+" validado. Instale apenas no piloto."
-                    : "APK ESTAVEL "+tag+" validado. Rollout: "+rollout+"%.");
+                setUpdateStatus("Versão "+tag+" pronta.");
                 new AlertDialog.Builder(MainActivity.this)
-                    .setTitle((debug?"DEBUG (teste): ":"Atualizacao aprovada: ")+tag)
-                    .setMessage("APK verificado: pacote, hash e assinatura corporativa. "
-                        +(debug?"Esta versao nao sera instalada automaticamente. ":"")
-                        +"Instalar agora reinicia o Bridge.")
-                    .setPositiveButton("Instalar via Shizuku",(d,w)->installCachedShizuku())
-                    .setNeutralButton("Instalar pelo Android",(d,w)->installVerifiedApk(file))
+                    .setTitle("Atualização "+tag)
+                    .setMessage("APK assinado e verificado. Instalar agora?")
+                    .setPositiveButton("Shizuku",(d,w)->installCachedShizuku())
+                    .setNeutralButton("Android",(d,w)->installVerifiedApk(file))
                     .setNegativeButton("Depois",null).show();
             }
-        };
-        if(debug) GitHubReleaseUpdater.checkDebugAndDownload(this,callback);
-        else GitHubReleaseUpdater.checkAndDownload(this,callback);
+        });
     }
     private void installCachedViaAndroid(){
         try {
             GitHubReleaseUpdater.Update checked=GitHubReleaseUpdater.cachedVerified(this);
             if(checked==null){setUpdateStatus("Nao ha APK atualizado e validado em cache.");return;}
-            if(checked.debug && !DebugUpdateAccess.allowed()) {
-                requireDebugPassword(this::installCachedViaAndroid);
-                return;
-            }
+            if(checked.debug){setUpdateStatus("APK de teste: instale via USB.");return;}
             installVerifiedApk(checked.apk);
         } catch(Exception ex) {setUpdateStatus("Falha ao verificar APK para Android: "+ex.getMessage());}
     }
@@ -835,10 +699,7 @@ public final class MainActivity extends Activity {
             if(verified==null || apk==null || !verified.apk.equals(apk)) {
                 setUpdateStatus("Instalacao cancelada: APK nao verificado no cache.");return;
             }
-            if(verified.debug && !DebugUpdateAccess.allowed()) {
-                requireDebugPassword(()->installVerifiedApk(apk));
-                return;
-            }
+            if(verified.debug){setUpdateStatus("APK de teste: instale via USB.");return;}
         } catch(Exception ex) {setUpdateStatus("APK invalido: "+ex.getMessage());return;}
         if(apk==null || !apk.isFile()){setUpdateStatus("Arquivo da atualização não encontrado.");return;}
         if(Build.VERSION.SDK_INT>=26 && !getPackageManager().canRequestPackageInstalls()){

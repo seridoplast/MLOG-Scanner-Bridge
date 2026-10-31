@@ -47,8 +47,8 @@ final class ShizukuApkInstaller {
             try {
                 GitHubReleaseUpdater.Update update = GitHubReleaseUpdater.cachedVerified(app);
                 if (update == null) throw new IllegalStateException("Nenhuma atualizacao verificada foi baixada.");
-                if(update.debug && !DebugUpdateAccess.allowed())
-                    throw new SecurityException("APK DEBUG requer senha para instalacao manual.");
+                if(update.debug)
+                    throw new SecurityException("APK de teste: instale pelo cabo USB.");
                 status = installVerified(app, update);
                 success = true;
             } catch (Exception ex) {
@@ -73,8 +73,8 @@ final class ShizukuApkInstaller {
             GitHubReleaseUpdater.Update checked = GitHubReleaseUpdater.cachedVerified(context);
             if (checked == null || !checked.tag.equals(update.tag))
                 throw new IllegalStateException("APK nao passou na verificacao de assinatura/versao.");
-            if(checked.debug && !DebugUpdateAccess.allowed())
-                throw new SecurityException("APK DEBUG nao autorizado.");
+            if(checked.debug)
+                throw new SecurityException("APK de teste nao autorizado para instalacao pelo Bridge.");
             File apk = checked.apk;
             long size = apk.length();
             if (size < 50L * 1024L || size > 120L * 1024L * 1024L)

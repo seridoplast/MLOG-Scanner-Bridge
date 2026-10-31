@@ -13,7 +13,11 @@ import androidx.work.WorkerParameters;
 public final class BridgeIdleInstallWorker extends Worker {
     public BridgeIdleInstallWorker(@NonNull Context context,@NonNull WorkerParameters params) {super(context,params);}
     @NonNull @Override public Result doWork() {
-        maybeInstall(getApplicationContext());
+        Context ctx=getApplicationContext();
+        // Agenda a tentativa seguinte ANTES de tentar instalar (o processo pode reiniciar).
+        String current=getInputData().getString("retry_slot");
+        BridgeUpdater.queueInstallRetry(ctx,current);
+        maybeInstall(ctx);
         return Result.success();
     }
     static void maybeInstall(Context ctx) {
@@ -25,7 +29,7 @@ public final class BridgeIdleInstallWorker extends Worker {
         catch(Exception ex) {BridgeUpdater.status(ctx,"APK em cache invalido: "+ex.getMessage());return;}
         if(update==null)return;
         if(update.debug) {
-            BridgeUpdater.status(ctx,"APK DEBUG aguardando instalacao manual autorizada por senha.");
+            BridgeUpdater.status(ctx,"APK de teste nao entra no canal automatico.");
             return;
         }
         int rollout=sp.getInt(GitHubReleaseUpdater.PREF_ROLLOUT,0);
@@ -41,7 +45,7 @@ public final class BridgeIdleInstallWorker extends Worker {
         // Avoid any hot update while a barcode is currently being injected.
         long lastScan=sp.getLong("bridge_last_shizuku_scan_wall",0L);
         long now=System.currentTimeMillis();
-        if(lastScan>0 && (now<lastScan || now-lastScan<5*60*1000L))return;
+        if(lastScan>0 && (now<lastScan || now-lastScan<2*60*1000L))return;
         PowerManager pm=(PowerManager)ctx.getSystemService(Context.POWER_SERVICE);
         boolean interactive=pm!=null && pm.isInteractive();
         if(interactive) {

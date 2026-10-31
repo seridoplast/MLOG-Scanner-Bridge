@@ -4,12 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       publish_release:
-        description: 'Publicar pre-release DEBUG no GitHub?'
+        description: 'Aprovar e publicar Release estavel no GitHub?'
         type: boolean
         required: false
         default: false
       rollout_percent:
-        description: 'Reservado para aprovacao posterior: prerelease sempre usa rollout=0.'
+        description: 'Percentual de distribuicao da Release aprovada.'
         type: choice
         options:
           - '0'
@@ -17,7 +17,7 @@ on:
           - '25'
           - '50'
           - '100'
-        default: '0'
+        default: '100'
         required: false
   push:
     branches:
@@ -239,18 +239,18 @@ jobs:
             tests/GitHubReleaseVersionTest.java
           java -cp /tmp/bridge-release-test br.com.seridoplast.mlogbridge.GitHubReleaseVersionTest
 
-      - name: Testar canais de atualizacao e senha local DEBUG
+      - name: Testar bloqueio de pre-releases no atualizador
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p /tmp/bridge-update-channel-test
-          javac -d /tmp/bridge-update-channel-test \
+          mkdir -p /tmp/bridge-release-policy
+          javac -d /tmp/bridge-release-policy \
             app/src/main/java/br/com/seridoplast/mlogbridge/BridgeUpdateChannel.java \
-            app/src/main/java/br/com/seridoplast/mlogbridge/DebugUpdateAccess.java \
+            app/src/main/java/br/com/seridoplast/mlogbridge/ConfirmationReleasePolicy.java \
             tests/BridgeUpdateChannelTest.java \
-            tests/DebugUpdateAccessTest.java
-          java -cp /tmp/bridge-update-channel-test br.com.seridoplast.mlogbridge.BridgeUpdateChannelTest
-          java -cp /tmp/bridge-update-channel-test br.com.seridoplast.mlogbridge.DebugUpdateAccessTest
+            tests/ConfirmationReleasePolicyTest.java
+          java -cp /tmp/bridge-release-policy br.com.seridoplast.mlogbridge.BridgeUpdateChannelTest
+          java -cp /tmp/bridge-release-policy br.com.seridoplast.mlogbridge.ConfirmationReleasePolicyTest
 
       - name: Testar alternancia Profile0 e eventos IME
         shell: bash
@@ -284,27 +284,38 @@ jobs:
           cp app/build/outputs/apk/release/app-release.apk \
              "app/build/outputs/apk/release/MLOG-Scanner-Bridge-v${VERSION}.apk"
 
-      - name: Publicar PRE-RELEASE DEBUG (nunca elegivel automaticamente)
+      - name: Publicar teste pendente ou aprovar Release estavel
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          APPROVE: ${{ inputs.publish_release || 'false' }}
+          ROLLOUT: ${{ inputs.rollout_percent || '100' }}
         run: |
           set -euo pipefail
           VERSION=$(sed -n "s/^def bridgeVersion = '\([^']*\)'.*/\1/p" app/build.gradle | head -n1)
-          [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
-            echo '::error::versionName precisa seguir N.N.N'
-            exit 1
-          }
+          [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || exit 1
           TAG="v${VERSION}"
           ASSET="app/build/outputs/apk/release/MLOG-Scanner-Bridge-${TAG}.apk"
           test -s "$ASSET"
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "::warning::Release $TAG ja existe. Nunca substituir APK distribuido."
-          else
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$APPROVE" == "true" ]]; then
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              # Promover a MESMA tag e o MESMO APK, sem substituicao.
+              gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" \
+                --prerelease=false --latest --title "MLOG Scanner Bridge ${TAG}" \
+                --notes "rollout=${ROLLOUT}"
+            else
+              gh release create "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" \
+                --target "$GITHUB_SHA" --title "MLOG Scanner Bridge ${TAG}" \
+                --notes "rollout=${ROLLOUT}" --latest
+            fi
+          elif ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # git push por padrao = testavel via USB, sem distribuicao automatica.
             gh release create "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" --title "MLOG Scanner Bridge ${TAG} [DEBUG]" \
+              --target "$GITHUB_SHA" --title "MLOG Scanner Bridge ${TAG}" \
               --notes 'rollout=0' --prerelease
+          else
+            echo "::notice::Tag $TAG ja publicada; nao substituir APK."
           fi
 
       - name: Publicar APK assinado para download

@@ -16,9 +16,10 @@ public final class BridgeAutoUpdateWorker extends Worker {
         try {
             GitHubReleaseUpdater.Update update=GitHubReleaseUpdater.downloadLatest(ctx);
             if(update==null){BridgeUpdater.status(ctx,"Nenhuma nova versao aprovada.");return Result.success();}
-            if(update.debug){BridgeUpdater.status(ctx,"DEBUG ignorada pelo atualizador automatico.");return Result.success();}
+            if(update.debug){BridgeUpdater.status(ctx,"APK de teste ignorado.");return Result.success();}
             BridgeUpdater.status(ctx,"APK "+update.tag+" verificado e pronto (rollout "+
                 sp.getInt(GitHubReleaseUpdater.PREF_ROLLOUT,0)+"%).");
+            BridgeUpdater.queueInstallRetry(ctx,null);
             BridgeIdleInstallWorker.maybeInstall(ctx);
             return Result.success();
         } catch(Exception ex) {
