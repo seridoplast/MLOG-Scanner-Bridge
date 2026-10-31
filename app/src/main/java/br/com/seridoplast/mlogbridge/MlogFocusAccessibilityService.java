@@ -78,6 +78,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     // Nao reenviar qualquer codigo ou Enter durante a recuperacao.
     private static final long VOLUME_DEBOUNCE_MS=60L;
     private static final long VOLUME_KEYBOARD_POLL_MS=120L;
+    // A navegacao Flutter pode reabrir o IME depois do toque de retorno.
+    private static final long VOLUME_IME_SETTLE_MS=120L;
+    private static final long VOLUME_IME_LATE_CHECK_MS=180L;
     private final CameraRecoveryPolicy recoveryPolicy=new CameraRecoveryPolicy();
     private int recoveryEpoch;
     // Ignorar eventos IME transitorios criados pela propria micro-navegacao.
@@ -156,23 +159,22 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         },VOLUME_DEBOUNCE_MS);
     }
 
-    /** Piloto 720x1440: Conferencia de Venda OU Separacao, desde que
-     * o cabecalho e o botao Volume exato estejam expostos na arvore.
-     * Os toques ficam bloqueados em telas/modalidades desconhecidas. */
+    /** Piloto 720x1440: qualquer tela de trabalho que realmente exponha
+     * o rotulo Volume e seu botao nas coordenadas homologadas.
+     * Dialogos e layouts nao reconhecidos continuam bloqueados. */
     private boolean isVolumeRecoveryReady(AccessibilityNodeInfo root){
         if(root==null || root.getPackageName()==null ||
            !ScanCoordinator.TARGET.contentEquals(root.getPackageName()))return false;
         ScreenInfo info=inspect(root);
         if(info.login || info.dialog || isBlockingOverlay(root))return false;
         Point size=realScreenSize();
-        // O segundo toque usa coordenada fixa para a seta do MLOG. Jamais
-        // executar em outros tamanhos ou telas, mesmo com um botao Volume.
+        // Aceita qualquer conferencia/separacao que realmente exponha o mesmo
+        // conjunto do cabecalho (rotulo Volume e botao exato). Nao confiar no
+        // nome da rota Flutter: pode variar entre entrada, pedido e separacao.
+        // O segundo toque ainda e fixo, portanto tamanho nao homologado bloqueia.
         return VolumeRecoveryTarget.isReferenceSize(size.x,size.y) &&
-            (VolumeRecoveryTarget.isConference(info.screen,
-                info.hasConferencePageTitle,info.hasConferenceProductAction) ||
-             VolumeRecoveryTarget.isSeparation(info.screen,
-                info.hasSeparationHeader,info.hasSeparationControls,
-                info.hasVolumeHeaderLabel,info.hasVolumeHeaderButton));
+            VolumeRecoveryTarget.hasVerifiedVolumeHeader(
+                info.hasVolumeHeaderLabel,info.hasVolumeHeaderButton);
     }
 
     private void volumeFeedback(boolean manual,String message){
@@ -191,16 +193,24 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         if(recoveryPolicy.isRecovering()){
             volumeFeedback(manual,"Recuperacao ja em andamento.");return;
         }
-        if(isImeVisible()){
-            volumeFeedback(manual,"Feche o teclado antes de recuperar a leitura.");return;
+        // O diagnostico mostrou fechamento de IME durante a leitura e
+        // RECOVERY_BLOCKED pelo limite antigo de 1s. Reagendar uma unica vez
+        // evita perder a recuperacao sem disputar com o Enter ainda em voo.
+        long sinceScan=now-lastPhysicalShizukuScanAt;
+        if(!manual && sinceScan>=0 && sinceScan<1000L &&
+           !reason.endsWith("_deferred")){
+            final int epoch=recoveryEpoch;
+            main.postDelayed(()->{
+                if(epoch==recoveryEpoch)
+                    startVolumeRecovery(false,reason+"_deferred");
+            },Math.max(100L,1050L-sinceScan));
+            trace("VOLUME_RECOVERY_DEFERRED_AFTER_SCAN");
+            return;
         }
-        // O watcher pode manter estado antigo por ate 120 ms. No botao manual,
-        // o estado REAL do IME prevalece sobre o historico.
-        if(recoveryPolicy.keyboardVisible())recoveryPolicy.resetKeyboard();
         if(shizukuBatchActive || ScanAssistState.isArmed(this) ||
            (shizukuScan!=null && shizukuScan.hasPendingScans()) ||
            !scanQueue.isIdle() || pendingCode!=null ||
-           (!manual && now-lastPhysicalShizukuScanAt<1000L)){
+           (!manual && sinceScan>=0 && sinceScan<1000L)){
             volumeFeedback(manual,"Aguarde o fim das leituras antes de recuperar.");return;
         }
         if(shizukuScan==null || !shizukuScan.ready()){
@@ -224,8 +234,29 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 return;
             }
         }
+        // Se o teclado persistiu aberto (ex.: apos retorno de tela), feche-o
+        // somente com a tela Volume verificada e sem texto pendente. Nunca
+        // enviar BACK a esmo, pois isso poderia sair da conferencia.
+        if(isImeVisible()){
+            if(reason.endsWith("_ime_hidden")){
+                volumeFeedback(manual,"Teclado ainda aberto; nao foi seguro recuperar.");
+                return;
+            }
+            suppressVolumeImeUntil=SystemClock.elapsedRealtime()+850L;
+            if(!performGlobalAction(GLOBAL_ACTION_BACK)){
+                volumeFeedback(manual,"Nao foi possivel fechar o teclado.");return;
+            }
+            trace("VOLUME_RECOVERY_PRE_IME_HIDE_REQUESTED");
+            final int epoch=++recoveryEpoch;
+            main.postDelayed(()->{
+                if(epoch==recoveryEpoch)
+                    startVolumeRecovery(manual,reason+"_ime_hidden");
+            },180L);
+            return;
+        }
+        // O watcher pode manter estado antigo por ate 120 ms.
+        if(recoveryPolicy.keyboardVisible())recoveryPolicy.resetKeyboard();
         // Mesmo par de coordenadas testado manualmente pelo operador.
-        // A tela precisa estar comprovadamente em Conferencia de Venda.
         final int x=VolumeRecoveryTarget.x(size.x);
         final int y=VolumeRecoveryTarget.y(size.y);
         trace("VOLUME_RECOVERY_KNOWN_TAP_648_175");
@@ -243,23 +274,22 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         // Nao ha como confirmar o resultado Flutter nesses 10 ms.
         boolean accepted=shizukuScan.recoverVolume(x,y,
             VolumeRecoveryTarget.PAUSE_MS,ok->{
-                recoveryPolicy.finish();
-                suppressVolumeImeUntil=SystemClock.elapsedRealtime()+800L;
-                recoveryPolicy.resetKeyboard();
-                if(epoch!=recoveryEpoch)return;
+                if(epoch!=recoveryEpoch){recoveryPolicy.finish();return;}
                 if(!ok){
+                    recoveryPolicy.finish();
+                    suppressVolumeImeUntil=SystemClock.elapsedRealtime()+700L;
+                    recoveryPolicy.resetKeyboard();
                     trace("VOLUME_RECOVERY_SEQUENCE_FAILED");
                     volumeFeedback(manual,"Falha na sequencia rapida de Volume pelo Shizuku.");
                     return;
                 }
                 trace("VOLUME_RECOVERY_DOUBLE_TAP_SENT_UNVERIFIED");
-                if(manual)main.postDelayed(()->{
-                    AccessibilityNodeInfo returned=mlogRoot();
-                    String screen=returned==null?"desconhecida":inspect(returned).screen;
-                    volumeFeedback(true,initialScreen.equals(screen)?
-                        "Volume e seta do MLOG acionados. Confira a leitura.":
-                        "Toques enviados; confira se voltou a conferencia.");
-                },150L);
+                // Nao finalizar ainda: o teclado pode reabrir durante o
+                // retorno do Flutter. Manter as leituras bloqueadas ate a
+                // checagem tardia para evitar codigo enviado para o IME.
+                suppressVolumeImeUntil=SystemClock.elapsedRealtime()+1200L;
+                main.postDelayed(()->checkVolumeReturnIme(epoch,manual,initialScreen,0),
+                    VOLUME_IME_SETTLE_MS);
             });
         if(!accepted){
             recoveryPolicy.finish();
@@ -267,6 +297,48 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             volumeFeedback(manual,"Shizuku ocupado ou indisponivel para Volume.");
         }
     }
+    /** Aguarda a volta do Flutter e fecha somente um IME visivel na tela
+     * de origem homologada. Nunca usar BACK se a rota Volume ficou aberta. */
+    private void checkVolumeReturnIme(int epoch,boolean manual,
+            String initialScreen,int pass){
+        if(epoch!=recoveryEpoch){recoveryPolicy.finish();return;}
+        AccessibilityNodeInfo current=mlogRoot();
+        boolean safeOnOrigin=isVolumeRecoveryReady(current);
+        if(safeOnOrigin && isImeVisible()){
+            // O teclado aberto pode consumir o BACK. Aqui ele e intencional:
+            // a seta da tela Volume ja recebeu seu toque via Shizuku.
+            boolean requested=performGlobalAction(GLOBAL_ACTION_BACK);
+            trace(requested?"VOLUME_RECOVERY_POST_IME_HIDE_REQUESTED":
+                "VOLUME_RECOVERY_POST_IME_HIDE_FAILED");
+            main.postDelayed(()->finishVolumeReturn(epoch,manual,initialScreen),200L);
+        }else if(pass==0){
+            // Algumas vezes a abertura do teclado chega depois do retorno.
+            main.postDelayed(()->checkVolumeReturnIme(epoch,manual,initialScreen,1),
+                VOLUME_IME_LATE_CHECK_MS);
+        }else{
+            finishVolumeReturn(epoch,manual,initialScreen);
+        }
+    }
+
+    private void finishVolumeReturn(int epoch,boolean manual,String initialScreen){
+        if(epoch!=recoveryEpoch){recoveryPolicy.finish();return;}
+        boolean keyboardStillOpen=isImeVisible();
+        recoveryPolicy.finish();
+        suppressVolumeImeUntil=SystemClock.elapsedRealtime()+700L;
+        recoveryPolicy.resetKeyboard();
+        trace(keyboardStillOpen?"VOLUME_RECOVERY_IME_STILL_VISIBLE":
+            "VOLUME_RECOVERY_IME_HIDDEN");
+        if(manual){
+            AccessibilityNodeInfo returned=mlogRoot();
+            String screen=returned==null?"desconhecida":inspect(returned).screen;
+            volumeFeedback(true,keyboardStillOpen?
+                "Volume acionado, mas o teclado continua aberto; confira a tela.":
+                (initialScreen.equals(screen)?
+                "Volume e seta do MLOG acionados. Confira a leitura.":
+                "Toques enviados; confira se voltou a conferencia."));
+        }
+    }
+
     // Independente do motor IME antigo. Uma leitura fisica inicia o lote,
     // cada passo seguinte exige incremento visivel de 1 no MESMO produto.
     private boolean shizukuBatchActive;
@@ -476,6 +548,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                     }
                     String raw=ScannerProtocol.barcodeRaw(intent);
                     lastPhysicalShizukuScanAt=SystemClock.elapsedRealtime();
+                    // Cancela recuperacao pendente se houve nova leitura.
+                    ++recoveryEpoch;
                     if(recoveryPolicy.isRecovering()){
                         trace("VOLUME_RECOVERY_SCAN_BLOCKED_NO_REPLAY");
                         status("Leitura durante recuperacao de Volume: nao enviada. Bipe novamente.");
@@ -2550,7 +2624,12 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             // O diagnostico de 31/10 mostrou que a tela usada era "Separacao",
             // e nao "Conferencia de Venda". O botao Volume existe em ambas.
             if("separacao".equals(t.trim()))v.hasSeparationHeader=true;
-            if(t.contains("volume:"))v.hasVolumeHeaderLabel=true;
+            if(t.startsWith("volume:")){
+                Rect volumeLabelBounds=new Rect();n.getBoundsInScreen(volumeLabelBounds);
+                if(VolumeRecoveryTarget.isVerifiedHeaderLabel(volumeLabelBounds.left,
+                    volumeLabelBounds.top,volumeLabelBounds.right,
+                    volumeLabelBounds.bottom))v.hasVolumeHeaderLabel=true;
+            }
             CharSequence nodeClass=n.getClassName();
             if(n.isClickable() && n.isEnabled() && nodeClass!=null &&
                "android.widget.Button".contentEquals(nodeClass)){

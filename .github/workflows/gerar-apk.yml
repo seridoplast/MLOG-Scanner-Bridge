@@ -256,8 +256,11 @@ jobs:
           mkdir -p /tmp/bridge-volume-test
           javac -d /tmp/bridge-volume-test \
             app/src/main/java/br/com/seridoplast/mlogbridge/VolumeRecoveryTarget.java \
-            tests/VolumeRecoveryTargetTest.java
+            app/src/main/java/br/com/seridoplast/mlogbridge/CameraRecoveryPolicy.java \
+            tests/VolumeRecoveryTargetTest.java \
+            tests/CameraRecoveryPolicyTest.java
           java -cp /tmp/bridge-volume-test br.com.seridoplast.mlogbridge.VolumeRecoveryTargetTest
+          java -cp /tmp/bridge-volume-test br.com.seridoplast.mlogbridge.CameraRecoveryPolicyTest
 
       - name: Nomear APK assinado no padrao vN.N.N
         shell: bash

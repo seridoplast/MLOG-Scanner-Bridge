@@ -6,9 +6,9 @@ public final class CameraRecoveryPolicyTest {
         CameraRecoveryPolicy p=new CameraRecoveryPolicy();
         check(!p.observeKeyboard(false,1000),"initial hidden");
         check(!p.observeKeyboard(true,2000),"opening does not recover");
-        check(!p.observeKeyboard(false,2200),"keyboard blink ignored");
+        check(!p.observeKeyboard(false,2070),"keyboard blink ignored");
         check(!p.observeKeyboard(true,3000),"opening");
-        check(p.observeKeyboard(false,3400),"real close recognized");
+        check(p.observeKeyboard(false,3180),"short real close recognized");
         check(p.begin(3900,false),"first automatic recovery");
         check(p.isRecovering(),"running");
         check(!p.begin(4000,true),"manual cannot overlap");

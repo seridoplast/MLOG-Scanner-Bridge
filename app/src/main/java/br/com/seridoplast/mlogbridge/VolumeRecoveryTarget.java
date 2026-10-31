@@ -1,7 +1,7 @@
 package br.com.seridoplast.mlogbridge;
 
 /**
- * Alvo experimental do botao Volume em Conferencia de Venda e Separacao.
+ * Alvo experimental do botao Volume de telas operacionais do MLOG.
  * O diagnostico XML 31/10 confirmou o botao [616,140][664,188]
  * no cabecalho da Separacao 720x1440. Nada de coordenadas em outras telas.
  * Sem dependencias Android para permitir testes no CI.
@@ -19,6 +19,11 @@ final class VolumeRecoveryTarget {
 
     private VolumeRecoveryTarget(){}
 
+    /** Reconhecer cabecalho por elementos reais, nao por nome da rota Flutter. */
+    static boolean hasVerifiedVolumeHeader(boolean volumeLabel,boolean headerButton){
+        return volumeLabel && headerButton;
+    }
+
     static boolean isConference(String screen,boolean hasPageTitle,boolean hasProductAction){
         return "conferencia_produto".equals(screen) && hasPageTitle && hasProductAction;
     }
@@ -29,6 +34,14 @@ final class VolumeRecoveryTarget {
         boolean hasControls,boolean hasVolumeLabel,boolean hasHeaderButton){
         return "separacao".equals(screen) && hasHeader && hasControls &&
             hasVolumeLabel && hasHeaderButton;
+    }
+
+    /** A palavra Volume deve estar junto ao botao do cabecalho, e nao
+     * numa descricao de produto ou num card/modal no restante da pagina. */
+    static boolean isVerifiedHeaderLabel(int left,int top,int right,int bottom){
+        return left>=440 && left<630 && top>=100 && top<=220 &&
+            right>left && right<=675 && bottom>top && bottom<=235 &&
+            right-left<=220 && bottom-top<=85;
     }
 
     /** O toque homologado precisa cair num botao pequeno do cabecalho.

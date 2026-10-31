@@ -6,8 +6,11 @@ package br.com.seridoplast.mlogbridge;
  * Nao confirma leitura nem reenvia codigo algum.
  */
 final class CameraRecoveryPolicy {
-    static final long MIN_KEYBOARD_OPEN_MS=250L;
-    static final long COOLDOWN_MS=7000L;
+    // Uma abertura curta real tambem deve ser detectada; flashes mais rapidos
+    // durante a micro-navegacao sao suprimidos pelo servico.
+    static final long MIN_KEYBOARD_OPEN_MS=150L;
+    // Evita ciclos, mas permite recuperar uma nova interacao poucos segundos depois.
+    static final long COOLDOWN_MS=2500L;
     private boolean keyboardVisible;
     private long keyboardOpenedAt;
     private boolean recovering;

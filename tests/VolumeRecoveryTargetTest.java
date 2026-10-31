@@ -2,10 +2,16 @@ package br.com.seridoplast.mlogbridge;
 public final class VolumeRecoveryTargetTest {
     private static void yes(boolean value){if(!value)throw new AssertionError();}
     public static void main(String[] args){
+        yes(VolumeRecoveryTarget.hasVerifiedVolumeHeader(true,true));
+        yes(!VolumeRecoveryTarget.hasVerifiedVolumeHeader(false,true));
+        yes(!VolumeRecoveryTarget.hasVerifiedVolumeHeader(true,false));
         yes(VolumeRecoveryTarget.isConference("conferencia_produto",true,true));
         yes(!VolumeRecoveryTarget.isConference("separacao",true,true));
         // Diagnostico real: tela Separacao, rotulo Volume, botao (616,140)-(664,188).
         yes(VolumeRecoveryTarget.isVerifiedHeaderButton(616,140,664,188));
+        yes(VolumeRecoveryTarget.isVerifiedHeaderLabel(513,170,600,198));
+        yes(!VolumeRecoveryTarget.isVerifiedHeaderLabel(30,540,600,620));
+        yes(!VolumeRecoveryTarget.isVerifiedHeaderLabel(20,155,160,198));
         yes(VolumeRecoveryTarget.isSeparation("separacao",true,true,true,true));
         yes(!VolumeRecoveryTarget.isSeparation("separacao",false,true,true,true));
         yes(!VolumeRecoveryTarget.isSeparation("separacao",true,false,true,true));
