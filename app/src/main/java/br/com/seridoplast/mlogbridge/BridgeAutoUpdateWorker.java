@@ -11,6 +11,8 @@ public final class BridgeAutoUpdateWorker extends Worker {
     public BridgeAutoUpdateWorker(@NonNull Context context,@NonNull WorkerParameters params) {super(context,params);}
     @NonNull @Override public Result doWork() {
         Context ctx=getApplicationContext();
+        // Agenda a proxima verificacao antes de qualquer operacao de rede.
+        BridgeUpdater.queueNextCheck(ctx,getInputData().getString("check_slot"));
         SharedPreferences sp=ctx.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE);
         if(!sp.getBoolean(BridgeUpdater.PREF_ENABLED,true))return Result.success();
         try {

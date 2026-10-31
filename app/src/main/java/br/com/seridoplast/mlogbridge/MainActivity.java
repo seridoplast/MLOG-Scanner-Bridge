@@ -60,9 +60,12 @@ public final class MainActivity extends Activity {
     private String themeChoice;
     private int page = 0;
     private int bg, card, line, ink, muted, inverse, inkSurface;
+    private int primary, primarySoft, surfaceAlt, success, amber, heroBase;
     private LinearLayout root, content, footer;
     private TextView preview, lastStatus, barcodeFormatStatus, barcodeArtifactStatus, barcodeFieldsStatus, serviceState, shizukuSettingsStatus, scannerConnectionStatus;
+    private TextView scannerConnectionTitle, scannerConnectionDot, scanHint, historyCount;
     private LinearLayout recentReadsList;
+    private String lastRenderedRead="";
     private final ArrayDeque<ScanRecord> recentReads = new ArrayDeque<>();
     private static final int MAX_RECENT_READS = 4;
     private LinearLayout setupWarningCard;
@@ -108,6 +111,12 @@ public final class MainActivity extends Activity {
                 if(!BarcodeFormatLabel.UNKNOWN.equals(maybeType)){
                     lastSymbology=maybeType;
                     if(barcodeFormatStatus!=null)barcodeFormatStatus.setText("Formato lido: "+maybeType);
+                    if(!recentReads.isEmpty()){
+                        ScanRecord first=recentReads.removeFirst();
+                        recentReads.addFirst(new ScanRecord(first.code,maybeType,first.time));
+                        lastRenderedRead="";
+                    }
+                    refreshHomeScannerUi();
                 }
                 return;
             }
@@ -142,8 +151,8 @@ public final class MainActivity extends Activity {
                 boolean shizuku=prefs.getBoolean(ShizukuScanMode.PREF,false);
                 boolean active=MlogFocusAccessibilityService.current()!=null;
                 boolean ready=shizukuAuthorized();
-                serviceState.setText(!shizuku?"Ative Bipe XU em Ajustes":
-                    ready && active?"✓ Scanner pronto":
+                serviceState.setText(!shizuku?"Ative BipXuco em Ajustes":
+                    ready && active?"✓ BipXuco pronto":
                     !ready?"⚠ Ative o Shizuku":"⚠ Ative a acessibilidade");
                 serviceState.setTextColor(( !shizuku || !ready || !active )?0xffd97706:
                     active?0xff228b58:muted);
@@ -152,7 +161,7 @@ public final class MainActivity extends Activity {
                 ShizukuHealthMonitor.refresh(MainActivity.this);
             updateShizukuUiStatus();
             refreshSetupWarning();
-            refreshHomeScannerUi();
+            refreshScannerStatus();
             if(page==2 && lastStatus!=null){
                 lastStatus.setText(prefs.getString("last_status","Nenhum diagnostico ainda."));
             }
@@ -241,22 +250,33 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onSaveInstanceState(Bundle out){super.onSaveInstanceState(out);out.putInt("page",page);}
     private void palette(boolean dark){
-        bg=dark?0xff0b0b0b:0xfffafafa;
-        card=dark?0xff181818:0xffffffff;
-        line=dark?0xff303030:0xffe5e5e5;
-        ink=dark?0xfff6f6f6:0xff151515;
-        muted=dark?0xffa6a6a6:0xff696969;
-        inverse=dark?0xff111111:0xffffffff;
+        bg=dark?0xff0c1422:0xfff3f6fc;
+        card=dark?0xff172337:0xffffffff;
+        line=dark?0xff29394f:0xffe4ebf5;
+        ink=dark?0xfff4f7fd:0xff17233a;
+        muted=dark?0xffa1b0c6:0xff75839a;
+        inverse=0xffffffff;
         inkSurface=ink;
+        primary=dark?0xff6b9aff:0xff2864e8;
+        primarySoft=dark?0xff243c67:0xffe9f0ff;
+        surfaceAlt=dark?0xff1e2c42:0xfff5f8fd;
+        success=dark?0xff4bd79c:0xff149463;
+        amber=dark?0xffffc56a:0xffbc761a;
+        heroBase=dark?0xff132a58:0xff18346c;
         getWindow().setStatusBarColor(bg);
         getWindow().setNavigationBarColor(bg);
         getWindow().getDecorView().setSystemUiVisibility(dark?0:View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR|View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
     }
     private int dp(float v){return (int)(v*getResources().getDisplayMetrics().density+0.5f);}
     private GradientDrawable shape(int color,int stroke,int radius){
-        GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(dp(radius));
+        GradientDrawable d=new GradientDrawable();
+        d.setColor(color);d.setCornerRadius(dp(radius));
         if(stroke!=0)d.setStroke(dp(1),stroke);
         return d;
+    }
+    private GradientDrawable gradient(int top,int bottom,int radius){
+        GradientDrawable d=new GradientDrawable(GradientDrawable.Orientation.TL_BR,new int[]{top,bottom});
+        d.setCornerRadius(dp(radius));return d;
     }
     private LinearLayout column(){LinearLayout l=new LinearLayout(this);l.setOrientation(LinearLayout.VERTICAL);return l;}
     private LinearLayout row(){LinearLayout l=new LinearLayout(this);l.setOrientation(LinearLayout.HORIZONTAL);l.setGravity(Gravity.CENTER_VERTICAL);return l;}
@@ -265,51 +285,66 @@ public final class MainActivity extends Activity {
         if(bold)t.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
         t.setIncludeFontPadding(true);return t;
     }
+    private ImageView icon(int res,int tint,int size){
+        ImageView view=new ImageView(this);view.setImageResource(res);
+        view.setColorFilter(tint,android.graphics.PorterDuff.Mode.SRC_IN);
+        view.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        view.setLayoutParams(new LinearLayout.LayoutParams(dp(size),dp(size)));
+        return view;
+    }
+    private TextView capsule(String value,int color,int back){
+        TextView v=label(value,11,color,true);
+        v.setGravity(Gravity.CENTER);v.setPadding(dp(11),dp(6),dp(11),dp(6));
+        v.setBackground(shape(back,0,24));return v;
+    }
     private void space(LinearLayout dest,int px){View v=new View(this);dest.addView(v,new LinearLayout.LayoutParams(1,dp(px)));}
     private LinearLayout card(){
         LinearLayout c=column();c.setPadding(dp(18),dp(18),dp(18),dp(18));
-        c.setBackground(shape(card,line,20));
-        LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(-1,-2);cp.bottomMargin=dp(14);
-        content.addView(c,cp);return c;
+        c.setBackground(shape(card,line,22));c.setElevation(dp(2));
+        LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(-1,-2);
+        cp.bottomMargin=dp(14);content.addView(c,cp);return c;
     }
     private void subtitle(LinearLayout c,String value){
-        TextView t=label(value,12,muted,false);LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
-        lp.topMargin=dp(6);c.addView(t,lp);
+        TextView t=label(value,12,muted,false);
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.topMargin=dp(6);c.addView(t,lp);
     }
     private TextView action(String name,boolean filled,Runnable callback){
-        TextView b=label(name,14,filled?inverse:ink,true);
-        b.setGravity(Gravity.CENTER);b.setPadding(dp(14),dp(13),dp(14),dp(13));
-        b.setBackground(shape(filled?ink:card,filled?0:line,13));
-        b.setFocusable(false); // leitor em modo teclado nao deve ativar controles com Enter
-        b.setFocusableInTouchMode(false);
+        TextView b=label(name,14,filled?0xffffffff:primary,true);
+        b.setGravity(Gravity.CENTER);b.setPadding(dp(12),dp(14),dp(12),dp(14));
+        b.setBackground(filled?gradient(0xff3a7cfa,0xff2457d0,15):shape(primarySoft,0,15));
+        b.setFocusable(false);b.setFocusableInTouchMode(false);
         b.setOnClickListener(w->callback.run());b.setClickable(true);
         return b;
     }
     private void button(LinearLayout dest,String text,boolean filled,Runnable callback){
         TextView b=action(text,filled,callback);
-        LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.topMargin=dp(12);
-        dest.addView(b,p);
+        LinearLayout.LayoutParams params=new LinearLayout.LayoutParams(-1,-2);params.topMargin=dp(10);
+        dest.addView(b,params);
     }
     private void displayPage(){
-        root=column();root.setBackgroundColor(bg);
-        setContentView(root);
-        LinearLayout head=row();head.setPadding(dp(20),dp(19),dp(20),dp(13));
+        root=column();root.setBackgroundColor(bg);setContentView(root);
+        LinearLayout head=row();head.setPadding(dp(18),dp(13),dp(18),dp(13));
         LinearLayout left=row();
-        ImageView logo=new ImageView(this);logo.setImageResource(darkNow()?R.drawable.brand_home_dark:R.drawable.brand_home_light);
+        ImageView logo=new ImageView(this);
+        logo.setImageResource(darkNow()?R.drawable.brand_home_dark:R.drawable.brand_home_light);
         logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        // Logo 2 acompanha claro/escuro; a cor azul permanece.
-
-        left.addView(logo,new LinearLayout.LayoutParams(dp(48),dp(48)));
+        left.addView(logo,new LinearLayout.LayoutParams(dp(43),dp(43)));
+        LinearLayout branding=column();
         ImageView name=new ImageView(this);
         name.setImageResource(darkNow()?R.drawable.brand_name_dark:R.drawable.brand_name_light);
-        name.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        name.setContentDescription("MLOG Bridge");
-        LinearLayout.LayoutParams nl=new LinearLayout.LayoutParams(dp(120),dp(52));nl.leftMargin=dp(8);
-        left.addView(name,nl);
+        name.setScaleType(ImageView.ScaleType.FIT_START);
+        name.setContentDescription("Seridóplast MLOG Bridge");
+        branding.addView(name,new LinearLayout.LayoutParams(dp(124),dp(29)));
+        branding.addView(label("SCANNER BRIDGE",9,muted,true));
+        LinearLayout.LayoutParams blp=new LinearLayout.LayoutParams(-2,-2);blp.leftMargin=dp(8);
+        left.addView(branding,blp);
         head.addView(left,new LinearLayout.LayoutParams(0,-2,1));
-        TextView moon=action(darkNow()?"☀":"☾",false,()->{});
+        TextView version=capsule("v3.6.2",primary,primarySoft);
+        LinearLayout.LayoutParams vlp=new LinearLayout.LayoutParams(-2,-2);vlp.rightMargin=dp(8);
+        head.addView(version,vlp);
+        TextView moon=label(darkNow()?"☀":"☾",23,ink,false);
+        moon.setGravity(Gravity.CENTER);moon.setBackground(shape(card,line,13));
         moon.setContentDescription("Alternar tema com toque na tela");
-        // Apenas toque fisico: o Enter do scanner nunca alterna tema.
         moon.setOnTouchListener((v,event)->{
             if(event.getActionMasked()==MotionEvent.ACTION_UP){
                 long now=android.os.SystemClock.elapsedRealtime();
@@ -318,36 +353,55 @@ public final class MainActivity extends Activity {
             }
             return true;
         });
-        head.addView(moon,new LinearLayout.LayoutParams(dp(49),dp(48)));
+        head.addView(moon,new LinearLayout.LayoutParams(dp(44),dp(44)));
         root.addView(head);
-        View divider=new View(this);divider.setBackgroundColor(line);root.addView(divider,new LinearLayout.LayoutParams(-1,dp(1)));
         ScrollView sc=new ScrollView(this);sc.setFillViewport(true);sc.setClipToPadding(false);
-        content=column();content.setPadding(dp(20),dp(20),dp(20),dp(14));sc.addView(content);
+        sc.setVerticalScrollBarEnabled(false);
+        content=column();content.setPadding(dp(17),dp(8),dp(17),dp(11));sc.addView(content);
         root.addView(sc,new LinearLayout.LayoutParams(-1,0,1));
-        footer=row();footer.setPadding(dp(10),dp(8),dp(10),dp(9));
+        footer=row();footer.setPadding(dp(12),dp(9),dp(12),dp(12));
+        footer.setBackground(shape(card,0,22));footer.setElevation(dp(10));
         String[] names={"Início","Ajustes","Diagnóstico","Sobre"};
+        int[] icons={R.drawable.ui_scan,R.drawable.ui_sliders,R.drawable.ui_pulse,R.drawable.ui_info};
         for(int i=0;i<names.length;i++){
             final int target=i;
-            TextView tab=label(names[i],12,i==page?inverse:muted,i==page);
-            tab.setGravity(Gravity.CENTER);tab.setPadding(dp(7),dp(13),dp(7),dp(13));
-            tab.setBackground(shape(i==page?ink:bg,i==page?0:line,13));
-            LinearLayout.LayoutParams tp=new LinearLayout.LayoutParams(0,-2,1);tp.leftMargin=dp(4);
-            footer.addView(tab,tp);tab.setOnClickListener(v->show(target));
+            LinearLayout tab=column();tab.setGravity(Gravity.CENTER);
+            tab.setPadding(dp(3),dp(10),dp(3),dp(9));
+            boolean selected=page==i;
+            tab.setBackground(shape(selected?primarySoft:card,0,15));
+            ImageView tabIcon=icon(icons[i],selected?primary:muted,21);
+            tab.addView(tabIcon);
+            TextView text=label(names[i],10,selected?primary:muted,selected);
+            text.setGravity(Gravity.CENTER);text.setSingleLine(true);
+            LinearLayout.LayoutParams tip=new LinearLayout.LayoutParams(-1,-2);tip.topMargin=dp(4);
+            tab.addView(text,tip);
+            tab.setClickable(true);tab.setFocusable(false);
+            tab.setContentDescription("Abrir "+names[i]);
+            tab.setOnClickListener(v->show(target));
+            LinearLayout.LayoutParams tlp=new LinearLayout.LayoutParams(0,-2,1);
+            if(i>0)tlp.leftMargin=dp(4);
+            footer.addView(tab,tlp);
         }
         root.addView(footer);
-        githubUpdateStatus=null;
-        preview=null;lastStatus=null;barcodeFormatStatus=null;barcodeArtifactStatus=null;
-        barcodeFieldsStatus=null;serviceState=null;shizukuSettingsStatus=null;scannerConnectionStatus=null;recentReadsList=null;setupWarningCard=null;setupWarningLabel=null;setupAccessibilityStep=null;setupKeyboardEnabledStep=null;setupKeyboardSelectedStep=null;setupFloatingStep=null;
+        githubUpdateStatus=null;preview=null;lastStatus=null;barcodeFormatStatus=null;barcodeArtifactStatus=null;
+        barcodeFieldsStatus=null;serviceState=null;shizukuSettingsStatus=null;scannerConnectionStatus=null;
+        scannerConnectionTitle=null;scannerConnectionDot=null;scanHint=null;historyCount=null;
+        recentReadsList=null;lastRenderedRead="";setupWarningCard=null;setupWarningLabel=null;
+        setupAccessibilityStep=null;setupKeyboardEnabledStep=null;setupKeyboardSelectedStep=null;setupFloatingStep=null;
         if(page==0)home();else if(page==1)settings();else if(page==2)diagnostic();else about();
     }
     private void show(int p){page=p;displayPage();}
     private void title(String s,String explanation){
-        TextView t=label(s,27,ink,true);content.addView(t);
+        TextView eyebrow=label("MLOG  /  "+(page==0?"SCANNER":page==1?"PREFERÊNCIAS":page==2?"SUPORTE":"SISTEMA"),10,primary,true);
+        eyebrow.setLetterSpacing(0.1f);content.addView(eyebrow);
+        TextView t=label(s,27,ink,true);
+        LinearLayout.LayoutParams tlp=new LinearLayout.LayoutParams(-1,-2);tlp.topMargin=dp(6);
+        content.addView(t,tlp);
         if(explanation!=null && !explanation.isEmpty()){
             TextView e=label(explanation,12,muted,false);
-            LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.topMargin=dp(5);lp.bottomMargin=dp(22);
-            content.addView(e,lp);
-        }else space(content,22);
+            LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
+            lp.topMargin=dp(5);lp.bottomMargin=dp(15);content.addView(e,lp);
+        }else space(content,16);
     }
     // Android sempre exige que o operador autorize acessibilidade, IME e overlay.
     // Nunca tentar ativar permissões protegidas silenciosamente.
@@ -406,120 +460,117 @@ public final class MainActivity extends Activity {
     }
     /** Cada autorização mostra um check verde ASSIM QUE o Android confirmar. */
     private TextView setupStep(String title,Runnable open){
-        TextView t=label(title,14,0xffffffff,true);
-        t.setPadding(dp(13),dp(12),dp(13),dp(12));
-        t.setBackground(shape(0xff742b32,0xff9a5158,12));
+        TextView t=label(title,13,ink,true);
+        t.setPadding(dp(12),dp(11),dp(12),dp(11));
+        t.setBackground(shape(surfaceAlt,line,12));
         t.setOnClickListener(v->open.run());
         LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
-        lp.topMargin=dp(8);setupWarningCard.addView(t,lp);
-        return t;
+        lp.topMargin=dp(7);setupWarningCard.addView(t,lp);return t;
     }
-    private void updateSetupStep(TextView t,boolean ready,String label){
+    private void updateSetupStep(TextView t,boolean ready,String name){
         if(t==null)return;
-        t.setText((ready?"✓  ":"○  ")+label+(ready?"  — Ativado":"  — Pendente"));
-        t.setTextColor(ready?0xffdcffe8:0xffffffff);
-        t.setBackground(shape(ready?0xff167a43:0xff742b32,
-                              ready?0xff28d17b:0xff9a5158,12));
-        t.setContentDescription(label+(ready?", concluído":", precisa ativar"));
+        t.setText((ready?"✓  ":"○  ")+name+(ready?"  ·  Ativado":"  ·  Configurar"));
+        t.setTextColor(ready?success:ink);
+        t.setBackground(shape(ready?primarySoft:surfaceAlt,ready?0:line,12));
+        t.setContentDescription(name+(ready?", concluído":", pendente"));
     }
     private void showSetupWarning(){
-        setupWarningCard=column();
-        setupWarningCard.setPadding(dp(17),dp(15),dp(17),dp(17));
-        setupWarningCard.setBackground(shape(0xff641e25,0xffd85762,16));
-        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
-        lp.bottomMargin=dp(14);content.addView(setupWarningCard,lp);
-        setupWarningCard.addView(label("⚠ Configuração necessária",17,0xffffffff,true));
-        setupWarningLabel=label("",13,0xffffffff,false);
-        space(setupWarningCard,7);setupWarningCard.addView(setupWarningLabel);
-        setupAccessibilityStep=setupStep("1. Acessibilidade",this::openAccessibilitySettings);
-        setupFloatingStep=setupStep("2. Botão flutuante",this::openOverlaySettings);
+        setupWarningCard=card();
+        setupWarningCard.setBackground(shape(card,0,20));
+        LinearLayout heading=row();
+        heading.addView(icon(R.drawable.ui_alert,amber,22));
+        TextView headline=label("Configuração pendente",15,ink,true);
+        LinearLayout.LayoutParams h=new LinearLayout.LayoutParams(-1,-2);h.leftMargin=dp(9);
+        heading.addView(headline,h);setupWarningCard.addView(heading);
+        setupWarningLabel=label("Conclua os passos para usar o leitor.",12,muted,false);
+        space(setupWarningCard,5);setupWarningCard.addView(setupWarningLabel);
+        setupAccessibilityStep=setupStep("Acessibilidade",this::openAccessibilitySettings);
+        setupFloatingStep=setupStep("Botão flutuante",this::openOverlaySettings);
         refreshSetupWarning();
     }
     private void refreshSetupWarning(){
         if(setupWarningCard==null || setupWarningLabel==null)return;
-        boolean access=accessibilityReady();
-        boolean floating=floatingReady();
+        boolean access=accessibilityReady();boolean floating=floatingReady();
         updateSetupStep(setupAccessibilityStep,access,"Acessibilidade");
         updateSetupStep(setupFloatingStep,floating,"Botão flutuante");
-        boolean complete=access && floating;
-        setupWarningCard.setVisibility(complete?View.GONE:View.VISIBLE);
-        setupWarningLabel.setText("Somente as duas permissões essenciais.");
+        setupWarningCard.setVisibility(access && floating?View.GONE:View.VISIBLE);
     }
 
     private void home(){
+        title("Central de leitura",null);
         showSetupWarning();
-        title("Teste de leitura",null);
+        LinearLayout topCard=card();
+        LinearLayout top=row();
+        scannerConnectionDot=label("●",16,success,true);
+        top.addView(scannerConnectionDot);
+        LinearLayout topText=column();
+        scannerConnectionTitle=label("Leitor detectado",16,ink,true);
+        topText.addView(scannerConnectionTitle);
+        scannerConnectionStatus=label("Verificando...",12,muted,false);
+        LinearLayout.LayoutParams ssp=new LinearLayout.LayoutParams(-1,-2);ssp.topMargin=dp(3);
+        topText.addView(scannerConnectionStatus,ssp);
+        LinearLayout.LayoutParams ltp=new LinearLayout.LayoutParams(0,-2,1);ltp.leftMargin=dp(10);
+        top.addView(topText,ltp);
+        TextView model=capsule(Build.MODEL==null?"CMX":Build.MODEL,primary,primarySoft);
+        model.setMaxWidth(dp(95));model.setSingleLine(true);
+        model.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        top.addView(model);
+        topCard.addView(top);
 
-        LinearLayout statusCard=card();
-        LinearLayout statusRow=row();
-        TextView dot=label("●",16,0xff22c55e,true);
-        statusRow.addView(dot);
-        TextView statusTitle=label("Leitor conectado",16,ink,true);
-        LinearLayout.LayoutParams slp=new LinearLayout.LayoutParams(0,-2,1);
-        slp.leftMargin=dp(8);
-        statusRow.addView(statusTitle,slp);
-        TextView model=label(Build.MODEL==null?"Coletor":Build.MODEL,13,muted,true);
-        statusRow.addView(model);
-        statusCard.addView(statusRow);
-        scannerConnectionStatus=label("Verificando leitura...",12,muted,false);
-        LinearLayout.LayoutParams csp=new LinearLayout.LayoutParams(-1,-2);
-        csp.topMargin=dp(6);
-        statusCard.addView(scannerConnectionStatus,csp);
-
-        LinearLayout testCard=card();
-        testCard.setPadding(dp(22),dp(24),dp(22),dp(24));
-        TextView aim=label("⌖",28,ink,false);
-        aim.setGravity(Gravity.CENTER);
-        testCard.addView(aim,new LinearLayout.LayoutParams(-1,-2));
-        TextView tester=label("Testar leitura",20,ink,true);
-        tester.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams tlp=new LinearLayout.LayoutParams(-1,-2);
-        tlp.topMargin=dp(4);
-        testCard.addView(tester,tlp);
-        TextView hint=label("Aponte e bipe um código",13,muted,false);
-        hint.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams hlp=new LinearLayout.LayoutParams(-1,-2);
-        hlp.topMargin=dp(4);
-        testCard.addView(hint,hlp);
-        preview=label(lastSample==null?"Aguardando...":BarcodeCleaner.clean(lastSample),22,ink,true);
-        preview.setGravity(Gravity.CENTER);
-        preview.setTextIsSelectable(true);
+        LinearLayout testCard=column();
+        testCard.setPadding(dp(20),dp(26),dp(20),dp(20));
+        testCard.setBackground(gradient(0xff17376b,0xff101e40,26));testCard.setElevation(dp(5));
+        LinearLayout.LayoutParams tc=new LinearLayout.LayoutParams(-1,-2);tc.bottomMargin=dp(15);
+        content.addView(testCard,tc);
+        LinearLayout iconBar=row();iconBar.setGravity(Gravity.CENTER);
+        LinearLayout circle=row();circle.setGravity(Gravity.CENTER);
+        circle.setBackground(shape(0xff294c85,0,18));
+        circle.addView(icon(R.drawable.ui_scan,0xffcfe2ff,31));
+        iconBar.addView(circle,new LinearLayout.LayoutParams(dp(66),dp(66)));
+        testCard.addView(iconBar);
+        TextView heroTitle=label("Testar leitura",21,0xffffffff,true);
+        heroTitle.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams htp=new LinearLayout.LayoutParams(-1,-2);htp.topMargin=dp(12);
+        testCard.addView(heroTitle,htp);
+        scanHint=label("Aponte e bipe um código",13,0xffbdd0ef,false);
+        scanHint.setGravity(Gravity.CENTER);space(testCard,4);testCard.addView(scanHint);
+        LinearLayout codePlate=column();
+        codePlate.setPadding(dp(13),dp(14),dp(13),dp(14));
+        codePlate.setBackground(shape(0xff233d69,0xff315282,16));
+        LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(-1,-2);cp.topMargin=dp(20);
+        testCard.addView(codePlate,cp);
+        preview=label("Aguardando...",20,0xffffffff,true);
         preview.setTypeface(Typeface.MONOSPACE,Typeface.BOLD);
-        LinearLayout.LayoutParams plp=new LinearLayout.LayoutParams(-1,-2);
-        plp.topMargin=dp(18);
-        testCard.addView(preview,plp);
-        lastStatus=label(scanCount==0?"Nenhuma leitura ainda.":"Leituras: "+scanCount,12,muted,false);
-        lastStatus.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams llp=new LinearLayout.LayoutParams(-1,-2);
-        llp.topMargin=dp(8);
-        testCard.addView(lastStatus,llp);
-        serviceState=label("Verificando...",12,muted,false);
-        serviceState.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams svlp=new LinearLayout.LayoutParams(-1,-2);
-        svlp.topMargin=dp(6);
-        testCard.addView(serviceState,svlp);
-
-        LinearLayout actions=row();
-        actions.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams alp=new LinearLayout.LayoutParams(-1,-2);
-        alp.topMargin=dp(16);
+        preview.setGravity(Gravity.CENTER);preview.setTextIsSelectable(true);
+        codePlate.addView(preview);
+        lastStatus=label("Nenhuma leitura ainda",12,0xffbdd0ef,false);
+        lastStatus.setGravity(Gravity.CENTER);space(codePlate,5);codePlate.addView(lastStatus);
+        serviceState=label("Verificando BipXuco...",12,0xffb9d1fc,false);
+        serviceState.setGravity(Gravity.CENTER);space(testCard,12);testCard.addView(serviceState);
+        LinearLayout actions=row();actions.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams alp=new LinearLayout.LayoutParams(-1,-2);alp.topMargin=dp(17);
         testCard.addView(actions,alp);
-        TextView openMlogBtn=action("Abrir MLOG",true,this::openMlog);
-        TextView toolsBtn=action("Ferramentas",false,this::openFloatingTools);
-        LinearLayout.LayoutParams ap1=new LinearLayout.LayoutParams(0,-2,1);
-        LinearLayout.LayoutParams ap2=new LinearLayout.LayoutParams(0,-2,1);
-        ap2.leftMargin=dp(10);
-        actions.addView(openMlogBtn,ap1);
-        actions.addView(toolsBtn,ap2);
+        TextView open=action("Abrir MLOG",true,this::openMlog);
+        open.setBackground(shape(0xffffffff,0,14));open.setTextColor(0xff1a4692);
+        TextView floating=action("Ferramentas",false,this::openFloatingTools);
+        floating.setBackground(shape(0xff284b84,0,14));floating.setTextColor(0xffffffff);
+        LinearLayout.LayoutParams oa=new LinearLayout.LayoutParams(0,-2,1);
+        LinearLayout.LayoutParams fa=new LinearLayout.LayoutParams(0,-2,1);fa.leftMargin=dp(8);
+        actions.addView(open,oa);actions.addView(floating,fa);
 
         LinearLayout recentCard=card();
-        recentCard.addView(label("Últimas leituras",16,ink,true));
+        LinearLayout recentHead=row();
+        recentHead.addView(icon(R.drawable.ui_history,primary,20));
+        TextView recentTitle=label("Últimas leituras",17,ink,true);
+        LinearLayout.LayoutParams rtp=new LinearLayout.LayoutParams(0,-2,1);rtp.leftMargin=dp(9);
+        recentHead.addView(recentTitle,rtp);
+        historyCount=capsule("0/4",primary,primarySoft);
+        recentHead.addView(historyCount);
+        recentCard.addView(recentHead);
         recentReadsList=column();
-        LinearLayout.LayoutParams rlp=new LinearLayout.LayoutParams(-1,-2);
-        rlp.topMargin=dp(12);
+        LinearLayout.LayoutParams rlp=new LinearLayout.LayoutParams(-1,-2);rlp.topMargin=dp(15);
         recentCard.addView(recentReadsList,rlp);
-
-        refreshHomeScannerUi();
+        refreshHomeScannerUi();refreshScannerStatus();
     }
     private void recordRecentScan(String code,String format){
         String stamp=new SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(new Date());
@@ -527,54 +578,77 @@ public final class MainActivity extends Activity {
         while(recentReads.size()>MAX_RECENT_READS)recentReads.removeLast();
     }
 
+    private void refreshScannerStatus(){
+        if(scannerConnectionStatus==null && scannerConnectionTitle==null)return;
+        boolean available=NativeScannerController.isInstalled(this);
+        boolean ready=available && prefs.getBoolean(ShizukuScanMode.PREF,false)
+            && shizukuAuthorized() && accessibilityReady();
+        if(scannerConnectionTitle!=null)scannerConnectionTitle.setText(available?"Leitor disponível":"Leitor não detectado");
+        if(scannerConnectionDot!=null)scannerConnectionDot.setTextColor(ready?success:amber);
+        if(scannerConnectionStatus!=null){
+            scannerConnectionStatus.setText(ready?"BipXuco pronto para testar":
+                !available?"Serviço CMX não localizado":"Confira Shizuku e acessibilidade");
+            scannerConnectionStatus.setTextColor(ready?success:amber);
+        }
+    }
     private void refreshHomeScannerUi(){
+        if(page!=0)return;
         if(preview!=null){
             String visible=lastSample==null?"Aguardando...":BarcodeCleaner.clean(lastSample);
-            preview.setText(visible==null || visible.isEmpty()?"Somente caracteres invisíveis":visible);
+            String result=visible==null || visible.isEmpty()?"Somente caracteres invisíveis":visible;
+            if(!result.contentEquals(preview.getText()))preview.setText(result);
         }
         if(lastStatus!=null){
-            if(scanCount==0) lastStatus.setText("Nenhuma leitura ainda.");
-            else {
-                String type=(lastSymbology==null || BarcodeFormatLabel.UNKNOWN.equals(lastSymbology))?"Leitura recebida":lastSymbology;
-                lastStatus.setText(type+" · "+scanCount+(scanCount==1?" leitura":" leituras"));
-            }
+            String result=scanCount==0?"Nenhuma leitura ainda":
+                (lastSymbology==null || BarcodeFormatLabel.UNKNOWN.equals(lastSymbology)?"Leitura recebida":lastSymbology)+
+                "  ·  "+scanCount+(scanCount==1?" leitura":" leituras");
+            if(!result.contentEquals(lastStatus.getText()))lastStatus.setText(result);
         }
-        if(scannerConnectionStatus!=null){
-            boolean ready=prefs!=null && prefs.getBoolean(ShizukuScanMode.PREF,false) && accessibilityReady();
-            scannerConnectionStatus.setText(ready?"Pronto para captar novos bipes":"Verifique Shizuku e acessibilidade");
-            scannerConnectionStatus.setTextColor(ready?0xff22c55e:0xffd97706);
+        if(scanHint!=null)scanHint.setText(scanCount==0?"Aponte e bipe um código":"Leitura recebida com sucesso");
+        if(historyCount!=null)historyCount.setText(recentReads.size()+"/4");
+        if(recentReadsList==null)return;
+        // Recria apenas quando muda a leitura, nao a cada tick do relogio.
+        String signature=scanCount+":"+recentReads.size();
+        if(signature.equals(lastRenderedRead))return;
+        lastRenderedRead=signature;
+        recentReadsList.removeAllViews();
+        if(recentReads.isEmpty()){
+            TextView empty=label("Os últimos quatro bipes aparecerão aqui.",13,muted,false);
+            empty.setPadding(dp(3),dp(12),dp(3),dp(12));recentReadsList.addView(empty);
+            return;
         }
-        if(recentReadsList!=null){
-            recentReadsList.removeAllViews();
-            if(recentReads.isEmpty()){
-                TextView empty=label("Nenhuma leitura ainda.",13,muted,false);
-                recentReadsList.addView(empty);
-            } else {
-                int i=0;
-                for(ScanRecord item:recentReads){
-                    if(i>0){
-                        View divider=new View(this);
-                        divider.setBackgroundColor(line);
-                        LinearLayout.LayoutParams dlp=new LinearLayout.LayoutParams(-1,dp(1));
-                        dlp.topMargin=dp(10);
-                        dlp.bottomMargin=dp(10);
-                        recentReadsList.addView(divider,dlp);
-                    }
-                    LinearLayout lineItem=column();
-                    LinearLayout head=row();
-                    TextView code=label(item.code,18,ink,true);
-                    code.setTypeface(Typeface.MONOSPACE,Typeface.BOLD);
-                    head.addView(code,new LinearLayout.LayoutParams(0,-2,1));
-                    head.addView(label(item.time,12,muted,false));
-                    lineItem.addView(head);
-                    TextView fmt=label(item.format==null?BarcodeFormatLabel.UNKNOWN:item.format,12,0xff22c55e,false);
-                    LinearLayout.LayoutParams flp=new LinearLayout.LayoutParams(-1,-2);
-                    flp.topMargin=dp(4);
-                    lineItem.addView(fmt,flp);
-                    recentReadsList.addView(lineItem);
-                    i++;
-                }
+        int i=0;
+        for(ScanRecord item:recentReads){
+            if(i>0){
+                View divider=new View(this);divider.setBackgroundColor(line);
+                LinearLayout.LayoutParams dlp=new LinearLayout.LayoutParams(-1,dp(1));
+                dlp.topMargin=dp(10);dlp.bottomMargin=dp(10);
+                recentReadsList.addView(divider,dlp);
             }
+            LinearLayout itemRow=row();
+            TextView index=label(String.format(Locale.getDefault(),"%02d",i+1),11,primary,true);
+            index.setGravity(Gravity.CENTER);
+            index.setBackground(shape(primarySoft,0,11));
+            itemRow.addView(index,new LinearLayout.LayoutParams(dp(35),dp(35)));
+            LinearLayout details=column();
+            TextView code=label(item.code,15,ink,true);
+            code.setTypeface(Typeface.MONOSPACE,Typeface.BOLD);
+            code.setSingleLine(true);code.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            details.addView(code);
+            TextView fmt=label(item.format==null?BarcodeFormatLabel.UNKNOWN:item.format,11,success,false);
+            LinearLayout.LayoutParams fpl=new LinearLayout.LayoutParams(-1,-2);fpl.topMargin=dp(3);
+            details.addView(fmt,fpl);
+            LinearLayout.LayoutParams dp1=new LinearLayout.LayoutParams(0,-2,1);dp1.leftMargin=dp(10);
+            itemRow.addView(details,dp1);
+            itemRow.addView(label(item.time,11,muted,false));
+            itemRow.setContentDescription("Leitura "+item.code+", "+item.format+", "+item.time);
+            itemRow.setOnLongClickListener(v->{
+                android.content.ClipboardManager cm=(android.content.ClipboardManager)getSystemService(Context.CLIPBOARD_SERVICE);
+                if(cm!=null){cm.setPrimaryClip(android.content.ClipData.newPlainText("Código de barras",item.code));toast("Código copiado.");}
+                return true;
+            });
+            recentReadsList.addView(itemRow);
+            i++;
         }
     }
 
@@ -598,7 +672,7 @@ public final class MainActivity extends Activity {
             "✓ Pronto":
             !ready?"⚠ Inicie o Shizuku":
             "⚠ Ative a acessibilidade");
-        shizukuSettingsStatus.setTextColor(ready && accessible?0xff228b58:0xffd97706);
+        shizukuSettingsStatus.setTextColor(ready && accessible?success:amber);
     }
     private void selectShizukuMode(){
         if(!accessibilityReady()){
@@ -642,7 +716,7 @@ public final class MainActivity extends Activity {
         displayPage();
         ShizukuHealthMonitor.refresh(this);
         ensureShizukuNotificationPermission();
-        toast("Bipe Shizuku ativo. Teste uma leitura no MLOG.");
+        toast("BipXuco ativado. Teste uma leitura no MLOG.");
     }
     private void selectReadMode(){
         if(!NativeScannerController.isInstalled(this)){
@@ -667,28 +741,49 @@ public final class MainActivity extends Activity {
         toast("Bipe Normal selecionado; modo broadcast solicitado.");
     }
     private void settings(){
-        title("Ajustes",null);
+        title("Ajustes","Personalize e mantenha o coletor pronto.");
         LinearLayout mode=card();
-        mode.addView(label("Bipe XU · Shizuku",18,ink,true));
+        LinearLayout lineHead=row();
+        lineHead.addView(icon(R.drawable.ui_scan,primary,24));
+        LinearLayout modeName=column();
+        modeName.addView(label("BipXuco",18,ink,true));
+        modeName.addView(label("Leitura via Shizuku",12,muted,false));
+        LinearLayout.LayoutParams mn=new LinearLayout.LayoutParams(0,-2,1);mn.leftMargin=dp(10);
+        lineHead.addView(modeName,mn);mode.addView(lineHead);
         shizukuSettingsStatus=label("Verificando...",13,muted,true);
-        mode.addView(shizukuSettingsStatus);
-        updateShizukuUiStatus();
-        button(mode,"Ativar / reconectar Shizuku",true,this::selectShizukuMode);
+        LinearLayout.LayoutParams st=new LinearLayout.LayoutParams(-1,-2);st.topMargin=dp(10);
+        mode.addView(shizukuSettingsStatus,st);updateShizukuUiStatus();
+        button(mode,"Ativar / reconectar",true,this::selectShizukuMode);
         button(mode,"Acessibilidade",false,this::openAccessibilitySettings);
-        check(mode,"Recuperar leitura (Volume)","camera_auto_recovery_v348",true);
-        button(mode,"Reconfigurar scanner",false,()->
-            toast(NativeScannerController.configure(this)?"Scanner configurado.":"Falha no scanner."));
-        LinearLayout appearance=card();
-        appearance.addView(label("Aparência",17,ink,true));
+        space(mode,7);
+        check(mode,"Recuperação por Volume","camera_auto_recovery_v348",true);
+        button(mode,"Reconfigurar leitor",false,()->toast(NativeScannerController.configure(this)?
+            "Leitor reconfigurado.":"Falha ao configurar o leitor."));
+
+        LinearLayout tools=card();
+        tools.addView(label("Botão flutuante",17,ink,true));
+        subtitle(tools,"Acesso rápido às ferramentas no MLOG.");
+        button(tools,"Abrir ferramentas",true,this::openFloatingTools);
+        button(tools,"Desligar botão flutuante",false,()->{
+            stopService(new Intent(this,FloatingToolsService.class));
+            prefs.edit().putBoolean("floating_auto_start_v302",false)
+                .putBoolean(ScanAssistState.CLEAN,false)
+                .putBoolean(ScanAssistState.BATCH,false)
+                .putBoolean(ScanAssistState.ARMED,false).apply();
+            toast("Botão flutuante desligado.");
+        });
+
+        LinearLayout appearance=card();appearance.addView(label("Aparência",17,ink,true));
         LinearLayout themes=row();
         for(String[] opt:new String[][]{{"auto","Sistema"},{"dark","Escuro"},{"light","Claro"}}){
             TextView choice=action(opt[1],opt[0].equals(themeChoice),()->chooseTheme(opt[0]));
-            LinearLayout.LayoutParams c=new LinearLayout.LayoutParams(0,-2,1);
-            c.leftMargin=dp(4);themes.addView(choice,c);
+            LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,-2,1);
+            if(themes.getChildCount()>0)lp.leftMargin=dp(7);
+            themes.addView(choice,lp);
         }
-        space(appearance,10);appearance.addView(themes);
-        LinearLayout automatic=card();
-        automatic.addView(label("Bipes automáticos",17,ink,true));
+        space(appearance,12);appearance.addView(themes);
+        LinearLayout automatic=card();automatic.addView(label("Bipes automáticos",17,ink,true));
+        subtitle(automatic,"Recurso opcional protegido por senha.");
         boolean enabled=ScanAssistState.isBatch(this);
         button(automatic,enabled?"Desativar":"Ativar com senha",enabled,()->{
             if(ScanAssistState.isBatch(this)){
@@ -717,7 +812,7 @@ public final class MainActivity extends Activity {
             .setNegativeButton("Cancelar",null).show();
     }
     private void diagnostic(){
-        title("Diagnóstico","Copie o último evento.");
+        title("Diagnóstico","Consulte o estado da última operação.");
         LinearLayout card=card();card.addView(label("Último evento",17,ink,true));
         lastStatus=label(prefs.getString("last_status","Nenhum diagnóstico ainda."),14,muted,false);
         lastStatus.setTextIsSelectable(true);space(card,11);card.addView(lastStatus);
@@ -732,8 +827,9 @@ public final class MainActivity extends Activity {
         String installedVersion="";
         try{installedVersion=getPackageManager().getPackageInfo(getPackageName(),0).versionName;}
         catch(Exception ignored){installedVersion="?";}
-        title("Sobre · v"+installedVersion,null);
+        title("Versão "+installedVersion,"Atualizações e permissões do Bridge.");
         LinearLayout updates=card();updates.addView(label("Atualizações",17,ink,true));
+        subtitle(updates,"Busca a cada ~10 min, quando o Android permitir.");
         check(updates,"Buscar automaticamente",BridgeUpdater.PREF_ENABLED,true);
         check(updates,"Instalar quando inativo",BridgeUpdater.PREF_INSTALL,true);
         githubUpdateStatus=label(prefs.getString(BridgeUpdater.LAST_STATUS,"Aguardando verificação."),13,muted,false);

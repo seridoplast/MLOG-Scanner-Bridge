@@ -2,18 +2,18 @@
 <resources>
     <style name="BridgeThemeLight" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">#151515</item>
-        <item name="android:statusBarColor">#FAFAFA</item>
-        <item name="android:navigationBarColor">#FAFAFA</item>
+        <item name="android:colorAccent">#2864E8</item>
+        <item name="android:statusBarColor">#F3F6FC</item>
+        <item name="android:navigationBarColor">#F3F6FC</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowLightNavigationBar">true</item>
         <item name="android:windowActionModeOverlay">true</item>
     </style>
     <style name="BridgeThemeDark" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">#EEEEEE</item>
-        <item name="android:statusBarColor">#0B0B0B</item>
-        <item name="android:navigationBarColor">#0B0B0B</item>
+        <item name="android:colorAccent">#6B9AFF</item>
+        <item name="android:statusBarColor">#0C1422</item>
+        <item name="android:navigationBarColor">#0C1422</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
         <item name="android:windowActionModeOverlay">true</item>
