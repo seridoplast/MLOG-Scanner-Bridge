@@ -40,6 +40,14 @@ public final class BridgeScanInputMethodService extends InputMethodService {
     private final Handler main=new Handler(Looper.getMainLooper());
     private LinearLayout panel;
     private boolean targetMlog=false;
+    // Apenas observa abertura/fechamento do teclado no modo Shizuku.
+    private boolean shizukuMlogImeShown=false;
+    private void shizukuImeClosedIfNeeded(){
+        if(!shizukuMlogImeShown)return;
+        shizukuMlogImeShown=false;
+        MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
+        if(svc!=null)svc.onShizukuImeClosed();
+    }
     private boolean manual=false;
     private boolean numeric=false;
     private boolean upper=false;
@@ -498,6 +506,11 @@ public final class BridgeScanInputMethodService extends InputMethodService {
     @Override public void onStartInputView(EditorInfo info,boolean restarting){
         super.onStartInputView(info,restarting);
         targetMlog=info!=null && ScanCoordinator.TARGET.equals(info.packageName);
+        if(targetMlog && zebraPrefs().getBoolean(ShizukuScanMode.PREF,false)){
+            shizukuMlogImeShown=true;
+            MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
+            if(svc!=null)svc.onShizukuImeOpened();
+        }
         // onFinishInputView ja recolheu quando a janela foi escondida.
         // Nao interromper digitacao por um restartInput do mesmo campo.
         if(!targetMlog)manual=true;
@@ -507,12 +520,14 @@ public final class BridgeScanInputMethodService extends InputMethodService {
     }
 
     @Override public void onFinishInputView(boolean finishingInput){
+        shizukuImeClosedIfNeeded();
         stopErase();
         if(targetMlog){manual=false;if(panel!=null)render();}
         super.onFinishInputView(finishingInput);
     }
 
     @Override public void onFinishInput(){
+        shizukuImeClosedIfNeeded();
         stopErase();
         if(targetMlog){manual=false;if(panel!=null)render();}
         targetMlog=false;

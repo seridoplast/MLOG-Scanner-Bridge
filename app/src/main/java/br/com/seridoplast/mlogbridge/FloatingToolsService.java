@@ -156,13 +156,17 @@ public final class FloatingToolsService extends Service {
             layout.setPadding(dp(20),dp(19),dp(20),dp(19));
         }
         view=layout;
+        // A janela expandida antiga roubava o foco do Flutter ate para
+        // clicar em Resetar Bipe. Somente o campo numerico do lote precisa
+        // receber foco de teclado; demais botoes permanecem nao focaveis.
+        boolean needsTextInput=open && batchDrawerOpen && ScanAssistState.isBatch(this);
+        int overlayFlags=WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL;
+        if(!needsTextInput)overlayFlags|=WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
         params=new WindowManager.LayoutParams(
             open?dp(310):dp(40),WindowManager.LayoutParams.WRAP_CONTENT,
             Build.VERSION.SDK_INT>=26?WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY:
                 WindowManager.LayoutParams.TYPE_PHONE,
-            open?WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL:
-                  WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|
-                      WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            overlayFlags,
             PixelFormat.TRANSLUCENT);
         params.gravity=Gravity.TOP|Gravity.START;
         int width=getResources().getDisplayMetrics().widthPixels;
@@ -223,6 +227,8 @@ public final class FloatingToolsService extends Service {
                     "Não foi possível reaplicar broadcast do CMX.";
                 android.widget.Toast.makeText(this,statusText,android.widget.Toast.LENGTH_LONG).show();
                 collapse();
+                MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
+                if(svc!=null)svc.requestShizukuFocusRecovery();
             });
             layout.addView(reset,new LinearLayout.LayoutParams(-1,-2));
             if(pref.getBoolean(ShizukuScanMode.PREF,false)){

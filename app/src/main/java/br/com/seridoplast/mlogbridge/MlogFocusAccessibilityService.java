@@ -73,6 +73,75 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private static final long LONG_HOLD_MAX_MS=30000L;
 
     private ShizukuScanClient shizukuScan;
+    // Quando o teclado manual do MLOG e fechado, o Flutter pode manter o
+    // EditText com foco logico, embora a InputConnection tenha desaparecido.
+    // Recuperacao de foco sem reenviar codigos e sem navegar entre atividades.
+    private int shizukuImeEpoch;
+    private boolean shizukuImeVisible;
+
+    void onShizukuImeOpened(){
+        if(!prefs().getBoolean(ShizukuScanMode.PREF,false))return;
+        shizukuImeVisible=true;
+        ++shizukuImeEpoch;
+        trace("SHIZUKU_IME_OPENED");
+    }
+
+    void onShizukuImeClosed(){
+        if(!prefs().getBoolean(ShizukuScanMode.PREF,false))return;
+        shizukuImeVisible=false;
+        final int epoch=++shizukuImeEpoch;
+        trace("SHIZUKU_IME_CLOSED_FOCUS_RECHECK");
+        // O Flutter pode remover o editor da arvore logo apos esconder o IME.
+        main.post(()->recoverShizukuFocus(epoch,"ime_closed_now"));
+        main.postDelayed(()->recoverShizukuFocus(epoch,"ime_closed"),70);
+        main.postDelayed(()->recoverShizukuFocus(epoch,"ime_closed_late"),280);
+    }
+
+    /** Chamado pelo Resetar Bipe, apos recolher a janela flutuante.
+     * Nunca faz um novo scan, Enter, Back, gesto ou mudanca de atividade. */
+    void requestShizukuFocusRecovery(){
+        if(!prefs().getBoolean(ShizukuScanMode.PREF,false))return;
+        final int epoch=++shizukuImeEpoch;
+        main.postDelayed(()->recoverShizukuFocus(epoch,"reset_button"),160);
+    }
+
+    private void recoverShizukuFocus(int epoch,String reason){
+        if(epoch!=shizukuImeEpoch || shizukuImeVisible ||
+           !prefs().getBoolean(ShizukuScanMode.PREF,false))return;
+        AccessibilityNodeInfo root;
+        try{root=getRootInActiveWindow();}
+        catch(RuntimeException ex){trace("SHIZUKU_FOCUS_ROOT_UNAVAILABLE");return;}
+        if(root==null || root.getPackageName()==null ||
+           !ScanCoordinator.TARGET.contentEquals(root.getPackageName()))return;
+        ScreenInfo info=inspect(root);
+        // Apenas na separacao, com controles reconhecidos; nao interferir
+        // em login, quantidade, modais, outras atividades ou outros apps.
+        if(!"separacao".equals(info.screen) || !info.hasSeparationControls ||
+           info.login || info.dialog)return;
+        int candidates=0;
+        AccessibilityNodeInfo editor=null;
+        for(AccessibilityNodeInfo node:info.editors){
+            if(!node.isVisibleToUser() || !node.isEnabled() ||
+               !node.isFocused() || node.isPassword())continue;
+            candidates++;editor=node;
+        }
+        if(candidates!=1){
+            trace("SHIZUKU_FOCUS_RECHECK_NO_UNIQUE_EDITOR_"+reason);
+            return;
+        }
+        // Nao perder entrada manual pendente do operador.
+        CharSequence value=editor.getText();
+        if(value!=null && value.length()>0){
+            trace("SHIZUKU_FOCUS_RECHECK_TEXT_PRESENT");return;
+        }
+        boolean cleared=false;
+        try{cleared=editor.performAction(AccessibilityNodeInfo.ACTION_CLEAR_FOCUS);}
+        catch(RuntimeException ex){trace("SHIZUKU_FOCUS_CLEAR_EXCEPTION");}
+        trace(cleared?"SHIZUKU_FOCUS_CLEAR_REQUESTED_"+reason:
+            "SHIZUKU_FOCUS_CLEAR_NOT_SUPPORTED_"+reason);
+        // Retorno true indica apenas que o Android aceitou a acao.
+        // Nao afirmar que o MLOG voltou a contabilizar leituras.
+    }
     // Independente do motor IME antigo. Uma leitura fisica inicia o lote,
     // cada passo seguinte exige incremento visivel de 1 no MESMO produto.
     private boolean shizukuBatchActive;
@@ -423,6 +492,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     }
 
     void prepareShizuku(){
+        shizukuImeVisible=false;
+        ++shizukuImeEpoch;
         // The mode changed while the accessibility service stays alive.
         // Cancel every outstanding old-mode Enter/focus/tap callback before
         // accepting the first privileged barcode. Never replay old reads.
