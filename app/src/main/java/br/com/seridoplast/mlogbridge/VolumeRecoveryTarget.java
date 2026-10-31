@@ -10,7 +10,11 @@ final class VolumeRecoveryTarget {
     static final int REFERENCE_HEIGHT=1440;
     static final float X_RATIO=648f/REFERENCE_WIDTH;
     static final float Y_RATIO=175f/REFERENCE_HEIGHT;
-    static final int PAUSE_MS=80;
+    // Sequencia testada no coletor: Volume -> 10 ms -> seta de voltar do MLOG.
+    // Coordenadas homologadas somente em 720x1440.
+    static final int BACK_X=55;
+    static final int BACK_Y=103;
+    static final int PAUSE_MS=10;
 
     private VolumeRecoveryTarget(){}
 
@@ -33,11 +37,13 @@ final class VolumeRecoveryTarget {
 
     /** Comando fechado, construido somente com inteiros e faixas validados. */
     static String shellSequence(int x,int y,int pauseMs){
-        if(x<1 || y<1 || x>4096 || y>4096 || pauseMs<40 || pauseMs>99)
+        if(x<1 || y<1 || x>4096 || y>4096 || pauseMs<1 || pauseMs>99)
             throw new IllegalArgumentException("Alvo/pausa fora da faixa do piloto");
+        // O KEYEVENT 4 eh consumido pelo teclado aberto na tela de destino.
+        // Um toque direto na seta do MLOG nao depende do estado do IME.
         return "/system/bin/input tap "+x+" "+y+
             " && /system/bin/sleep 0."+
             String.format(java.util.Locale.ROOT,"%03d",pauseMs)+
-            " && /system/bin/input keyevent 4";
+            " && /system/bin/input tap "+BACK_X+" "+BACK_Y;
     }
 }

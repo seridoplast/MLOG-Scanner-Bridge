@@ -13,11 +13,15 @@ public final class VolumeRecoveryTargetTest {
         yes(VolumeRecoveryTarget.nearHeaderVolume(648,175,720,1440));
         yes(!VolumeRecoveryTarget.nearHeaderVolume(490,810,720,1440));
         yes(!VolumeRecoveryTarget.nearHeaderVolume(650,620,720,1440));
-        yes(VolumeRecoveryTarget.PAUSE_MS>0 && VolumeRecoveryTarget.PAUSE_MS<100);
-        yes(VolumeRecoveryTarget.shellSequence(648,175,80).equals(
-            "/system/bin/input tap 648 175 && /system/bin/sleep 0.080 && /system/bin/input keyevent 4"));
+        yes(VolumeRecoveryTarget.PAUSE_MS==10);
+        yes(VolumeRecoveryTarget.BACK_X==55 && VolumeRecoveryTarget.BACK_Y==103);
+        yes(VolumeRecoveryTarget.shellSequence(648,175,10).equals(
+            "/system/bin/input tap 648 175 && /system/bin/sleep 0.010 && /system/bin/input tap 55 103"));
         boolean invalid=false;
         try{VolumeRecoveryTarget.shellSequence(-1,175,80);}catch(IllegalArgumentException e){invalid=true;}
+        yes(invalid);
+        invalid=false;
+        try{VolumeRecoveryTarget.shellSequence(648,175,0);}catch(IllegalArgumentException e){invalid=true;}
         yes(invalid);
         System.out.println("VolumeRecoveryTargetTest OK");
     }

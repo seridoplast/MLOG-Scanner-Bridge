@@ -135,13 +135,13 @@ final class ShizukuScanClient {
     }
 
     /**
-     * Toca no Volume e envia Voltar na mesma sessao Shizuku, evitando dois
-     * startups do executavel input. O delay curto e EXPERIMENTAL: nao ha
-     * garantia de que a tela Flutter termine de abrir em 80 ms.
+     * Toca no Volume e depois na seta da tela interna do MLOG, na mesma
+     * sessao shell Shizuku. A pausa curta foi validada via ADB no piloto.
+     * Nao garante que a UI Flutter tenha terminado de navegar.
      */
     boolean recoverVolume(int x,int y,int pauseMs,VolumeRecoveryCallback callback){
         if(callback==null || x<1 || y<1 || x>4096 || y>4096 ||
-           pauseMs<40 || pauseMs>99 || !ready() || pending.get()!=0 ||
+           pauseMs<1 || pauseMs>99 || !ready() || pending.get()!=0 ||
            !cameraBusy.compareAndSet(false,true))return false;
         try{
             worker.execute(()->{

@@ -2,7 +2,7 @@
 
 Aplicativo Android para os coletores CMX TC60 (Android 14), integrando o scanner físico ao **MLOG** por broadcast e, no modo escolhido pelo operador, comandos pelo **Shizuku**.
 
-**Versão do projeto:** `3.5.4` · **Repositório:** `seridoplast/MLOG-Scanner-Bridge` · **Pacote:** `br.com.seridoplast.mlogbridge`.
+**Versão do projeto:** `3.5.5` · **Repositório:** `seridoplast/MLOG-Scanner-Bridge` · **Pacote:** `br.com.seridoplast.mlogbridge`.
 
 ## Funcionalidades
 
@@ -22,18 +22,18 @@ Aplicativo Android para os coletores CMX TC60 (Android 14), integrando o scanner
 
 O Shizuku precisa de inicialização adequada após reinicializações. O atualizador **não consegue iniciar o serviço Shizuku sozinho**. A instalação silenciosa depende também do comportamento do firmware CMX, que deve ser validado no aparelho piloto.
 
-## Teste piloto — v3.5.4 (recuperacao rapida por Volume)
+## Teste piloto — v3.5.5 (recuperacao rapida por Volume)
 
-**Base:** projeto v3.5.3 enviado pelo operador; preserva o instalador Shizuku que ja foi validado no coletor.
+**Base:** v3.5.4 corrigida derivada do projeto enviado; preserva o instalador Shizuku que ja foi validado no coletor.
 
-- `versionName`: `3.5.4`; `versionCode`: `1030504` (anterior: `1030503`).
-- **Mudanca:** apos fechar o teclado, substituir a navegacao antiga pela camera por um toque no icone **Volume** seguido de **Voltar**.
-- **Tela homologada por print:** **Conferencia de Venda**, com titulo e botao "BIPAR PRODUTOS", em **720x1440**, alvo central **(648,175)**. Em outras telas nao se presumem essas coordenadas; exige-se um controle Volume acessivel no cabecalho. A acao e ignorada se o alvo nao puder ser validado.
-- **Rapidez:** pausa experimental de **80 ms entre os comandos**. Sao executados em **uma sessao shell pelo Shizuku**, em vez de dois processos separados com a antiga pausa de 950 ms. **Nao ha garantia de tempo total abaixo de 100 ms**: o Android, o shell e o Flutter adicionam latencia e a navegacao pode levar mais tempo. Se o Voltar vier cedo demais, pode ser necessario aumentar a pausa numa proxima versao.
+- `versionName`: `3.5.5`; `versionCode`: `1030505` (anterior: `1030504`).
+- **Mudanca:** trocar o retorno por KEYEVENT BACK pelo toque na seta interna do MLOG, mantendo o gatilho apos fechar o teclado: um toque no icone **Volume** seguido de toque na **seta de voltar do MLOG**.
+- **Tela homologada por print:** **Conferencia de Venda**, com titulo e botao "BIPAR PRODUTOS", em **720x1440**, alvo de abertura **(648,175)** e toque de retorno **(55,103)**. Em outras telas ou resolucoes, a acao e ignorada por seguranca.
+- **Rapidez:** pausa experimental de **10 ms entre os comandos**. Sao executados em **uma sessao shell pelo Shizuku**, em vez de dois processos separados com a antiga pausa de 950 ms. **Nao ha garantia de tempo total abaixo de 100 ms**: o Android, o shell e o Flutter adicionam latencia e a navegacao pode levar mais tempo. Se a seta for tocada cedo demais, pode ser necessario aumentar a pausa numa proxima versao.
 - **Gatilho:** fechamento do teclado real (observacao de janelas de acessibilidade); debounce reduzido para 60 ms e polling de reserva a cada 120 ms. Ainda existem salvaguardas de leitura pendente, texto nao enviado, overlay, Shizuku indisponivel e intervalo de recuperacao.
 - A recuperacao **nao injeta nem repete codigos ou Enter**, e nao promete confirmar o retorno da rota Flutter: o teste em hardware deve validar se a conferencia continua intacta e as leituras voltam.
-- **Configuracao:** Ajustes > Bipe Shizuku > "Recuperar leitura ao fechar teclado (Volume)". O botao flutuante "Resetar Bipe" tambem tenta a recuperacao em tela compativel.
-- O pipeline do GitHub faz **Release `v3.5.4` com `rollout=0`** no push para `main`. Instale manualmente no coletor piloto e **nao libere o rollout** ate confirmar a navegacao e a ausencia de efeitos colaterais.
+- **Configuracao:** Ajustes > Bipe Shizuku > "Recuperar leitura ao fechar teclado (Volume)". O botao flutuante "Resetar Bipe" tambem tenta a recuperacao em tela compativel. **O fechamento do teclado serve como gatilho heuristico; o Bridge nao tem confirmacao geral do MLOG de leitura ignorada.**
+- O pipeline do GitHub faz **Release `v3.5.5` com `rollout=0`** no push para `main`. Instale manualmente no coletor piloto e **nao libere o rollout** ate confirmar a navegacao e a ausencia de efeitos colaterais.
 
 ### Passo de verificacao de uma versao piloto
 

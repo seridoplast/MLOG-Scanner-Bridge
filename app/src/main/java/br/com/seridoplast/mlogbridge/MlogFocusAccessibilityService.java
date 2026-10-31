@@ -73,13 +73,15 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private static final long LONG_HOLD_MAX_MS=30000L;
 
     private ShizukuScanClient shizukuScan;
-    // v3.5.4: recuperacao experimental pela tela Volume da Conferencia de Venda.
-    // Duplo comando numa unica sessao Shizuku: tocar Volume -> 80ms -> Voltar.
+    // v3.5.5: dois toques validados via ADB no coletor piloto:
+    // Volume (648,175) -> 10 ms -> seta do MLOG (55,103), via Shizuku.
     // Nao reenviar qualquer codigo ou Enter durante a recuperacao.
     private static final long VOLUME_DEBOUNCE_MS=60L;
     private static final long VOLUME_KEYBOARD_POLL_MS=120L;
     private final CameraRecoveryPolicy recoveryPolicy=new CameraRecoveryPolicy();
     private int recoveryEpoch;
+    // Ignorar eventos IME transitorios criados pela propria micro-navegacao.
+    private long suppressVolumeImeUntil;
     private long lastPhysicalShizukuScanAt;
 
     // Compativel com o IME antigo, mas a observacao principal usa as janelas
@@ -127,6 +129,12 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
 
     private void observeImeVisibility(boolean visible){
         long now=SystemClock.elapsedRealtime();
+        // A navegacao de ida/volta pode piscar o IME. Isso nao eh um novo
+        // pedido de recuperacao; evita loops e toques repetidos no MLOG.
+        if(now<suppressVolumeImeUntil){
+            recoveryPolicy.resetKeyboard();
+            return;
+        }
         if(visible==recoveryPolicy.keyboardVisible())return;
         if(visible){
             // Teclado da quantidade do proprio painel nao deve iniciar Volume.
@@ -148,35 +156,19 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         },VOLUME_DEBOUNCE_MS);
     }
 
-    /** Apenas a Conferencia de Venda (produto) esta homologada pelo print.
-     * A Separacao so usa Volume quando um botao semanticamente rotulado for
-     * localizado na posicao do topo; nunca usar a camera ou toques cegos. */
+    /** Somente a Conferencia de Venda em 720x1440 foi homologada para
+     * estes dois toques. Outras telas nunca recebem esta sequencia. */
     private boolean isVolumeRecoveryReady(AccessibilityNodeInfo root){
         if(root==null || root.getPackageName()==null ||
            !ScanCoordinator.TARGET.contentEquals(root.getPackageName()))return false;
         ScreenInfo info=inspect(root);
         if(info.login || info.dialog || isBlockingOverlay(root))return false;
         Point size=realScreenSize();
-        return findVolumeButton(info,size)!=null ||
-            (VolumeRecoveryTarget.isConference(info.screen,
-                info.hasConferencePageTitle,info.hasConferenceProductAction) &&
-             VolumeRecoveryTarget.isReferenceSize(size.x,size.y));
-    }
-
-    /** Exige rotulo de Volume e posicao de cabecalho; a etiqueta "Volume:"
-     * nao e um botao e nao pode ser acionada acidentalmente. */
-    private AccessibilityNodeInfo findVolumeButton(ScreenInfo info,Point size){
-        if(!supportedAspect(size))return null;
-        for(AccessibilityNodeInfo n:info.clicks){
-            if(!n.isVisibleToUser() || !n.isEnabled() || n.isEditable())continue;
-            String description=tag(n);
-            if(!has(description,"volume","volumes"))continue;
-            Rect r=new Rect();n.getBoundsInScreen(r);
-            if(r.isEmpty() || r.width()>size.x*.26f || r.height()>size.y*.14f)continue;
-            if(VolumeRecoveryTarget.nearHeaderVolume(r.centerX(),r.centerY(),size.x,size.y))
-                return n;
-        }
-        return null;
+        // O segundo toque usa coordenada fixa para a seta do MLOG. Jamais
+        // executar em outros tamanhos ou telas, mesmo com um botao Volume.
+        return VolumeRecoveryTarget.isReferenceSize(size.x,size.y) &&
+            VolumeRecoveryTarget.isConference(info.screen,
+                info.hasConferencePageTitle,info.hasConferenceProductAction);
     }
 
     private void volumeFeedback(boolean manual,String message){
@@ -216,8 +208,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             return;
         }
         Point size=realScreenSize();
-        if(!supportedAspect(size)){
-            volumeFeedback(manual,"Resolucao nao homologada para Volume.");return;
+        if(!VolumeRecoveryTarget.isReferenceSize(size.x,size.y)){
+            volumeFeedback(manual,"Recuperacao homologada apenas em 720x1440.");return;
         }
         ScreenInfo info=inspect(root);
         for(AccessibilityNodeInfo editor:info.editors){
@@ -228,21 +220,11 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 return;
             }
         }
-        AccessibilityNodeInfo button=findVolumeButton(info,size);
-        int x,y;
-        if(button!=null){
-            Rect r=new Rect();button.getBoundsInScreen(r);
-            x=r.centerX();y=r.centerY();
-            trace("VOLUME_RECOVERY_SEMANTIC_TARGET");
-        }else if(VolumeRecoveryTarget.isConference(info.screen,
-                info.hasConferencePageTitle,info.hasConferenceProductAction) &&
-                VolumeRecoveryTarget.isReferenceSize(size.x,size.y)){
-            x=VolumeRecoveryTarget.x(size.x);
-            y=VolumeRecoveryTarget.y(size.y);
-            trace("VOLUME_RECOVERY_KNOWN_TAP_648_175");
-        }else{
-            volumeFeedback(manual,"Botao Volume nao encontrado nesta tela.");return;
-        }
+        // Mesmo par de coordenadas testado manualmente pelo operador.
+        // A tela precisa estar comprovadamente em Conferencia de Venda.
+        final int x=VolumeRecoveryTarget.x(size.x);
+        final int y=VolumeRecoveryTarget.y(size.y);
+        trace("VOLUME_RECOVERY_KNOWN_TAP_648_175");
         if(isPointCoveredByIme(x,y)){
             volumeFeedback(manual,"Volume coberto pelo teclado.");return;
         }
@@ -252,25 +234,27 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         final int epoch=++recoveryEpoch;
         trace("VOLUME_RECOVERY_START_"+reason);
         final String initialScreen=info.screen;
-        // Uma unica chamada Shizuku evita a latencia de dois processos de input.
-        // O shell so envia Voltar se o comando de toque concluir sem erro.
-        // A navegacao Flutter nao pode ser confirmada nesse intervalo curto.
+        // Um unico shell Shizuku: 648,175 -> 10ms -> 55,103.
+        // Evita o keyevent BACK, que pode fechar o IME em vez de sair da tela.
+        // Nao ha como confirmar o resultado Flutter nesses 10 ms.
         boolean accepted=shizukuScan.recoverVolume(x,y,
             VolumeRecoveryTarget.PAUSE_MS,ok->{
                 recoveryPolicy.finish();
+                suppressVolumeImeUntil=SystemClock.elapsedRealtime()+800L;
+                recoveryPolicy.resetKeyboard();
                 if(epoch!=recoveryEpoch)return;
                 if(!ok){
                     trace("VOLUME_RECOVERY_SEQUENCE_FAILED");
                     volumeFeedback(manual,"Falha na sequencia rapida de Volume pelo Shizuku.");
                     return;
                 }
-                trace("VOLUME_RECOVERY_TAP_BACK_SENT_UNVERIFIED");
+                trace("VOLUME_RECOVERY_DOUBLE_TAP_SENT_UNVERIFIED");
                 if(manual)main.postDelayed(()->{
                     AccessibilityNodeInfo returned=mlogRoot();
                     String screen=returned==null?"desconhecida":inspect(returned).screen;
                     volumeFeedback(true,initialScreen.equals(screen)?
-                        "Volume acionado e fechado. Confira a leitura.":
-                        "Comandos enviados; confira se voltou a conferencia.");
+                        "Volume e seta do MLOG acionados. Confira a leitura.":
+                        "Toques enviados; confira se voltou a conferencia.");
                 },150L);
             });
         if(!accepted){
@@ -644,6 +628,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         recoveryPolicy.resetKeyboard();
         recoveryPolicy.finish();
         ++recoveryEpoch;
+        suppressVolumeImeUntil=0L;
         // The mode changed while the accessibility service stays alive.
         // Cancel every outstanding old-mode Enter/focus/tap callback before
         // accepting the first privileged barcode. Never replay old reads.
