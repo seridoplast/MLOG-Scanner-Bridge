@@ -695,7 +695,7 @@ public final class MainActivity extends Activity {
         String installedVersion="";
         try{installedVersion=getPackageManager().getPackageInfo(getPackageName(),0).versionName;}
         catch(Exception ignored){installedVersion="3.2.3";}
-        title("Sobre","MLOG Scanner Bridge · v"+installedVersion);
+        title("Sobre","MLOG Bridge TESTE · v"+installedVersion);
         LinearLayout updates=card();updates.addView(label("Atualizações automáticas",17,ink,true));
         subtitle(updates,"GitHub Releases → APK corporativo verificado → instalacao pelo Shizuku quando o coletor estiver livre.");
         check(updates,"Verificar atualizacoes automaticamente",BridgeUpdater.PREF_ENABLED,true);

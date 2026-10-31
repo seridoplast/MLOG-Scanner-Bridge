@@ -1,4 +1,4 @@
 <resources>
-    <string name="app_name">MLOG Scanner Bridge</string>
+    <string name="app_name">MLOG Bridge TESTE</string>
     <string name="focus_service_description">No MLOG, somente no MLOG, recebe os codigos do scanner, tenta localizar e preencher o campo editavel; pode ocultar temporariamente o teclado virtual durante a leitura. Nao inspeciona outros aplicativos, nao registra textos, nem usa internet. O servico so funciona com autorizacao manual do usuario.</string>
 </resources>

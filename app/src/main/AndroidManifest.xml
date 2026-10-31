@@ -17,7 +17,7 @@
     <application
         android:allowBackup="false"
         android:usesCleartextTraffic="false"
-        android:label="MLOG Scanner Bridge"
+        android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
         android:theme="@style/BridgeThemeLight"
         android:supportsRtl="true">
