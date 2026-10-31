@@ -2,7 +2,7 @@
 
 Aplicativo Android para os coletores CMX TC60 (Android 14), integrando o scanner físico ao **MLOG** por broadcast e, no modo escolhido pelo operador, comandos pelo **Shizuku**.
 
-**Versão do projeto:** `3.5.2` · **Repositório:** `seridoplast/MLOG-Scanner-Bridge` · **Pacote:** `br.com.seridoplast.mlogbridge`.
+**Versão do projeto:** `3.5.3` · **Repositório:** `seridoplast/MLOG-Scanner-Bridge` · **Pacote:** `br.com.seridoplast.mlogbridge`.
 
 ## Funcionalidades
 
@@ -21,6 +21,16 @@ Aplicativo Android para os coletores CMX TC60 (Android 14), integrando o scanner
 4. O aplicativo MLOG deve ficar fora da tela de operação durante a instalação. O Bridge só tenta atualizar quando a tela está apagada ou quando uma tela de outro aplicativo é identificada de modo conservador, após pelo menos cinco minutos sem leituras Shizuku. Se não conseguir verificar que está livre, adia.
 
 O Shizuku precisa de inicialização adequada após reinicializações. O atualizador **não consegue iniciar o serviço Shizuku sozinho**. A instalação silenciosa depende também do comportamento do firmware CMX, que deve ser validado no aparelho piloto.
+
+## Teste da nova versão — v3.5.3
+
+**Objetivo:** confirmar que o coletor com Bridge 3.5.2 reconhece uma nova versão e consegue instalar a atualização via Shizuku sem erro EPIPE. Não há mudanças na lógica do scanner; somente o número de versão foi incrementado.
+
+- `versionName`: `3.5.3`; `versionCode`: `1030503` (anterior: `1030502`).
+- Faça push na `main` para o GitHub Actions criar a Release `v3.5.3` com `rollout=0` e o APK assinado pela chave corporativa já configurada.
+- No **coletor piloto com Bridge 3.5.2**, acesse **Sobre → Buscar atualização agora → Instalar APK já baixado pelo Shizuku**. Esta instalação manual independe do `rollout=0`.
+- Confirme a versão 3.5.3 em **Sobre**, teste a leitura do scanner e registre qualquer erro da instalação. Se o Shizuku falhar, use **Instalar pelo Android** sem apagar o aplicativo nem as preferências.
+- Não mude `rollout=0` antes de validar o processo no coletor piloto.
 
 ## Teste da correção de instalação — v3.5.2
 
