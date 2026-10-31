@@ -623,11 +623,31 @@ public final class MainActivity extends Activity {
     private void setUpdateStatus(String text){
         if(githubUpdateStatus!=null) githubUpdateStatus.setText(text);
     }
+    private void requirePrereleasePassword(Runnable afterAuth){
+        if(DebugUpdateAccess.allowed()){afterAuth.run();return;}
+        EditText field=new EditText(this);
+        field.setSingleLine(true);
+        field.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        new AlertDialog.Builder(this)
+            .setTitle("Autorizar pre-release")
+            .setMessage("Digite a senha para instalar uma versao de teste.")
+            .setView(field)
+            .setPositiveButton("Autorizar",(d,w)->{
+                boolean ok=DebugUpdateAccess.unlock(field.getText().toString());
+                field.getText().clear();
+                if(ok) afterAuth.run();
+                else {setUpdateStatus("Senha incorreta.");toast("Senha incorreta.");}
+            })
+            .setNegativeButton("Cancelar",null).show();
+    }
+
     private void installCachedShizuku(){
         try {
             GitHubReleaseUpdater.Update update=GitHubReleaseUpdater.cachedVerified(this);
             if(update==null){setUpdateStatus("Nao ha APK novo no armazenamento.");return;}
-            if(update.debug){setUpdateStatus("APK de teste: instale via USB.");return;}
+            if(update.debug && !DebugUpdateAccess.allowed()){
+                requirePrereleasePassword(this::installCachedShizuku);return;
+            }
         } catch(Exception ex) {setUpdateStatus("Falha ao validar APK: "+ex.getMessage());return;}
         installCachedShizukuAuthorized();
     }
@@ -648,7 +668,7 @@ public final class MainActivity extends Activity {
             .setMessage("A instalacao pode reiniciar o Bridge. Feche a atividade de Separacao antes de continuar.")
             .setPositiveButton("Instalar",(d,w)->{
                 setUpdateStatus("Validando APK e preparando sessao de instalacao...");
-                ShizukuApkInstaller.installAsync(this,(ok,msg)->{
+                ShizukuApkInstaller.installAsync(this,true,(ok,msg)->{
                     setUpdateStatus(msg);
                     if(!ok && !isFinishing() && !isDestroyed()){
                         new AlertDialog.Builder(this)
@@ -662,23 +682,60 @@ public final class MainActivity extends Activity {
             .setNegativeButton("Cancelar",null).show();
     }
     private void checkGitHubUpdate(){
-        if(githubChecking){toast("Verificação em andamento.");return;}
+        if(githubChecking){toast("Busca em andamento.");return;}
         githubChecking=true;
-        GitHubReleaseUpdater.checkAndDownload(this,new GitHubReleaseUpdater.Callback(){
-            @Override public void status(String text){setUpdateStatus(text);}
-            @Override public void upToDate(String text){
-                githubChecking=false;setUpdateStatus(text);BridgeUpdater.status(MainActivity.this,text);
-            }
+        setUpdateStatus("Consultando versões...");
+        GitHubReleaseUpdater.listManualReleases(new GitHubReleaseUpdater.ReleasesCallback(){
             @Override public void error(String message){
                 githubChecking=false;setUpdateStatus("Falha: "+message);
-                BridgeUpdater.status(MainActivity.this,"Falha na verificacao manual: "+message);
             }
+            @Override public void loaded(java.util.List<GitHubReleaseUpdater.ReleaseInfo> items){
+                githubChecking=false;
+                if(items.isEmpty()){setUpdateStatus("Nenhuma versao publicada.");return;}
+                long current=0;
+                try {
+                    android.content.pm.PackageInfo pkg=getPackageManager().getPackageInfo(getPackageName(),0);
+                    current=Build.VERSION.SDK_INT>=28?pkg.getLongVersionCode():pkg.versionCode;
+                }catch(Exception ignored){}
+                final long installed=current;
+                String[] options=new String[items.size()];
+                for(int i=0;i<items.size();i++){
+                    GitHubReleaseUpdater.ReleaseInfo info=items.get(i);
+                    options[i]=info.tag+(info.prerelease?" · TESTE 🔒":" · ESTAVEL")
+                        +(info.versionCode<=installed?" (ja instalada/anterior)":"");
+                }
+                setUpdateStatus(items.size()+" versões disponíveis.");
+                new AlertDialog.Builder(MainActivity.this)
+                    .setTitle("Versões disponíveis")
+                    .setItems(options,(dialog,index)->{
+                        GitHubReleaseUpdater.ReleaseInfo info=items.get(index);
+                        if(info.versionCode<=installed){
+                            setUpdateStatus("Versao atual ou anterior. Downgrade bloqueado.");return;
+                        }
+                        if(info.prerelease)requirePrereleasePassword(()->downloadManualRelease(info));
+                        else downloadManualRelease(info);
+                    })
+                    .setNegativeButton("Fechar",null).show();
+            }
+        });
+    }
+
+    private void downloadManualRelease(GitHubReleaseUpdater.ReleaseInfo info){
+        if(githubChecking){toast("Download em andamento.");return;}
+        if(info.prerelease && !DebugUpdateAccess.allowed()){
+            requirePrereleasePassword(()->downloadManualRelease(info));return;
+        }
+        githubChecking=true;
+        GitHubReleaseUpdater.downloadSelected(getApplicationContext(),info,new GitHubReleaseUpdater.Callback(){
+            @Override public void status(String text){setUpdateStatus(text);}
+            @Override public void upToDate(String text){githubChecking=false;setUpdateStatus(text);}
+            @Override public void error(String message){githubChecking=false;setUpdateStatus("Falha: "+message);}
             @Override public void ready(File file,String tag){
                 githubChecking=false;
-                setUpdateStatus("Versão "+tag+" pronta.");
+                setUpdateStatus(tag+" pronto.");
                 new AlertDialog.Builder(MainActivity.this)
-                    .setTitle("Atualização "+tag)
-                    .setMessage("APK assinado e verificado. Instalar agora?")
+                    .setTitle("Instalar "+tag+(info.prerelease?" · TESTE":""))
+                    .setMessage("APK verificado. Instalar?")
                     .setPositiveButton("Shizuku",(d,w)->installCachedShizuku())
                     .setNeutralButton("Android",(d,w)->installVerifiedApk(file))
                     .setNegativeButton("Depois",null).show();
@@ -689,7 +746,9 @@ public final class MainActivity extends Activity {
         try {
             GitHubReleaseUpdater.Update checked=GitHubReleaseUpdater.cachedVerified(this);
             if(checked==null){setUpdateStatus("Nao ha APK atualizado e validado em cache.");return;}
-            if(checked.debug){setUpdateStatus("APK de teste: instale via USB.");return;}
+            if(checked.debug && !DebugUpdateAccess.allowed()){
+                requirePrereleasePassword(this::installCachedViaAndroid);return;
+            }
             installVerifiedApk(checked.apk);
         } catch(Exception ex) {setUpdateStatus("Falha ao verificar APK para Android: "+ex.getMessage());}
     }
@@ -699,7 +758,9 @@ public final class MainActivity extends Activity {
             if(verified==null || apk==null || !verified.apk.equals(apk)) {
                 setUpdateStatus("Instalacao cancelada: APK nao verificado no cache.");return;
             }
-            if(verified.debug){setUpdateStatus("APK de teste: instale via USB.");return;}
+            if(verified.debug && !DebugUpdateAccess.allowed()){
+                requirePrereleasePassword(()->installVerifiedApk(apk));return;
+            }
         } catch(Exception ex) {setUpdateStatus("APK invalido: "+ex.getMessage());return;}
         if(apk==null || !apk.isFile()){setUpdateStatus("Arquivo da atualização não encontrado.");return;}
         if(Build.VERSION.SDK_INT>=26 && !getPackageManager().canRequestPackageInstalls()){

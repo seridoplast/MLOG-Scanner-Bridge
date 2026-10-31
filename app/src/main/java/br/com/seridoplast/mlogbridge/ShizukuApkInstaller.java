@@ -40,6 +40,10 @@ final class ShizukuApkInstaller {
     interface Callback { void done(boolean ok, String message); }
 
     static void installAsync(Context context, Callback callback) {
+        installAsync(context,false,callback);
+    }
+
+    static void installAsync(Context context, boolean manualPrereleaseAuthorized, Callback callback) {
         Context app = context.getApplicationContext();
         new Thread(() -> {
             boolean success = false;
@@ -47,9 +51,9 @@ final class ShizukuApkInstaller {
             try {
                 GitHubReleaseUpdater.Update update = GitHubReleaseUpdater.cachedVerified(app);
                 if (update == null) throw new IllegalStateException("Nenhuma atualizacao verificada foi baixada.");
-                if(update.debug)
-                    throw new SecurityException("APK de teste: instale pelo cabo USB.");
-                status = installVerified(app, update);
+                if(update.debug && (!manualPrereleaseAuthorized || !DebugUpdateAccess.allowed()))
+                    throw new SecurityException("Pre-release exige senha.");
+                status = installVerified(app, update, manualPrereleaseAuthorized);
                 success = true;
             } catch (Exception ex) {
                 status = "Falha na instalacao Shizuku: " + safeMessage(ex);
@@ -64,6 +68,11 @@ final class ShizukuApkInstaller {
 
     /** Automatic caller must first verify rollout, app idleness and Shizuku readiness. */
     static String installVerified(Context context, GitHubReleaseUpdater.Update update) throws Exception {
+        return installVerified(context,update,false);
+    }
+
+    private static String installVerified(Context context, GitHubReleaseUpdater.Update update,
+                                          boolean manualPrereleaseAuthorized) throws Exception {
         if (!INSTALLING.compareAndSet(false, true)) throw new IllegalStateException("Outra instalacao em andamento.");
         String session = null;
         boolean committed = false;
@@ -73,8 +82,8 @@ final class ShizukuApkInstaller {
             GitHubReleaseUpdater.Update checked = GitHubReleaseUpdater.cachedVerified(context);
             if (checked == null || !checked.tag.equals(update.tag))
                 throw new IllegalStateException("APK nao passou na verificacao de assinatura/versao.");
-            if(checked.debug)
-                throw new SecurityException("APK de teste nao autorizado para instalacao pelo Bridge.");
+            if(checked.debug && (!manualPrereleaseAuthorized || !DebugUpdateAccess.allowed()))
+                throw new SecurityException("Pre-release sem autorizacao manual por senha.");
             File apk = checked.apk;
             long size = apk.length();
             if (size < 50L * 1024L || size > 120L * 1024L * 1024L)

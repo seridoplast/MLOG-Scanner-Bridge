@@ -11,6 +11,7 @@ import android.os.Handler;
 import android.os.Looper;
 
 import org.json.JSONArray;
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
@@ -22,11 +23,15 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.security.MessageDigest;
 import java.util.Locale;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
 /** Downloads and verifies corporate-signed public GitHub Release APKs; installation is separate. */
 public final class GitHubReleaseUpdater {
     private static final String REPOSITORY = "seridoplast/MLOG-Scanner-Bridge";
     private static final String API = "https://api.github.com/repos/" + REPOSITORY + "/releases/latest";
+    private static final String LIST_API = "https://api.github.com/repos/" + REPOSITORY + "/releases?per_page=40";
     private static final String RELEASE_ASSET_PREFIX = "https://github.com/" + REPOSITORY + "/releases/download/";
     private static final String LEGACY_APK_NAME = "app-release.apk";
     // Matches the verified corporate release certificate in .github/workflows/gerar-apk.yml.
@@ -49,6 +54,63 @@ public final class GitHubReleaseUpdater {
         Update(File file, String version, long code, boolean isDebug) {
             apk=file; tag=version; versionCode=code; debug=isDebug;
         }
+    }
+
+    /** Used only by the manual update picker; automatic jobs never enumerate prereleases. */
+    static final class ReleaseInfo {
+        final String tag;
+        final boolean prerelease;
+        final long versionCode;
+        final JSONObject raw;
+        ReleaseInfo(JSONObject source) {
+            raw = source;
+            tag = source.optString("tag_name", "");
+            prerelease = source.optBoolean("prerelease", false);
+            versionCode = GitHubReleaseVersion.versionCode(tag);
+        }
+    }
+
+    interface ReleasesCallback {
+        void loaded(List<ReleaseInfo> releases);
+        void error(String message);
+    }
+
+    static void listManualReleases(ReleasesCallback callback) {
+        new Thread(() -> {
+            try {
+                JSONArray data = new JSONArray(new String(fetchJson(LIST_API), "UTF-8"));
+                ArrayList<ReleaseInfo> results = new ArrayList<>();
+                for (int i=0;i<data.length();i++) {
+                    JSONObject item = data.optJSONObject(i);
+                    if(item==null || item.optBoolean("draft", false)) continue;
+                    ReleaseInfo info = new ReleaseInfo(item);
+                    if(info.versionCode < 0) continue;
+                    results.add(info);
+                }
+                Collections.sort(results, (a,b) -> Long.compare(b.versionCode,a.versionCode));
+                UI.post(() -> callback.loaded(results));
+            } catch(Exception ex) {
+                UI.post(() -> callback.error(ex.getMessage()==null ? "Erro ao consultar releases." : ex.getMessage()));
+            }
+        }, "bridge-manual-release-list").start();
+    }
+
+    /** Manual request may download a prerelease ONLY while the password gate is valid. */
+    static void downloadSelected(Context context, ReleaseInfo info, Callback callback) {
+        new Thread(() -> {
+            try {
+                if(info == null || info.raw.optBoolean("draft",false))
+                    throw new IOException("Versao nao publicada.");
+                if(info.prerelease && !DebugUpdateAccess.allowed())
+                    throw new SecurityException("Senha necessaria para pre-release.");
+                postStatus(callback,"Baixando " + info.tag + "...");
+                Update result = downloadRelease(context, info.raw, info.prerelease);
+                if(result == null) UI.post(() -> callback.upToDate("Versao atual ou anterior."));
+                else UI.post(() -> callback.ready(result.apk,result.tag));
+            } catch (Exception ex) {
+                UI.post(() -> callback.error(ex.getMessage()==null?"Falha no download.":ex.getMessage()));
+            }
+        }, "bridge-manual-release-download").start();
     }
 
     /** Rechecks package name, monotonically increasing code and pinned signing certificate. */
@@ -76,19 +138,21 @@ public final class GitHubReleaseUpdater {
         JSONObject release = new JSONObject(new String(fetchJson(API), "UTF-8"));
         if(!BridgeUpdateChannel.isAutoChannel(release.optBoolean("draft",false),release.optBoolean("prerelease",false)))
             throw new IOException("A release consultada nao esta aprovada para atualizacao automatica.");
-        return downloadRelease(context, release);
+        return downloadRelease(context, release, false);
     }
 
-    /** Only published stable releases enter the automatic channel. */
-    private static Update downloadRelease(Context context, JSONObject release) throws Exception {
+    /** Allows a verified prerelease only for a password-authorized manual request. */
+    private static Update downloadRelease(Context context, JSONObject release, boolean prereleaseAuthorized) throws Exception {
         synchronized (UPDATE_LOCK) {
             File temp=null;
             try {
-                if (!BridgeUpdateChannel.isAutoChannel(release.optBoolean("draft",false),
-                        release.optBoolean("prerelease",false)))
-                    throw new IOException("Release nao aprovada.");
+                boolean prerelease=release.optBoolean("prerelease",false);
+                if(release.optBoolean("draft",false) || (prerelease && !prereleaseAuthorized))
+                    throw new IOException("Release nao liberada para este modo.");
+                if(prerelease && !DebugUpdateAccess.allowed())
+                    throw new SecurityException("Senha necessaria para pre-release.");
                 String tag=release.optString("tag_name", "");
-                int rollout=BridgeRolloutPolicy.percentage(release.optString("body", ""));
+                int rollout=prerelease ? 0 : BridgeRolloutPolicy.percentage(release.optString("body", ""));
                 long availableCode=GitHubReleaseVersion.versionCode(tag);
                 if(availableCode < 0) throw new IOException("Release sem versao valida: " + tag);
                 PackageManager pm=context.getPackageManager();
@@ -118,9 +182,9 @@ public final class GitHubReleaseUpdater {
                 if(cached.isFile() && tag.equals(sp.getString(PREF_VERSION,""))
                     && expectedHash.equals(sha256(cached))) {
                     verifyApk(pm,context.getPackageName(),cached,availableCode,tag.substring(1));
-                    sp.edit().putBoolean(PREF_READY,true).putBoolean(PREF_DEBUG,false)
+                    sp.edit().putBoolean(PREF_READY,true).putBoolean(PREF_DEBUG,prerelease)
                         .putInt(PREF_ROLLOUT,rollout).apply();
-                    return new Update(cached,tag,availableCode,false);
+                    return new Update(cached,tag,availableCode,prerelease);
                 }
                 temp=new File(dir,"github-download-temp.apk");
                 String actualHash=downloadApk(url,temp);
@@ -130,8 +194,8 @@ public final class GitHubReleaseUpdater {
                 if(!temp.renameTo(cached)) throw new IOException("Nao foi possivel finalizar APK verificado.");
                 temp=null;
                 sp.edit().putString(PREF_VERSION,tag).putBoolean(PREF_READY,true)
-                    .putBoolean(PREF_DEBUG,false).putInt(PREF_ROLLOUT,rollout).apply();
-                return new Update(cached,tag,availableCode,false);
+                    .putBoolean(PREF_DEBUG,prerelease).putInt(PREF_ROLLOUT,rollout).apply();
+                return new Update(cached,tag,availableCode,prerelease);
             } finally {
                 if(temp!=null) temp.delete();
             }
