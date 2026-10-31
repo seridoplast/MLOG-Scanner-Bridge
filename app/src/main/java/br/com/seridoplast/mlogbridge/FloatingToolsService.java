@@ -224,12 +224,12 @@ public final class FloatingToolsService extends Service {
             header.addView(button("−",this::collapse));layout.addView(header);
             layout.addView(separator());
             SharedPreferences pref=ScanAssistState.prefs(this);
-            // 1º botão: reaplica broadcast CMX e recupera a rota do MLOG
-            // abrindo/fechando a camera, se estiver na tela de Separacao.
+            // Reaplica broadcast CMX e tenta recuperar a Conferencia de Venda
+            // tocando no Volume e voltando imediatamente, quando homologado.
             TextView reset=button("⟳ Resetar Bipe",()->{
                 boolean ok=NativeScannerController.configure(this);
-                statusText=ok?"Configuracao CMX enviada. Verificando camera...":
-                    "CMX nao confirmou a configuracao. Verificando camera...";
+                statusText=ok?"Configuracao CMX enviada. Verificando Volume...":
+                    "CMX nao confirmou a configuracao. Verificando Volume...";
                 collapse();
                 MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
                 if(svc!=null)svc.requestShizukuFocusRecovery();

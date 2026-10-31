@@ -577,10 +577,11 @@ public final class MainActivity extends Activity {
             shizuku,()->selectShizukuMode());
         button(modeShizuku,"Abrir acessibilidade do Bridge",false,this::openAccessibilitySettings);
         if(shizuku){
-            check(modeShizuku,"Recuperar leitura ao fechar teclado (camera)",
+            check(modeShizuku,"Recuperar leitura ao fechar teclado (Volume)",
                 "camera_auto_recovery_v348",true);
-            subtitle(modeShizuku,"Na Separacao, abre e fecha rapidamente a camera apos " +
-                "ocultar o teclado. Desative aqui se interferir na operacao.");
+            subtitle(modeShizuku,"Na Conferencia de Venda (720x1440), abre Volume e volta " +
+                "com pausa de 80 ms via Shizuku. Em outras telas, somente se o " +
+                "botao Volume for identificado com seguranca. Desative se interferir.");
             button(modeShizuku,"Reaplicar broadcast exclusivo no CMX",false,()->
                 toast(NativeScannerController.configure(this)?"Comandos enviados.":
                     "Falha ao configurar scanner."));

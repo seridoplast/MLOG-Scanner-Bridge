@@ -1,7 +1,7 @@
 package br.com.seridoplast.mlogbridge;
 
 /**
- * Protege o ciclo de recuperacao de camera contra teclados que piscam,
+ * Protege o ciclo de recuperacao de tela contra teclados que piscam,
  * reentradas e multiplas aberturas consecutivas. Sem dependencias Android.
  * Nao confirma leitura nem reenvia codigo algum.
  */

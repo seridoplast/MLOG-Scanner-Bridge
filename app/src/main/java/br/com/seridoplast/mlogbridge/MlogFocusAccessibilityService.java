@@ -73,15 +73,13 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private static final long LONG_HOLD_MAX_MS=30000L;
 
     private ShizukuScanClient shizukuScan;
-    // v3.4.9: executar a sequencia ADB que foi comprovada no TC60 via
-    // Shizuku: input tap <camera> -> pequena pausa -> input keyevent BACK.
-    // A v3.4.8 dependia de reconhecer a rota Flutter por acessibilidade e
-    // frequentemente NAO enviava o BACK. Nao retransmitir leituras.
-    private static final long CAMERA_DEBOUNCE_MS=380L;
-    private static final int CAMERA_SHIZUKU_PAUSE_MS=950;
-    private static final long CAMERA_KEYBOARD_POLL_MS=320L;
-    private final CameraRecoveryPolicy cameraPolicy=new CameraRecoveryPolicy();
-    private int cameraEpoch;
+    // v3.5.4: recuperacao experimental pela tela Volume da Conferencia de Venda.
+    // Duplo comando numa unica sessao Shizuku: tocar Volume -> 80ms -> Voltar.
+    // Nao reenviar qualquer codigo ou Enter durante a recuperacao.
+    private static final long VOLUME_DEBOUNCE_MS=60L;
+    private static final int VOLUME_KEYBOARD_POLL_MS=120L;
+    private final CameraRecoveryPolicy recoveryPolicy=new CameraRecoveryPolicy();
+    private int recoveryEpoch;
     private long lastPhysicalShizukuScanAt;
 
     // Compativel com o IME antigo, mas a observacao principal usa as janelas
@@ -92,15 +90,15 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     /** Resetar Bipe: chamado apos recolher o painel flutuante. */
     void requestShizukuFocusRecovery(){
         if(!prefs().getBoolean(ShizukuScanMode.PREF,false)){
-            cameraFeedback(true,"Recuperacao pela camera exige Bipe Shizuku.");
+            volumeFeedback(true,"Recuperacao por Volume exige Bipe Shizuku.");
             return;
         }
-        final int epoch=++cameraEpoch;
+        final int epoch=++recoveryEpoch;
         // O painel e removido e reconstruido pelo WindowManager. Aguardar
         // um pouco para que a janela MLOG volte a ser a ativa.
         main.postDelayed(()->{
-            if(epoch==cameraEpoch)startCameraRecovery(true,"reset_button");
-        },360L);
+            if(epoch==recoveryEpoch)startVolumeRecovery(true,"reset_button");
+        },130L);
     }
 
     // O Gboard pode abrir/fechar sem um TYPE_WINDOWS_CHANGED confiavel no CMX.
@@ -108,18 +106,18 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private final Runnable keyboardWindowWatcher=new Runnable(){
         @Override public void run(){
             if(prefs().getBoolean(ShizukuScanMode.PREF,false) &&
-               !cameraPolicy.isRecovering()){
+               !recoveryPolicy.isRecovering()){
                 observeImeVisibility(isImeVisible());
             }else if(!prefs().getBoolean(ShizukuScanMode.PREF,false)){
-                cameraPolicy.resetKeyboard();
+                recoveryPolicy.resetKeyboard();
             }
-            main.postDelayed(this,CAMERA_KEYBOARD_POLL_MS);
+            main.postDelayed(this,VOLUME_KEYBOARD_POLL_MS);
         }
     };
 
     private void observeAndroidKeyboard(AccessibilityEvent event){
         if(event==null || !prefs().getBoolean(ShizukuScanMode.PREF,false) ||
-           cameraPolicy.isRecovering())return;
+           recoveryPolicy.isRecovering())return;
         int kind=event.getEventType();
         if(kind!=AccessibilityEvent.TYPE_WINDOWS_CHANGED &&
            kind!=AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
@@ -129,162 +127,156 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
 
     private void observeImeVisibility(boolean visible){
         long now=SystemClock.elapsedRealtime();
-        if(visible==cameraPolicy.keyboardVisible())return;
+        if(visible==recoveryPolicy.keyboardVisible())return;
         if(visible){
-            // Teclado da quantidade do proprio painel nao deve iniciar camera.
+            // Teclado da quantidade do proprio painel nao deve iniciar Volume.
             if(FloatingToolsService.isBatchInputOpen())return;
             AccessibilityNodeInfo root=mlogRoot();
-            if(!isSeparationReady(root))return;
+            if(!isVolumeRecoveryReady(root))return;
         }
-        boolean closed=cameraPolicy.observeKeyboard(visible,now);
-        final int epoch=++cameraEpoch;
+        boolean closed=recoveryPolicy.observeKeyboard(visible,now);
+        final int epoch=++recoveryEpoch;
         if(visible){
-            trace("CAMERA_IME_OPENED_MLOG");
+            trace("VOLUME_IME_OPENED_MLOG");
             return;
         }
-        trace("CAMERA_IME_CLOSED_MLOG");
+        trace("VOLUME_IME_CLOSED_MLOG");
         if(!closed || !prefs().getBoolean("camera_auto_recovery_v348",true))return;
         main.postDelayed(()->{
-            if(epoch!=cameraEpoch || cameraPolicy.keyboardVisible())return;
-            startCameraRecovery(false,"keyboard_closed");
-        },CAMERA_DEBOUNCE_MS);
+            if(epoch!=recoveryEpoch || recoveryPolicy.keyboardVisible())return;
+            startVolumeRecovery(false,"keyboard_closed");
+        },VOLUME_DEBOUNCE_MS);
     }
 
-    private boolean isSeparationReady(AccessibilityNodeInfo root){
+    /** Apenas a Conferencia de Venda (produto) esta homologada pelo print.
+     * A Separacao so usa Volume quando um botao semanticamente rotulado for
+     * localizado na posicao do topo; nunca usar a camera ou toques cegos. */
+    private boolean isVolumeRecoveryReady(AccessibilityNodeInfo root){
         if(root==null || root.getPackageName()==null ||
            !ScanCoordinator.TARGET.contentEquals(root.getPackageName()))return false;
         ScreenInfo info=inspect(root);
-        return "separacao".equals(info.screen) && info.hasSeparationControls &&
-               !info.login && !info.dialog && !isBlockingOverlay(root);
+        if(info.login || info.dialog || isBlockingOverlay(root))return false;
+        Point size=realScreenSize();
+        return findVolumeButton(info,size)!=null ||
+            (VolumeRecoveryTarget.isConference(info.screen,
+                info.hasConferencePageTitle,info.hasConferenceProductAction) &&
+             VolumeRecoveryTarget.isReferenceSize(size.x,size.y));
     }
 
-    /**
-     * Localizar o par de botoes da tela de Separacao, com base no diagnostico
-     * 720x1440: camera [224,820]-[352,916], teclado [368,820]-[496,916].
-     * Nao executar toque se os dois nao forem encontrados juntos.
-     */
-    private AccessibilityNodeInfo findSeparationCameraButton(ScreenInfo info,Point size){
-        AccessibilityNodeInfo left=null,right=null;
+    /** Exige rotulo de Volume e posicao de cabecalho; a etiqueta "Volume:"
+     * nao e um botao e nao pode ser acionada acidentalmente. */
+    private AccessibilityNodeInfo findVolumeButton(ScreenInfo info,Point size){
+        if(!supportedAspect(size))return null;
         for(AccessibilityNodeInfo n:info.clicks){
-            if(!n.isVisibleToUser() || !n.isEnabled() || n.isEditable() ||
-               n.getClassName()==null ||
-               !"android.widget.Button".contentEquals(n.getClassName()))continue;
+            if(!n.isVisibleToUser() || !n.isEnabled() || n.isEditable())continue;
+            String description=tag(n);
+            if(!has(description,"volume","volumes"))continue;
             Rect r=new Rect();n.getBoundsInScreen(r);
-            if(r.isEmpty())continue;
-            float x=r.centerX()/(float)size.x;
-            float y=r.centerY()/(float)size.y;
-            float w=r.width()/(float)size.x;
-            float h=r.height()/(float)size.y;
-            if(y<.55f || y>.67f || w<.10f || w>.24f || h<.04f || h>.10f)continue;
-            if(x>.34f && x<.47f){if(left!=null)return null;left=n;}
-            if(x>.53f && x<.66f){if(right!=null)return null;right=n;}
+            if(r.isEmpty() || r.width()>size.x*.26f || r.height()>size.y*.14f)continue;
+            if(VolumeRecoveryTarget.nearHeaderVolume(r.centerX(),r.centerY(),size.x,size.y))
+                return n;
         }
-        if(left==null || right==null)return null;
-        Rect a=new Rect(),b=new Rect();left.getBoundsInScreen(a);right.getBoundsInScreen(b);
-        if(Math.abs(a.centerY()-b.centerY())>size.y*.015f ||
-           Math.abs(a.width()-b.width())>size.x*.035f)return null;
-        return left;
+        return null;
     }
 
-    private void cameraFeedback(boolean manual,String message){
+    private void volumeFeedback(boolean manual,String message){
         status(message);
-        trace("CAMERA_RECOVERY_MESSAGE_"+message.replace(' ','_'));
+        trace("VOLUME_RECOVERY_MESSAGE_"+message.replace(' ','_'));
         if(manual){
             android.widget.Toast.makeText(this,message,
                 android.widget.Toast.LENGTH_LONG).show();
         }
     }
 
-    private void startCameraRecovery(boolean manual,String reason){
+    private void startVolumeRecovery(boolean manual,String reason){
         if(!prefs().getBoolean(ShizukuScanMode.PREF,false) ||
            (!manual && !prefs().getBoolean("camera_auto_recovery_v348",true)))return;
         long now=SystemClock.elapsedRealtime();
-        if(cameraPolicy.isRecovering()){
-            cameraFeedback(manual,"Recuperacao ja em andamento.");return;
+        if(recoveryPolicy.isRecovering()){
+            volumeFeedback(manual,"Recuperacao ja em andamento.");return;
         }
         if(isImeVisible()){
-            cameraFeedback(manual,"Feche o teclado antes de recuperar a leitura.");return;
+            volumeFeedback(manual,"Feche o teclado antes de recuperar a leitura.");return;
         }
-        // O watcher pode manter estado antigo por ate 320 ms. No botao manual,
+        // O watcher pode manter estado antigo por ate 120 ms. No botao manual,
         // o estado REAL do IME prevalece sobre o historico.
-        if(cameraPolicy.keyboardVisible())cameraPolicy.resetKeyboard();
+        if(recoveryPolicy.keyboardVisible())recoveryPolicy.resetKeyboard();
         if(shizukuBatchActive || ScanAssistState.isArmed(this) ||
            (shizukuScan!=null && shizukuScan.hasPendingScans()) ||
            !scanQueue.isIdle() || pendingCode!=null ||
            (!manual && now-lastPhysicalShizukuScanAt<1000L)){
-            cameraFeedback(manual,"Aguarde o fim das leituras antes de recuperar.");return;
+            volumeFeedback(manual,"Aguarde o fim das leituras antes de recuperar.");return;
         }
         if(shizukuScan==null || !shizukuScan.ready()){
-            cameraFeedback(manual,"Shizuku nao esta pronto para recuperar a leitura.");return;
+            volumeFeedback(manual,"Shizuku nao esta pronto para recuperar a leitura.");return;
         }
         AccessibilityNodeInfo root=mlogRoot();
-        if(!isSeparationReady(root)){
-            cameraFeedback(manual,"Abra a tela de Separacao do MLOG antes de recuperar.");return;
+        if(!isVolumeRecoveryReady(root)){
+            volumeFeedback(manual,"Volume nao identificado nesta tela do MLOG; recuperacao ignorada.");
+            return;
         }
         Point size=realScreenSize();
         if(!supportedAspect(size)){
-            cameraFeedback(manual,"Resolucao nao homologada para a camera.");return;
+            volumeFeedback(manual,"Resolucao nao homologada para Volume.");return;
         }
         ScreenInfo info=inspect(root);
         for(AccessibilityNodeInfo editor:info.editors){
             if(!editor.isVisibleToUser() || !editor.isEnabled())continue;
             CharSequence pendingText=editor.getText();
             if(pendingText!=null && pendingText.length()>0){
-                cameraFeedback(manual,"Ha texto nao enviado. Limpe-o antes de recuperar.");
+                volumeFeedback(manual,"Ha texto nao enviado. Limpe-o antes de recuperar.");
                 return;
             }
         }
-        AccessibilityNodeInfo button=findSeparationCameraButton(info,size);
-        Rect r=new Rect();
+        AccessibilityNodeInfo button=findVolumeButton(info,size);
+        int x,y;
         if(button!=null){
-            button.getBoundsInScreen(r);
-        }else if(size.x==720 && size.y==1440 && info.hasSeparationControls){
-            // Fallback estritamente homologado: o ADB recuperou a leitura
-            // tocando 288,868 no TC60 de 720x1440. Nunca usar em outro
-            // tamanho ou fora da Separacao identificada.
-            r.set(224,820,352,916);
-            trace("CAMERA_RECOVERY_KNOWN_TAP_288_868");
+            Rect r=new Rect();button.getBoundsInScreen(r);
+            x=r.centerX();y=r.centerY();
+            trace("VOLUME_RECOVERY_SEMANTIC_TARGET");
+        }else if(VolumeRecoveryTarget.isConference(info.screen,
+                info.hasConferencePageTitle,info.hasConferenceProductAction) &&
+                VolumeRecoveryTarget.isReferenceSize(size.x,size.y)){
+            x=VolumeRecoveryTarget.x(size.x);
+            y=VolumeRecoveryTarget.y(size.y);
+            trace("VOLUME_RECOVERY_KNOWN_TAP_648_175");
         }else{
-            cameraFeedback(manual,"Botao da camera nao identificado no MLOG.");return;
+            volumeFeedback(manual,"Botao Volume nao encontrado nesta tela.");return;
         }
-        if(isPointCoveredByIme(r.centerX(),r.centerY())){
-            cameraFeedback(manual,"Camera coberta pelo teclado.");return;
+        if(isPointCoveredByIme(x,y)){
+            volumeFeedback(manual,"Volume coberto pelo teclado.");return;
         }
-        if(!cameraPolicy.begin(now,manual)){
-            cameraFeedback(manual,"Aguarde alguns segundos para nova recuperacao.");return;
+        if(!recoveryPolicy.begin(now,manual)){
+            volumeFeedback(manual,"Aguarde alguns segundos para nova recuperacao.");return;
         }
-        final int epoch=++cameraEpoch;
-        trace("CAMERA_RECOVERY_START_"+reason);
-        // Mesmo executor e mesma API Shizuku usados no codigo + Enter.
-        // Executa input tap e, 950 ms depois, input keyevent 4. O Back
-        // e enviado APENAS se o tap terminou com codigo de saida 0.
-        boolean accepted=shizukuScan.recoverCamera(r.centerX(),r.centerY(),
-            CAMERA_SHIZUKU_PAUSE_MS,(tapOk,backOk)->{
-                if(epoch!=cameraEpoch)return;
-                cameraPolicy.finish();
-                if(!tapOk){
-                    trace("CAMERA_RECOVERY_TAP_FAILED");
-                    cameraFeedback(manual,"Falha ao abrir camera via Shizuku.");return;
-                }
-                if(!backOk){
-                    trace("CAMERA_RECOVERY_BACK_FAILED");
-                    cameraFeedback(manual,"Camera acionada, mas Voltar falhou. Feche manualmente.");
+        final int epoch=++recoveryEpoch;
+        trace("VOLUME_RECOVERY_START_"+reason);
+        final String initialScreen=info.screen;
+        // Uma unica chamada Shizuku evita a latencia de dois processos de input.
+        // O shell so envia Voltar se o comando de toque concluir sem erro.
+        // A navegacao Flutter nao pode ser confirmada nesse intervalo curto.
+        boolean accepted=shizukuScan.recoverVolume(x,y,
+            VolumeRecoveryTarget.PAUSE_MS,ok->{
+                recoveryPolicy.finish();
+                if(epoch!=recoveryEpoch)return;
+                if(!ok){
+                    trace("VOLUME_RECOVERY_SEQUENCE_FAILED");
+                    volumeFeedback(manual,"Falha na sequencia rapida de Volume pelo Shizuku.");
                     return;
                 }
-                trace("CAMERA_RECOVERY_TAP_AND_BACK_OK_UNVERIFIED");
-                main.postDelayed(()->{
-                    boolean returned=isSeparationReady(mlogRoot());
-                    trace(returned?"CAMERA_RECOVERY_SEPARACAO_VISIBLE":
-                        "CAMERA_RECOVERY_SEPARACAO_NOT_CONFIRMED");
-                    cameraFeedback(manual,returned?
-                        "Sequencia enviada; Separacao visivel. Teste uma leitura.":
-                        "Comandos enviados. Confira se voltou a Separacao.");
-                },300L);
+                trace("VOLUME_RECOVERY_TAP_BACK_SENT_UNVERIFIED");
+                if(manual)main.postDelayed(()->{
+                    AccessibilityNodeInfo returned=mlogRoot();
+                    String screen=returned==null?"desconhecida":inspect(returned).screen;
+                    volumeFeedback(true,initialScreen.equals(screen)?
+                        "Volume acionado e fechado. Confira a leitura.":
+                        "Comandos enviados; confira se voltou a conferencia.");
+                },150L);
             });
         if(!accepted){
-            cameraPolicy.finish();
-            trace("CAMERA_RECOVERY_SHIZUKU_REJECTED");
-            cameraFeedback(manual,"Shizuku ocupado ou indisponivel para recuperar.");
+            recoveryPolicy.finish();
+            trace("VOLUME_RECOVERY_SHIZUKU_REJECTED");
+            volumeFeedback(manual,"Shizuku ocupado ou indisponivel para Volume.");
         }
     }
     // Independente do motor IME antigo. Uma leitura fisica inicia o lote,
@@ -496,9 +488,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                     }
                     String raw=ScannerProtocol.barcodeRaw(intent);
                     lastPhysicalShizukuScanAt=SystemClock.elapsedRealtime();
-                    if(cameraPolicy.isRecovering()){
-                        trace("CAMERA_RECOVERY_SCAN_BLOCKED_NO_REPLAY");
-                        status("Leitura durante recuperacao da camera: nao enviada. Bipe novamente.");
+                    if(recoveryPolicy.isRecovering()){
+                        trace("VOLUME_RECOVERY_SCAN_BLOCKED_NO_REPLAY");
+                        status("Leitura durante recuperacao de Volume: nao enviada. Bipe novamente.");
                         return;
                     }
                     if(shizukuBatchActive){
@@ -649,9 +641,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     }
 
     void prepareShizuku(){
-        cameraPolicy.resetKeyboard();
-        cameraPolicy.finish();
-        ++cameraEpoch;
+        recoveryPolicy.resetKeyboard();
+        recoveryPolicy.finish();
+        ++recoveryEpoch;
         // The mode changed while the accessibility service stays alive.
         // Cancel every outstanding old-mode Enter/focus/tap callback before
         // accepting the first privileged barcode. Never replay old reads.
@@ -3225,8 +3217,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
 
     @Override public void onInterrupt(){lastKnownEditor=null;lastKnownScreen="";stopLongHold();cancelAutoCount("Acessibilidade interrompida; contador cancelado.");cancelPending();scanQueue.clear();++workGeneration;if(!prefs().getBoolean(ShizukuScanMode.PREF,false))restoreKeyboard();status("Acessibilidade interrompida.");}
     @Override public void onDestroy(){
-        ++cameraEpoch;
-        cameraPolicy.finish();
+        ++recoveryEpoch;
+        recoveryPolicy.finish();
         lastKnownEditor=null;
         lastKnownScreen="";
         stopLongHold();

@@ -71,7 +71,7 @@ final class ShizukuScanClient {
         } catch(RuntimeException ex) {return false;}
     }
 
-    /** Nao abrir a camera enquanto ha comandos de leitura na fila Shizuku. */
+    /** Nao recuperar a tela enquanto houver comandos de leitura na fila. */
     boolean hasPendingScans(){return pending.get()>0 || cameraBusy.get();}
 
     /** No coalescing by barcode value: two deliberate reads must remain two. */
@@ -81,7 +81,7 @@ final class ShizukuScanClient {
             return false;
         }
         if(cameraBusy.get()){
-            ScanCoordinator.status(context,"Recuperacao da camera em andamento. Bipe novamente depois.");
+            ScanCoordinator.status(context,"Recuperacao de Volume em andamento. Bipe novamente depois.");
             return false;
         }
         if(!ready()){
@@ -129,41 +129,75 @@ final class ShizukuScanClient {
         }
     }
 
-    interface CameraRecoveryCallback {
-        void onComplete(boolean tapOk,boolean backOk);
+    interface VolumeRecoveryCallback {
+        /** true = comandos aceitos pelo shell; NAO confirma retorno da tela Flutter. */
+        void onComplete(boolean commandsOk);
     }
 
-    /** Repete os dois comandos ADB validados no CMX, sem shell -c. */
-    boolean recoverCamera(int x,int y,int pauseMs,CameraRecoveryCallback callback){
+    /**
+     * Toca no Volume e envia Voltar na mesma sessao Shizuku, evitando dois
+     * startups do executavel input. O delay curto e EXPERIMENTAL: nao ha
+     * garantia de que a tela Flutter termine de abrir em 80 ms.
+     */
+    boolean recoverVolume(int x,int y,int pauseMs,VolumeRecoveryCallback callback){
         if(callback==null || x<1 || y<1 || x>4096 || y>4096 ||
-           pauseMs<350 || pauseMs>1800 || !ready() || pending.get()!=0 ||
+           pauseMs<40 || pauseMs>99 || !ready() || pending.get()!=0 ||
            !cameraBusy.compareAndSet(false,true))return false;
         try{
             worker.execute(()->{
-                boolean tapped=false,backed=false;
+                boolean ok=false;
+                long started=android.os.SystemClock.elapsedRealtime();
                 try{
-                    if(!ready())return;
-                    tapped=runRemoteInput("tap",String.valueOf(x),String.valueOf(y));
-                    Log.i("MLOGBridge",tapped?"CAMERA_SHIZUKU_TAP_OK":"CAMERA_SHIZUKU_TAP_FAILED");
-                    if(tapped){
-                        Thread.sleep(pauseMs);
-                        if(ready())backed=runRemoteInput("keyevent","4");
-                        Log.i("MLOGBridge",backed?"CAMERA_SHIZUKU_BACK_OK":"CAMERA_SHIZUKU_BACK_FAILED");
+                    if(ready()){
+                        // Apenas inteiros validados; nenhum argumento arbitrario.
+                        // Se o toque falhar, '&&' impede o BACK.
+                        String sequence=VolumeRecoveryTarget.shellSequence(x,y,pauseMs);
+                        ok=runRemoteShellSequence(sequence);
                     }
+                    Log.i("MLOGBridge",(ok?"VOLUME_SHIZUKU_SEQUENCE_OK":"VOLUME_SHIZUKU_SEQUENCE_FAILED")+
+                        " elapsed_ms="+(android.os.SystemClock.elapsedRealtime()-started)+
+                        " between_commands_ms="+pauseMs);
                 }catch(Exception ex){
-                    if(ex instanceof InterruptedException)Thread.currentThread().interrupt();
-                    Log.w("MLOGBridge","CAMERA_SHIZUKU_COMMAND_FAILED",ex);
+                    Log.w("MLOGBridge","VOLUME_SHIZUKU_COMMAND_FAILED",ex);
                 }finally{
-                    final boolean tapResult=tapped,backResult=backed;
+                    final boolean result=ok;
                     cameraBusy.set(false);
-                    main.post(()->callback.onComplete(tapResult,backResult));
+                    main.post(()->callback.onComplete(result));
                 }
             });
             return true;
         }catch(RuntimeException ex){
             cameraBusy.set(false);
-            Log.w("MLOGBridge","CAMERA_SHIZUKU_QUEUE_FAILED",ex);
+            Log.w("MLOGBridge","VOLUME_SHIZUKU_QUEUE_FAILED",ex);
             return false;
+        }
+    }
+
+    /** Sequencia fixa e validada; somente o metodo de Volume usa shell. */
+    private boolean runRemoteShellSequence(String script)throws Exception{
+        final Method method=Shizuku.class.getDeclaredMethod("newProcess",
+                String[].class,String[].class,String.class);
+        method.setAccessible(true);
+        Object result;
+        try{
+            result=method.invoke(null,(Object)new String[]{"/system/bin/sh","-c",script},null,null);
+        }catch(InvocationTargetException ex){
+            throw new IllegalStateException("Shizuku nao iniciou a sequencia Volume",ex.getCause());
+        }
+        if(!(result instanceof ShizukuRemoteProcess))return false;
+        ShizukuRemoteProcess process=(ShizukuRemoteProcess)result;
+        try{
+            if(!process.waitForTimeout(4000,TimeUnit.MILLISECONDS)){
+                process.destroy();
+                Log.w("MLOGBridge","VOLUME_SHIZUKU_TIMEOUT");
+                return false;
+            }
+            int exit=process.exitValue();
+            if(exit!=0)Log.w("MLOGBridge","VOLUME_SHIZUKU_EXIT_"+exit);
+            return exit==0;
+        }finally{
+            try{process.getInputStream().close();}catch(Exception ignored){}
+            try{process.getErrorStream().close();}catch(Exception ignored){}
         }
     }
 

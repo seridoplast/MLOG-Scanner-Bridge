@@ -249,6 +249,16 @@ jobs:
             tests/ZebraModeSwitch330Test.java
           java -cp /tmp/bridge-v330-tests br.com.seridoplast.mlogbridge.ZebraModeSwitch330Test
 
+      - name: Testar alvo de recuperacao rapida pelo Volume
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bridge-volume-test
+          javac -d /tmp/bridge-volume-test \
+            app/src/main/java/br/com/seridoplast/mlogbridge/VolumeRecoveryTarget.java \
+            tests/VolumeRecoveryTargetTest.java
+          java -cp /tmp/bridge-volume-test br.com.seridoplast.mlogbridge.VolumeRecoveryTargetTest
+
       - name: Nomear APK assinado no padrao vN.N.N
         shell: bash
         run: |

@@ -2,12 +2,12 @@
 
 Aplicativo Android para os coletores CMX TC60 (Android 14), integrando o scanner físico ao **MLOG** por broadcast e, no modo escolhido pelo operador, comandos pelo **Shizuku**.
 
-**Versão do projeto:** `3.5.3` · **Repositório:** `seridoplast/MLOG-Scanner-Bridge` · **Pacote:** `br.com.seridoplast.mlogbridge`.
+**Versão do projeto:** `3.5.4` · **Repositório:** `seridoplast/MLOG-Scanner-Bridge` · **Pacote:** `br.com.seridoplast.mlogbridge`.
 
 ## Funcionalidades
 
 - Leitura do scanner nativo CMX por **broadcast exclusivo**; modos **Bipe Shizuku** e **Bipe Normal**.
-- Botão flutuante **Resetar Bipe**, recuperação experimental pela câmera e controle protegido de bipes automáticos.
+- Botão flutuante **Resetar Bipe**, recuperação experimental pela tela **Volume** da Conferência de Venda e controle protegido de bipes automáticos.
 - Alerta quando o Shizuku não estiver disponível.
 - **Atualizador corporativo:** verifica o GitHub Releases, baixa APK de produção por HTTPS, exige SHA-256 idêntico ao digest informado pelo GitHub, confirma pacote, versão superior e certificado da chave corporativa.
 - **Instalação pelo Shizuku:** usa sessão do Package Manager (`pm install-create` → `install-write` via `stdin` → `install-commit`). Obtém retorno de cada fase; se o Android interromper o canal com EPIPE, apresenta o erro e oferece instalação pelo Android, com confirmação do operador. O shell não acessa o diretório privado do Bridge.
@@ -22,15 +22,25 @@ Aplicativo Android para os coletores CMX TC60 (Android 14), integrando o scanner
 
 O Shizuku precisa de inicialização adequada após reinicializações. O atualizador **não consegue iniciar o serviço Shizuku sozinho**. A instalação silenciosa depende também do comportamento do firmware CMX, que deve ser validado no aparelho piloto.
 
-## Teste da nova versão — v3.5.3
+## Teste piloto — v3.5.4 (recuperacao rapida por Volume)
 
-**Objetivo:** confirmar que o coletor com Bridge 3.5.2 reconhece uma nova versão e consegue instalar a atualização via Shizuku sem erro EPIPE. Não há mudanças na lógica do scanner; somente o número de versão foi incrementado.
+**Base:** projeto v3.5.3 enviado pelo operador; preserva o instalador Shizuku que ja foi validado no coletor.
 
-- `versionName`: `3.5.3`; `versionCode`: `1030503` (anterior: `1030502`).
-- Faça push na `main` para o GitHub Actions criar a Release `v3.5.3` com `rollout=0` e o APK assinado pela chave corporativa já configurada.
-- No **coletor piloto com Bridge 3.5.2**, acesse **Sobre → Buscar atualização agora → Instalar APK já baixado pelo Shizuku**. Esta instalação manual independe do `rollout=0`.
-- Confirme a versão 3.5.3 em **Sobre**, teste a leitura do scanner e registre qualquer erro da instalação. Se o Shizuku falhar, use **Instalar pelo Android** sem apagar o aplicativo nem as preferências.
-- Não mude `rollout=0` antes de validar o processo no coletor piloto.
+- `versionName`: `3.5.4`; `versionCode`: `1030504` (anterior: `1030503`).
+- **Mudanca:** apos fechar o teclado, substituir a navegacao antiga pela camera por um toque no icone **Volume** seguido de **Voltar**.
+- **Tela homologada por print:** **Conferencia de Venda**, com titulo e botao "BIPAR PRODUTOS", em **720x1440**, alvo central **(648,175)**. Em outras telas nao se presumem essas coordenadas; exige-se um controle Volume acessivel no cabecalho. A acao e ignorada se o alvo nao puder ser validado.
+- **Rapidez:** pausa experimental de **80 ms entre os comandos**. Sao executados em **uma sessao shell pelo Shizuku**, em vez de dois processos separados com a antiga pausa de 950 ms. **Nao ha garantia de tempo total abaixo de 100 ms**: o Android, o shell e o Flutter adicionam latencia e a navegacao pode levar mais tempo. Se o Voltar vier cedo demais, pode ser necessario aumentar a pausa numa proxima versao.
+- **Gatilho:** fechamento do teclado real (observacao de janelas de acessibilidade); debounce reduzido para 60 ms e polling de reserva a cada 120 ms. Ainda existem salvaguardas de leitura pendente, texto nao enviado, overlay, Shizuku indisponivel e intervalo de recuperacao.
+- A recuperacao **nao injeta nem repete codigos ou Enter**, e nao promete confirmar o retorno da rota Flutter: o teste em hardware deve validar se a conferencia continua intacta e as leituras voltam.
+- **Configuracao:** Ajustes > Bipe Shizuku > "Recuperar leitura ao fechar teclado (Volume)". O botao flutuante "Resetar Bipe" tambem tenta a recuperacao em tela compativel.
+- O pipeline do GitHub faz **Release `v3.5.4` com `rollout=0`** no push para `main`. Instale manualmente no coletor piloto e **nao libere o rollout** ate confirmar a navegacao e a ausencia de efeitos colaterais.
+
+### Passo de verificacao de uma versao piloto
+
+1. Com Shizuku ativo, abra Conferencia de Venda na tela conforme o print do teste.
+2. Abra e feche o teclado; observe a ida e volta ao Volume. Verifique se a tela principal permanece intacta e as leituras voltam a ser reconhecidas.
+3. Se o Volume nao abrir, se o Android voltar para outra pagina ou se a operacao for interrompida, **desative** "Recuperar leitura ao fechar teclado (Volume)" e mantenha o `rollout=0`.
+4. Registre logs com `adb logcat -d -s MLOGBridge:I` e confira `VOLUME_SHIZUKU_SEQUENCE_OK` e o campo `elapsed_ms`. O status confirma execucao de comandos, **nao** processamento da interface pelo Flutter.
 
 ## Teste da correção de instalação — v3.5.2
 
