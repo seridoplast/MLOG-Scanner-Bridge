@@ -2,6 +2,23 @@ name: Gerar APK do MLOG Scanner Bridge
 
 on:
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: 'Publicar release no GitHub depois do teste no coletor piloto?'
+        type: boolean
+        required: false
+        default: false
+      rollout_percent:
+        description: 'Percentual automatico inicial (0, 10, 25, 50, 100). Comece em 0.'
+        type: choice
+        options:
+          - '0'
+          - '10'
+          - '25'
+          - '50'
+          - '100'
+        default: '0'
+        required: false
   push:
     branches:
       - main
@@ -44,7 +61,7 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -z "$BRIDGE_KEYSTORE_BASE64" || -z "$BRIDGE_KEYSTORE_PASSWORD" ]]; then
-            echo '::error::Configure os dois GitHub Actions Secrets: BRIDGE_KEYSTORE_BASE64 e BRIDGE_KEYSTORE_PASSWORD. Consulte CONFIGURAR_ASSINATURA_FIXA.md.'
+            echo '::error::Configure os GitHub Secrets BRIDGE_KEYSTORE_BASE64 e BRIDGE_KEYSTORE_PASSWORD. Consulte README.md.'
             exit 1
           fi
           KEYSTORE_PATH="$RUNNER_TEMP/seridoplast-bridge-release.jks"
@@ -192,6 +209,16 @@ jobs:
           echo "Assinatura verificada. SHA-256 do certificado: $CERT"
           sha256sum "$APK"
 
+      - name: Testar politica de distribuicao gradual
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bridge-rollout-test
+          javac -d /tmp/bridge-rollout-test \
+            app/src/main/java/br/com/seridoplast/mlogbridge/BridgeRolloutPolicy.java \
+            tests/BridgeRolloutPolicyTest.java
+          java -cp /tmp/bridge-rollout-test br.com.seridoplast.mlogbridge.BridgeRolloutPolicyTest
+
       - name: Testar leitura de versao do GitHub Releases
         shell: bash
         run: |
@@ -222,7 +249,7 @@ jobs:
              "app/build/outputs/apk/release/MLOG-Scanner-Bridge-v${VERSION}.apk"
 
       - name: Publicar Release vN.N.N com APK assinado
-        if: github.event.repository.private == false
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_release && github.event.repository.private == false
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -241,7 +268,7 @@ jobs:
           else
             gh release create "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" --title "MLOG Scanner Bridge ${TAG}" \
-              --notes "Versao ${TAG}: modo experimental de caracteres como eventos de tecla pelo IME e alternativa Profile0 do CMX. InputConnection focada e necessaria no modo IME. Bipe antigo preservado. APK assinado." \
+              --notes "rollout=${{ inputs.rollout_percent }}" \
               --latest
           fi
 

@@ -1,6 +1,8 @@
 package br.com.seridoplast.mlogbridge;
 
 import android.app.Activity;
+import android.content.Context;
+import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.Signature;
@@ -21,7 +23,7 @@ import java.net.URL;
 import java.security.MessageDigest;
 import java.util.Locale;
 
-/** Manual-only updater for public GitHub Releases. Does not install or grant permissions silently. */
+/** Downloads and verifies corporate-signed public GitHub Release APKs; installation is separate. */
 public final class GitHubReleaseUpdater {
     private static final String REPOSITORY = "seridoplast/MLOG-Scanner-Bridge";
     private static final String API = "https://api.github.com/repos/" + REPOSITORY + "/releases/latest";
@@ -31,7 +33,110 @@ public final class GitHubReleaseUpdater {
     private static final String TRUSTED_CERT = "8151376de33abdee4c98cda4c88c102a8b9165a0db7edc18b1ad0403a7222fae";
     private static final long MAX_BYTES = 120L * 1024L * 1024L;
     private static final Handler UI = new Handler(Looper.getMainLooper());
+    private static final Object UPDATE_LOCK = new Object();
+    static final String APK_FILENAME = "bridge-github.apk";
+    static final String PREF_VERSION = "update_cached_version";
+    static final String PREF_READY = "update_cached_ready";
+    static final String PREF_ROLLOUT = "updater_release_rollout_percent";
     private GitHubReleaseUpdater() { }
+
+    static final class Update {
+        final File apk;
+        final String tag;
+        final long versionCode;
+        Update(File file, String version, long code) { apk=file; tag=version; versionCode=code; }
+    }
+
+    /** Rechecks package name, monotonically increasing code and pinned signing certificate. */
+    static Update cachedVerified(Context context) throws Exception {
+        synchronized (UPDATE_LOCK) {
+            SharedPreferences sp=context.getSharedPreferences(ScanCoordinator.PREFS, Context.MODE_PRIVATE);
+            String tag=sp.getString(PREF_VERSION, "");
+            long expected=GitHubReleaseVersion.versionCode(tag);
+            if(expected < 0 || !sp.getBoolean(PREF_READY, false)) return null;
+            File apk=new File(new File(context.getFilesDir(), "updates"), APK_FILENAME);
+            if(!apk.isFile()) return null;
+            PackageManager pm=context.getPackageManager();
+            long installed=code(pm.getPackageInfo(context.getPackageName(),0));
+            if(expected <= installed) {
+                sp.edit().putBoolean(PREF_READY, false).apply();
+                return null;
+            }
+            verifyApk(pm, context.getPackageName(), apk, expected, tag.substring(1));
+            return new Update(apk,tag,expected);
+        }
+    }
+
+    /** Returns null when already current. No download races between manual and WorkManager. */
+    static Update downloadLatest(Context context) throws Exception {
+        synchronized (UPDATE_LOCK) {
+            File temp=null;
+            try {
+                JSONObject release = new JSONObject(new String(fetchJson(API), "UTF-8"));
+                String tag=release.optString("tag_name", "");
+                int rollout=BridgeRolloutPolicy.percentage(release.optString("body", ""));
+                long availableCode=GitHubReleaseVersion.versionCode(tag);
+                if(availableCode < 0) throw new IOException("Release sem versao valida: " + tag);
+                PackageManager pm=context.getPackageManager();
+                long currentCode=code(pm.getPackageInfo(context.getPackageName(),0));
+                if(availableCode <= currentCode) {
+                    context.getSharedPreferences(ScanCoordinator.PREFS, Context.MODE_PRIVATE)
+                        .edit().putBoolean(PREF_READY,false).apply();
+                    return null;
+                }
+                context.getSharedPreferences(ScanCoordinator.PREFS, Context.MODE_PRIVATE)
+                    .edit().putInt(PREF_ROLLOUT, rollout).apply();
+                JSONArray assets=release.optJSONArray("assets");
+                JSONObject apkAsset=null;
+                String wanted="MLOG-Scanner-Bridge-"+tag+".apk";
+                if(assets!=null) for(int i=0;i<assets.length();i++) {
+                    JSONObject candidate=assets.optJSONObject(i);
+                    if(candidate!=null && wanted.equals(candidate.optString("name"))) {
+                        apkAsset=candidate; break;
+                    }
+                }
+                if(apkAsset==null) throw new IOException("Release sem APK esperado: "+wanted);
+                String url=apkAsset.optString("browser_download_url", "");
+                if(!url.equals(RELEASE_ASSET_PREFIX+tag+"/"+wanted))
+                    throw new IOException("URL do APK nao corresponde ao GitHub oficial.");
+                String digest=apkAsset.optString("digest","");
+                if(!digest.matches("sha256:[a-fA-F0-9]{64}"))
+                    throw new IOException("Release sem hash SHA-256 verificavel.");
+                String expectedHash=digest.substring(7).toLowerCase(Locale.ROOT);
+                SharedPreferences sp=context.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE);
+                File dir=new File(context.getFilesDir(), "updates");
+                if(!dir.isDirectory() && !dir.mkdirs()) throw new IOException("Pasta de atualizacoes indisponivel.");
+                File cached=new File(dir, APK_FILENAME);
+                if(cached.isFile() && tag.equals(sp.getString(PREF_VERSION,""))
+                    && expectedHash.equals(sha256(cached))) {
+                    verifyApk(pm,context.getPackageName(),cached,availableCode,tag.substring(1));
+                    sp.edit().putBoolean(PREF_READY,true).apply();
+                    return new Update(cached,tag,availableCode);
+                }
+                temp=new File(dir,"github-download-temp.apk");
+                String actualHash=downloadApk(url,temp);
+                if(!expectedHash.equals(actualHash)) throw new IOException("SHA-256 divergente; download rejeitado.");
+                verifyApk(pm,context.getPackageName(),temp,availableCode,tag.substring(1));
+                if(cached.exists() && !cached.delete()) throw new IOException("Nao foi possivel remover APK anterior.");
+                if(!temp.renameTo(cached)) throw new IOException("Nao foi possivel finalizar APK verificado.");
+                temp=null;
+                sp.edit().putString(PREF_VERSION,tag).putBoolean(PREF_READY,true).apply();
+                return new Update(cached,tag,availableCode);
+            } finally {
+                if(temp!=null) temp.delete();
+            }
+        }
+    }
+
+    private static String sha256(File file) throws Exception {
+        MessageDigest digest=MessageDigest.getInstance("SHA-256");
+        try(InputStream in=new java.io.FileInputStream(file)) {
+            byte[] buffer=new byte[16384]; int n;
+            while((n=in.read(buffer))!=-1) digest.update(buffer,0,n);
+        }
+        return hex(digest.digest());
+    }
+
 
     public interface Callback {
         void status(String text);
@@ -43,62 +148,20 @@ public final class GitHubReleaseUpdater {
     private static void postStatus(Callback cb, String text) { UI.post(() -> cb.status(text)); }
 
     public static void checkAndDownload(Activity activity, Callback callback) {
-        final android.content.Context context = activity.getApplicationContext();
+        final Context context=activity.getApplicationContext();
         new Thread(() -> {
-            File temp = null;
             try {
-                postStatus(callback, "Consultando o GitHub Releases...");
-                JSONObject release = new JSONObject(new String(fetchJson(API), "UTF-8"));
-                String tag = release.optString("tag_name", "");
-                long availableCode = GitHubReleaseVersion.versionCode(tag);
-                if (availableCode < 0) throw new IOException("Release sem identificação de build válida: " + tag);
-                PackageManager pm = context.getPackageManager();
-                PackageInfo installed = pm.getPackageInfo(context.getPackageName(), 0);
-                long currentCode = code(installed);
-                if (availableCode <= currentCode) {
-                    UI.post(() -> callback.upToDate("Você já está atualizado. Build instalado: " + currentCode + "."));
-                    return;
+                postStatus(callback, "Consultando GitHub Releases...");
+                Update found=downloadLatest(context);
+                if(found==null) {
+                    UI.post(() -> callback.upToDate("Ja esta na ultima versao publicada."));
+                } else {
+                    UI.post(() -> callback.ready(found.apk,found.tag));
                 }
-                JSONArray assets = release.optJSONArray("assets");
-                JSONObject apkAsset = null;
-                if (assets != null) for (int index = 0; index < assets.length(); index++) {
-                    JSONObject asset = assets.optJSONObject(index);
-                    if (asset != null && (LEGACY_APK_NAME.equals(asset.optString("name")) ||
-                            ("MLOG-Scanner-Bridge-" + tag + ".apk").equals(asset.optString("name")))) {
-                        apkAsset = asset; break;
-                    }
-                }
-                if (apkAsset == null) throw new IOException("Release encontrada, mas sem APK da versão " + tag + ".");
-                String apkName = apkAsset.optString("name", "");
-                String downloadUrl = apkAsset.optString("browser_download_url", "");
-                if (!downloadUrl.startsWith(RELEASE_ASSET_PREFIX) || !downloadUrl.endsWith("/" + apkName)) {
-                    throw new IOException("Endereço do APK não corresponde ao repositório esperado.");
-                }
-                String digest = apkAsset.optString("digest", "");
-                if (!digest.matches("sha256:[A-Fa-f0-9]{64}")) {
-                    throw new IOException("Release sem hash SHA-256 válido. Não é seguro instalar.");
-                }
-                String expectedHash = digest.substring("sha256:".length()).toLowerCase(Locale.ROOT);
-                postStatus(callback, "Nova build " + availableCode + ". Baixando APK assinado...");
-                File dir = new File(context.getFilesDir(), "updates");
-                if (!dir.isDirectory() && !dir.mkdirs()) throw new IOException("Não foi possível criar a pasta de atualizações.");
-                temp = new File(dir, "github-download-temp.apk");
-                String actualHash = downloadApk(downloadUrl, temp);
-                if (!expectedHash.equals(actualHash)) throw new IOException("Hash do APK divergente; arquivo rejeitado.");
-                verifyApk(pm, context.getPackageName(), temp, availableCode, tag.substring(1));
-                File completed = new File(dir, "bridge-github.apk");
-                if (completed.exists() && !completed.delete()) throw new IOException("Não foi possível substituir o APK de atualização anterior.");
-                if (!temp.renameTo(completed)) throw new IOException("Não foi possível finalizar o download.");
-                temp = null;
-                File trusted = completed;
-                UI.post(() -> callback.ready(trusted, tag));
-            } catch (Exception error) {
-                String message = error.getMessage();
-                UI.post(() -> callback.error(message == null ? "Não foi possível consultar o GitHub." : message));
-            } finally {
-                if (temp != null) temp.delete();
+            } catch(Exception ex) {
+                UI.post(() -> callback.error(ex.getMessage()==null?"Falha na consulta.":ex.getMessage()));
             }
-        }, "bridge-github-update").start();
+        },"bridge-github-update").start();
     }
 
     private static long code(PackageInfo info) {

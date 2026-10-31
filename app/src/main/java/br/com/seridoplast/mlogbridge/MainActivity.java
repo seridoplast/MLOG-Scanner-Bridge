@@ -696,12 +696,17 @@ public final class MainActivity extends Activity {
         try{installedVersion=getPackageManager().getPackageInfo(getPackageName(),0).versionName;}
         catch(Exception ignored){installedVersion="3.2.3";}
         title("Sobre","MLOG Scanner Bridge · v"+installedVersion);
-        LinearLayout updates=card();updates.addView(label("Atualização",17,ink,true));
-        subtitle(updates,"Verifica a última versão assinada no GitHub Releases.");
-        githubUpdateStatus=label("Versão instalada: "+installedVersion,13,muted,false);
+        LinearLayout updates=card();updates.addView(label("Atualizações automáticas",17,ink,true));
+        subtitle(updates,"GitHub Releases → APK corporativo verificado → instalacao pelo Shizuku quando o coletor estiver livre.");
+        check(updates,"Verificar atualizacoes automaticamente",BridgeUpdater.PREF_ENABLED,true);
+        check(updates,"Instalar quando o coletor estiver inativo",BridgeUpdater.PREF_INSTALL,true);
+        subtitle(updates,"Liberacao gradual controlada no GitHub (0% a 100%). Com 0%, apenas download/manual. O Bridge nunca instala enquanto o MLOG estiver ativo na tela.");
+        githubUpdateStatus=label("Versão instalada: "+installedVersion+"\n"+
+            prefs.getString(BridgeUpdater.LAST_STATUS,"Nenhuma verificacao automatica registrada."),13,muted,false);
         space(updates,9);updates.addView(githubUpdateStatus);
-        button(updates,"Buscar atualização no GitHub",true,this::checkGitHubUpdate);
-        subtitle(updates,"O Android pede confirmação para instalar. Seus dados são mantidos numa atualização compatível.");
+        button(updates,"Buscar atualizacao agora",true,this::checkGitHubUpdate);
+        button(updates,"Instalar APK ja baixado pelo Shizuku",false,this::installCachedShizuku);
+        subtitle(updates,"Se o Shizuku estiver indisponivel, a instalacao manual pelo Android continua possivel. Mantenha a mesma assinatura do APK.");
         LinearLayout about=card();about.addView(label("Integração local",17,ink,true));
         subtitle(about,"Integração do leitor nativo com o MLOG.");
         LinearLayout control=card();control.addView(label("Permissões",17,ink,true));
@@ -712,25 +717,43 @@ public final class MainActivity extends Activity {
     private void setUpdateStatus(String text){
         if(githubUpdateStatus!=null) githubUpdateStatus.setText(text);
     }
+    private void installCachedShizuku(){
+        if(!ShizukuApkInstaller.ready()){
+            setUpdateStatus("Shizuku nao esta ativo/autorizado. Inicie-o antes de instalar.");return;
+        }
+        new AlertDialog.Builder(this)
+            .setTitle("Instalar pelo Shizuku")
+            .setMessage("A instalacao pode reiniciar o Bridge. Feche a atividade de Separacao antes de continuar.")
+            .setPositiveButton("Instalar",(d,w)->{
+                setUpdateStatus("Validando APK e enviando para o instalador...");
+                ShizukuApkInstaller.installAsync(this,(ok,msg)->setUpdateStatus(msg));
+            })
+            .setNegativeButton("Cancelar",null).show();
+    }
     private void checkGitHubUpdate(){
-        if(githubChecking){ toast("Verificação em andamento.");return; }
+        if(githubChecking){toast("Verificacao em andamento.");return;}
         githubChecking=true;
         GitHubReleaseUpdater.checkAndDownload(this,new GitHubReleaseUpdater.Callback(){
-            @Override public void status(String text){ setUpdateStatus(text); }
-            @Override public void upToDate(String text){ githubChecking=false;setUpdateStatus(text); }
+            @Override public void status(String text){setUpdateStatus(text);}
+            @Override public void upToDate(String text){
+                githubChecking=false;setUpdateStatus(text);BridgeUpdater.status(MainActivity.this,text);
+            }
             @Override public void error(String message){
                 githubChecking=false;
-                setUpdateStatus("Não foi possível atualizar: "+message);
+                setUpdateStatus("Nao foi possivel atualizar: "+message);
+                BridgeUpdater.status(MainActivity.this,"Falha na verificacao manual: "+message);
             }
             @Override public void ready(File file,String tag){
                 githubChecking=false;
-                setUpdateStatus("APK "+tag+" verificado. Instalação pendente.");
+                int rollout=prefs.getInt(GitHubReleaseUpdater.PREF_ROLLOUT,0);
+                BridgeUpdater.status(MainActivity.this,"APK "+tag+" verificado, liberacao "+rollout+"%.");
+                setUpdateStatus("APK "+tag+" validado. Rollout automatico: "+rollout+"%.");
                 new AlertDialog.Builder(MainActivity.this)
-                    .setTitle("Atualização verificada")
-                    .setMessage("A nova versão foi baixada e sua assinatura foi validada. O Android pedirá confirmação para atualizar sem desinstalar o aplicativo.")
-                    .setPositiveButton("Instalar",(d,w)->installVerifiedApk(file))
-                    .setNegativeButton("Depois",(d,w)->{})
-                    .show();
+                    .setTitle("Atualizacao assinada: "+tag)
+                    .setMessage("O APK passou na verificacao de integridade, pacote e certificado. Instalar agora encerra o Bridge por alguns instantes.")
+                    .setPositiveButton("Instalar via Shizuku",(d,w)->installCachedShizuku())
+                    .setNeutralButton("Instalar pelo Android",(d,w)->installVerifiedApk(file))
+                    .setNegativeButton("Depois",null).show();
             }
         });
     }
@@ -763,6 +786,10 @@ public final class MainActivity extends Activity {
         b.setPadding(0,dp(5),0,dp(5));b.setChecked(prefs.getBoolean(key,fallback));
         b.setOnCheckedChangeListener((control,on)->{
             prefs.edit().putBoolean(key,on).apply();
+            if(BridgeUpdater.PREF_ENABLED.equals(key) || BridgeUpdater.PREF_INSTALL.equals(key)){
+                BridgeUpdater.schedule(this);
+                if(on && BridgeUpdater.PREF_ENABLED.equals(key))BridgeUpdater.checkSoon(this);
+            }
             if("fast_ime_mode".equals(key) || "experimental_bridge_ime".equals(key) ||
                 "trigger_prefocus".equals(key) || NativeScannerController.LONG_HOLD_PREF.equals(key)){
                 if(NativeScannerController.LONG_HOLD_PREF.equals(key) && !on){
@@ -836,7 +863,7 @@ public final class MainActivity extends Activity {
         else if(ZebraProfile0Mode.isSelected(prefs.getBoolean(ZebraImeMode.PREF,false),
                 prefs.getBoolean(ZebraProfile0Mode.PREF,false)))
             NativeScannerController.configureProfile0Keyboard(this);
-        new Thread(() -> BridgeUpdater.check(getApplicationContext()), "bridge-update-start").start();
+        BridgeUpdater.checkSoon(this);
         IntentFilter f=new IntentFilter();for(String a:ScannerProtocol.ACTIONS)f.addAction(a);
         try{
             if(Build.VERSION.SDK_INT>=33)registerReceiver(scannerTest,f,Context.RECEIVER_EXPORTED);

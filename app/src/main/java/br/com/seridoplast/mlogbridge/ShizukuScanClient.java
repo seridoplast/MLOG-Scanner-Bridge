@@ -88,6 +88,8 @@ final class ShizukuScanClient {
             ScanCoordinator.status(context,"Shizuku sem conexao. Leitura nao enviada.");
             return false;
         }
+        context.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE)
+            .edit().putLong("bridge_last_shizuku_scan_wall",System.currentTimeMillis()).apply();
         if(pending.incrementAndGet()>ShizukuScanMode.MAX_PENDING){
             pending.decrementAndGet();
             ScanCoordinator.status(context,"Fila cheia. Leitura nao enviada; confira o MLOG.");
