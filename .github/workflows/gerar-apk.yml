@@ -252,6 +252,16 @@ jobs:
           java -cp /tmp/bridge-release-policy br.com.seridoplast.mlogbridge.BridgeUpdateChannelTest
           java -cp /tmp/bridge-release-policy br.com.seridoplast.mlogbridge.ConfirmationReleasePolicyTest
 
+      - name: Testar senha de pre-release
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bridge-debug-auth
+          javac -d /tmp/bridge-debug-auth \
+            app/src/main/java/br/com/seridoplast/mlogbridge/DebugUpdateAccess.java \
+            tests/DebugUpdateAccessTest.java
+          java -cp /tmp/bridge-debug-auth br.com.seridoplast.mlogbridge.DebugUpdateAccessTest
+
       - name: Testar alternancia Profile0 e eventos IME
         shell: bash
         run: |
@@ -274,18 +284,6 @@ jobs:
             tests/CameraRecoveryPolicyTest.java
           java -cp /tmp/bridge-volume-test br.com.seridoplast.mlogbridge.VolumeRecoveryTargetTest
           java -cp /tmp/bridge-volume-test br.com.seridoplast.mlogbridge.CameraRecoveryPolicyTest
-
-      - name: Testar politicas de release manual e senha
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p /tmp/bridge-manual-test
-          javac -d /tmp/bridge-manual-test \
-            app/src/main/java/br/com/seridoplast/mlogbridge/BridgeUpdateChannel.java \
-            app/src/main/java/br/com/seridoplast/mlogbridge/GitHubReleaseVersion.java \
-            app/src/main/java/br/com/seridoplast/mlogbridge/DebugUpdateAccess.java \
-            tests/BridgeReleaseManualPolicyTest.java
-          java -cp /tmp/bridge-manual-test br.com.seridoplast.mlogbridge.BridgeReleaseManualPolicyTest
 
       - name: Nomear APK assinado no padrao vN.N.N
         shell: bash
@@ -321,18 +319,18 @@ jobs:
                 --target "$GITHUB_SHA" --title "MLOG Scanner Bridge ${TAG}" \
                 --notes "rollout=${ROLLOUT}" --latest
             fi
+          elif [[ "$GITHUB_EVENT_NAME" == "push" && "$VERSION" == "3.5.10" ]] && \
+               ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # Somente a v3.5.10 foi aprovada para publicar estavel no primeiro push.
+            # Proximas versoes continuam em pre-release ate aprovacao manual.
+            gh release create "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" --title "MLOG Scanner Bridge ${TAG}" \
+              --notes 'rollout=100' --latest
           elif ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            if [[ "$TAG" == "v3.6.0" ]]; then
-              # Solicitado: publicar esta versao como release aprovada para testar auto-update.
-              gh release create "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" \
-                --target "$GITHUB_SHA" --title "MLOG Scanner Bridge ${TAG}" \
-                --notes 'rollout=100' --latest
-            else
-              # Futuras versoes voltam ao fluxo seguro: teste primeiro.
-              gh release create "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" \
-                --target "$GITHUB_SHA" --title "MLOG Scanner Bridge ${TAG}" \
-                --notes 'rollout=0' --prerelease
-            fi
+            # git push por padrao = testavel via USB, sem distribuicao automatica.
+            gh release create "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" --title "MLOG Scanner Bridge ${TAG}" \
+              --notes 'rollout=0' --prerelease
           else
             echo "::notice::Tag $TAG ja publicada; nao substituir APK."
           fi

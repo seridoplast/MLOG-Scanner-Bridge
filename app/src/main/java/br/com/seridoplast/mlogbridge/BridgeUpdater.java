@@ -14,7 +14,7 @@ import java.util.concurrent.TimeUnit;
 
 /** Background checks are inexact; Android schedules them when network/battery permit. */
 public final class BridgeUpdater {
-    static final String AUTO_CHECK="bridge_auto_update_check_v360";
+    static final String AUTO_CHECK="bridge_auto_update_check_v350";
     static final String AUTO_INSTALL="bridge_auto_install_idle_v359";
     private static final String RETRY_A="bridge_idle_retry_2m_a_v359";
     private static final String RETRY_B="bridge_idle_retry_2m_b_v359";
@@ -29,15 +29,10 @@ public final class BridgeUpdater {
     public static void schedule(Context ctx) {
         WorkManager manager=WorkManager.getInstance(ctx.getApplicationContext());
         SharedPreferences sp=ctx.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE);
-        // Migra o agendador periodico anterior para 1 hora.
+        // Retira a tarefa antiga de 30 min da v3.5.8; mantem so a nova versao.
         if(!sp.getBoolean("migrated_install_periodic_v359",false)) {
             manager.cancelUniqueWork("bridge_auto_install_idle_v350");
             sp.edit().putBoolean("migrated_install_periodic_v359",true).apply();
-        }
-        if(!sp.getBoolean("migrated_update_check_v360",false)) {
-            manager.cancelUniqueWork("bridge_auto_update_check_v350");
-            manager.cancelUniqueWork("bridge_check_soon_v350");
-            sp.edit().putBoolean("migrated_update_check_v360",true).apply();
         }
         if(!sp.getBoolean(PREF_ENABLED,true)) {
             manager.cancelUniqueWork(AUTO_CHECK);
@@ -46,9 +41,9 @@ public final class BridgeUpdater {
             manager.cancelUniqueWork(RETRY_B);
             return;
         }
-        PeriodicWorkRequest periodic=new PeriodicWorkRequest.Builder(BridgeAutoUpdateWorker.class,1,TimeUnit.HOURS)
+        PeriodicWorkRequest periodic=new PeriodicWorkRequest.Builder(BridgeAutoUpdateWorker.class,2,TimeUnit.HOURS)
             .setConstraints(online()).build();
-        manager.enqueueUniquePeriodicWork(AUTO_CHECK,ExistingPeriodicWorkPolicy.UPDATE,periodic);
+        manager.enqueueUniquePeriodicWork(AUTO_CHECK,ExistingPeriodicWorkPolicy.KEEP,periodic);
         // Installer rechecks staged APK even when no new release is available.
         if(!sp.getBoolean(PREF_INSTALL,true)){
             manager.cancelUniqueWork(AUTO_INSTALL);
@@ -82,12 +77,12 @@ public final class BridgeUpdater {
         long now=System.currentTimeMillis();
         SharedPreferences sp=ctx.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE);
         long last=sp.getLong("updater_last_check_requested",0L);
-        if(now-last<60*60*1000L && now>=last)return;
+        if(now-last<2*60*60*1000L && now>=last)return;
         sp.edit().putLong("updater_last_check_requested",now).apply();
         OneTimeWorkRequest request=new OneTimeWorkRequest.Builder(BridgeAutoUpdateWorker.class)
             .setConstraints(online()).build();
         WorkManager.getInstance(ctx.getApplicationContext())
-            .enqueueUniqueWork("bridge_check_soon_v360",ExistingWorkPolicy.KEEP,request);
+            .enqueueUniqueWork("bridge_check_soon_v350",ExistingWorkPolicy.KEEP,request);
     }
     public static void status(Context ctx,String message) {
         ctx.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE)

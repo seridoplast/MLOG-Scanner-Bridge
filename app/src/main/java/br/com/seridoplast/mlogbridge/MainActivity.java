@@ -34,6 +34,10 @@ import rikka.shizuku.Shizuku;
 import android.view.inputmethod.InputMethodManager;
 import android.view.inputmethod.InputMethodInfo;
 import java.util.List;
+import java.util.ArrayDeque;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
 
 
 /**
@@ -41,13 +45,26 @@ import java.util.List;
  * O teste exibe leituras somente na tela; o codigo nao vai para preferências.
  */
 public final class MainActivity extends Activity {
+    private static final class ScanRecord {
+        final String code;
+        final String format;
+        final String time;
+        ScanRecord(String code,String format,String time){
+            this.code=code;
+            this.format=format;
+            this.time=time;
+        }
+    }
     private final Handler handler = new Handler(Looper.getMainLooper());
     private SharedPreferences prefs;
     private String themeChoice;
     private int page = 0;
     private int bg, card, line, ink, muted, inverse, inkSurface;
     private LinearLayout root, content, footer;
-    private TextView preview, lastStatus, barcodeFormatStatus, barcodeArtifactStatus, barcodeFieldsStatus, serviceState, shizukuSettingsStatus;
+    private TextView preview, lastStatus, barcodeFormatStatus, barcodeArtifactStatus, barcodeFieldsStatus, serviceState, shizukuSettingsStatus, scannerConnectionStatus;
+    private LinearLayout recentReadsList;
+    private final ArrayDeque<ScanRecord> recentReads = new ArrayDeque<>();
+    private static final int MAX_RECENT_READS = 4;
     private LinearLayout setupWarningCard;
     private TextView setupWarningLabel;
     private TextView setupAccessibilityStep, setupKeyboardEnabledStep,
@@ -114,6 +131,8 @@ public final class MainActivity extends Activity {
                     "CMX não informou o tipo. Campos recebidos: "+lastMetadataFields:
                     "Simbologia declarada pelo scanner. Valor acima é o conteúdo decodificado.");
             }
+            recordRecentScan(visibleCode==null || visibleCode.isEmpty()?"Somente caracteres invisíveis":visibleCode,lastSymbology);
+            refreshHomeScannerUi();
         }
     };
     private boolean isActiveAppScreen(){return !isFinishing() && !isDestroyed();}
@@ -133,6 +152,7 @@ public final class MainActivity extends Activity {
                 ShizukuHealthMonitor.refresh(MainActivity.this);
             updateShizukuUiStatus();
             refreshSetupWarning();
+            refreshHomeScannerUi();
             if(page==2 && lastStatus!=null){
                 lastStatus.setText(prefs.getString("last_status","Nenhum diagnostico ainda."));
             }
@@ -317,7 +337,7 @@ public final class MainActivity extends Activity {
         root.addView(footer);
         githubUpdateStatus=null;
         preview=null;lastStatus=null;barcodeFormatStatus=null;barcodeArtifactStatus=null;
-        barcodeFieldsStatus=null;serviceState=null;shizukuSettingsStatus=null;setupWarningCard=null;setupWarningLabel=null;setupAccessibilityStep=null;setupKeyboardEnabledStep=null;setupKeyboardSelectedStep=null;setupFloatingStep=null;
+        barcodeFieldsStatus=null;serviceState=null;shizukuSettingsStatus=null;scannerConnectionStatus=null;recentReadsList=null;setupWarningCard=null;setupWarningLabel=null;setupAccessibilityStep=null;setupKeyboardEnabledStep=null;setupKeyboardSelectedStep=null;setupFloatingStep=null;
         if(page==0)home();else if(page==1)settings();else if(page==2)diagnostic();else about();
     }
     private void show(int p){page=p;displayPage();}
@@ -428,31 +448,136 @@ public final class MainActivity extends Activity {
 
     private void home(){
         showSetupWarning();
-        title("Scanner",null);
-        LinearLayout sample=card();
-        sample.addView(label("Última leitura",13,muted,true));
-        preview=label(lastSample==null?"Aguardando...":BarcodeCleaner.clean(lastSample),21,ink,true);
-        preview.setGravity(Gravity.CENTER);preview.setTextIsSelectable(true);
-        space(sample,12);sample.addView(preview);
-        lastStatus=label(scanCount==0?"Pronto para testar":"Leituras: "+scanCount,12,muted,false);
-        lastStatus.setGravity(Gravity.CENTER);sample.addView(lastStatus);
-        LinearLayout service=card();
-        service.addView(label("Status do Bridge",17,ink,true));
-        serviceState=label("Verificando...",14,muted,false);
-        space(service,8);service.addView(serviceState);
-        button(service,"Abrir MLOG",true,this::openMlog);
-        LinearLayout tools=card();
-        tools.addView(label("Ferramentas",17,ink,true));
-        button(tools,"Abrir botão flutuante",true,this::openFloatingTools);
-        button(tools,"Desligar botão flutuante",false,()->{
-            stopService(new Intent(this,FloatingToolsService.class));
-            prefs.edit().putBoolean("floating_auto_start_v302",false)
-                .putBoolean(ScanAssistState.CLEAN,false)
-                .putBoolean(ScanAssistState.BATCH,false)
-                .putBoolean(ScanAssistState.ARMED,false).apply();
-            toast("Ferramentas desligadas.");
-        });
+        title("Teste de leitura",null);
+
+        LinearLayout statusCard=card();
+        LinearLayout statusRow=row();
+        TextView dot=label("●",16,0xff22c55e,true);
+        statusRow.addView(dot);
+        TextView statusTitle=label("Leitor conectado",16,ink,true);
+        LinearLayout.LayoutParams slp=new LinearLayout.LayoutParams(0,-2,1);
+        slp.leftMargin=dp(8);
+        statusRow.addView(statusTitle,slp);
+        TextView model=label(Build.MODEL==null?"Coletor":Build.MODEL,13,muted,true);
+        statusRow.addView(model);
+        statusCard.addView(statusRow);
+        scannerConnectionStatus=label("Verificando leitura...",12,muted,false);
+        LinearLayout.LayoutParams csp=new LinearLayout.LayoutParams(-1,-2);
+        csp.topMargin=dp(6);
+        statusCard.addView(scannerConnectionStatus,csp);
+
+        LinearLayout testCard=card();
+        testCard.setPadding(dp(22),dp(24),dp(22),dp(24));
+        TextView aim=label("⌖",28,ink,false);
+        aim.setGravity(Gravity.CENTER);
+        testCard.addView(aim,new LinearLayout.LayoutParams(-1,-2));
+        TextView tester=label("Testar leitura",20,ink,true);
+        tester.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams tlp=new LinearLayout.LayoutParams(-1,-2);
+        tlp.topMargin=dp(4);
+        testCard.addView(tester,tlp);
+        TextView hint=label("Aponte e bipe um código",13,muted,false);
+        hint.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams hlp=new LinearLayout.LayoutParams(-1,-2);
+        hlp.topMargin=dp(4);
+        testCard.addView(hint,hlp);
+        preview=label(lastSample==null?"Aguardando...":BarcodeCleaner.clean(lastSample),22,ink,true);
+        preview.setGravity(Gravity.CENTER);
+        preview.setTextIsSelectable(true);
+        preview.setTypeface(Typeface.MONOSPACE,Typeface.BOLD);
+        LinearLayout.LayoutParams plp=new LinearLayout.LayoutParams(-1,-2);
+        plp.topMargin=dp(18);
+        testCard.addView(preview,plp);
+        lastStatus=label(scanCount==0?"Nenhuma leitura ainda.":"Leituras: "+scanCount,12,muted,false);
+        lastStatus.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams llp=new LinearLayout.LayoutParams(-1,-2);
+        llp.topMargin=dp(8);
+        testCard.addView(lastStatus,llp);
+        serviceState=label("Verificando...",12,muted,false);
+        serviceState.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams svlp=new LinearLayout.LayoutParams(-1,-2);
+        svlp.topMargin=dp(6);
+        testCard.addView(serviceState,svlp);
+
+        LinearLayout actions=row();
+        actions.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams alp=new LinearLayout.LayoutParams(-1,-2);
+        alp.topMargin=dp(16);
+        testCard.addView(actions,alp);
+        TextView openMlogBtn=action("Abrir MLOG",true,this::openMlog);
+        TextView toolsBtn=action("Ferramentas",false,this::openFloatingTools);
+        LinearLayout.LayoutParams ap1=new LinearLayout.LayoutParams(0,-2,1);
+        LinearLayout.LayoutParams ap2=new LinearLayout.LayoutParams(0,-2,1);
+        ap2.leftMargin=dp(10);
+        actions.addView(openMlogBtn,ap1);
+        actions.addView(toolsBtn,ap2);
+
+        LinearLayout recentCard=card();
+        recentCard.addView(label("Últimas leituras",16,ink,true));
+        recentReadsList=column();
+        LinearLayout.LayoutParams rlp=new LinearLayout.LayoutParams(-1,-2);
+        rlp.topMargin=dp(12);
+        recentCard.addView(recentReadsList,rlp);
+
+        refreshHomeScannerUi();
     }
+    private void recordRecentScan(String code,String format){
+        String stamp=new SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(new Date());
+        recentReads.addFirst(new ScanRecord(code,format==null?BarcodeFormatLabel.UNKNOWN:format,stamp));
+        while(recentReads.size()>MAX_RECENT_READS)recentReads.removeLast();
+    }
+
+    private void refreshHomeScannerUi(){
+        if(preview!=null){
+            String visible=lastSample==null?"Aguardando...":BarcodeCleaner.clean(lastSample);
+            preview.setText(visible==null || visible.isEmpty()?"Somente caracteres invisíveis":visible);
+        }
+        if(lastStatus!=null){
+            if(scanCount==0) lastStatus.setText("Nenhuma leitura ainda.");
+            else {
+                String type=(lastSymbology==null || BarcodeFormatLabel.UNKNOWN.equals(lastSymbology))?"Leitura recebida":lastSymbology;
+                lastStatus.setText(type+" · "+scanCount+(scanCount==1?" leitura":" leituras"));
+            }
+        }
+        if(scannerConnectionStatus!=null){
+            boolean ready=prefs!=null && prefs.getBoolean(ShizukuScanMode.PREF,false) && accessibilityReady();
+            scannerConnectionStatus.setText(ready?"Pronto para captar novos bipes":"Verifique Shizuku e acessibilidade");
+            scannerConnectionStatus.setTextColor(ready?0xff22c55e:0xffd97706);
+        }
+        if(recentReadsList!=null){
+            recentReadsList.removeAllViews();
+            if(recentReads.isEmpty()){
+                TextView empty=label("Nenhuma leitura ainda.",13,muted,false);
+                recentReadsList.addView(empty);
+            } else {
+                int i=0;
+                for(ScanRecord item:recentReads){
+                    if(i>0){
+                        View divider=new View(this);
+                        divider.setBackgroundColor(line);
+                        LinearLayout.LayoutParams dlp=new LinearLayout.LayoutParams(-1,dp(1));
+                        dlp.topMargin=dp(10);
+                        dlp.bottomMargin=dp(10);
+                        recentReadsList.addView(divider,dlp);
+                    }
+                    LinearLayout lineItem=column();
+                    LinearLayout head=row();
+                    TextView code=label(item.code,18,ink,true);
+                    code.setTypeface(Typeface.MONOSPACE,Typeface.BOLD);
+                    head.addView(code,new LinearLayout.LayoutParams(0,-2,1));
+                    head.addView(label(item.time,12,muted,false));
+                    lineItem.addView(head);
+                    TextView fmt=label(item.format==null?BarcodeFormatLabel.UNKNOWN:item.format,12,0xff22c55e,false);
+                    LinearLayout.LayoutParams flp=new LinearLayout.LayoutParams(-1,-2);
+                    flp.topMargin=dp(4);
+                    lineItem.addView(fmt,flp);
+                    recentReadsList.addView(lineItem);
+                    i++;
+                }
+            }
+        }
+    }
+
     /** Os tres caminhos sao mutuamente exclusivos:
      * (A) Antigo = broadcast + acessibilidade; (B) Zebra Profile0 = CMX keyboard;
      * (C) Zebra IME = broadcast + teclado Bridge envia KeyEvents ao editor MLOG.
@@ -613,7 +738,7 @@ public final class MainActivity extends Activity {
         check(updates,"Instalar quando inativo",BridgeUpdater.PREF_INSTALL,true);
         githubUpdateStatus=label(prefs.getString(BridgeUpdater.LAST_STATUS,"Aguardando verificação."),13,muted,false);
         space(updates,9);updates.addView(githubUpdateStatus);
-        button(updates,"Buscar atualização",true,this::checkGitHubUpdate);
+        button(updates,"Buscar versões",true,this::checkGitHubUpdate);
         button(updates,"Instalar APK baixado",false,this::installCachedShizuku);
         LinearLayout control=card();control.addView(label("Permissões",17,ink,true));
         button(control,"Acessibilidade",false,()->startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
@@ -623,19 +748,21 @@ public final class MainActivity extends Activity {
     private void setUpdateStatus(String text){
         if(githubUpdateStatus!=null) githubUpdateStatus.setText(text);
     }
-    private void requirePrereleasePassword(Runnable afterAuth){
-        if(DebugUpdateAccess.allowed()){afterAuth.run();return;}
+    private void requireDebugPassword(Runnable action){
+        if(DebugUpdateAccess.allowed()){action.run();return;}
         EditText field=new EditText(this);
         field.setSingleLine(true);
         field.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        int padding=dp(18);
+        field.setPadding(padding,padding,padding,padding);
         new AlertDialog.Builder(this)
             .setTitle("Autorizar pre-release")
-            .setMessage("Digite a senha para instalar uma versao de teste.")
+            .setMessage("Somente instalacao manual. Senha nao armazenada.")
             .setView(field)
             .setPositiveButton("Autorizar",(d,w)->{
                 boolean ok=DebugUpdateAccess.unlock(field.getText().toString());
                 field.getText().clear();
-                if(ok) afterAuth.run();
+                if(ok)action.run();
                 else {setUpdateStatus("Senha incorreta.");toast("Senha incorreta.");}
             })
             .setNegativeButton("Cancelar",null).show();
@@ -646,7 +773,7 @@ public final class MainActivity extends Activity {
             GitHubReleaseUpdater.Update update=GitHubReleaseUpdater.cachedVerified(this);
             if(update==null){setUpdateStatus("Nao ha APK novo no armazenamento.");return;}
             if(update.debug && !DebugUpdateAccess.allowed()){
-                requirePrereleasePassword(this::installCachedShizuku);return;
+                requireDebugPassword(this::installCachedShizuku);return;
             }
         } catch(Exception ex) {setUpdateStatus("Falha ao validar APK: "+ex.getMessage());return;}
         installCachedShizukuAuthorized();
@@ -684,70 +811,71 @@ public final class MainActivity extends Activity {
     private void checkGitHubUpdate(){
         if(githubChecking){toast("Busca em andamento.");return;}
         githubChecking=true;
-        setUpdateStatus("Consultando versões...");
-        GitHubReleaseUpdater.listManualReleases(new GitHubReleaseUpdater.ReleasesCallback(){
+        setUpdateStatus("Consultando versoes...");
+        GitHubReleaseUpdater.listForManualSelection(new GitHubReleaseUpdater.ReleasesCallback(){
             @Override public void error(String message){
                 githubChecking=false;setUpdateStatus("Falha: "+message);
             }
             @Override public void loaded(java.util.List<GitHubReleaseUpdater.ReleaseInfo> items){
                 githubChecking=false;
-                if(items.isEmpty()){setUpdateStatus("Nenhuma versao publicada.");return;}
-                long current=0;
+                if(items.isEmpty()){setUpdateStatus("Nenhuma Release publicada.");return;}
+                long current=0L;
                 try {
                     android.content.pm.PackageInfo pkg=getPackageManager().getPackageInfo(getPackageName(),0);
                     current=Build.VERSION.SDK_INT>=28?pkg.getLongVersionCode():pkg.versionCode;
-                }catch(Exception ignored){}
+                } catch(Exception ignored) { }
                 final long installed=current;
-                String[] options=new String[items.size()];
+                String[] labels=new String[items.size()];
                 for(int i=0;i<items.size();i++){
-                    GitHubReleaseUpdater.ReleaseInfo info=items.get(i);
-                    options[i]=info.tag+(info.prerelease?" · TESTE 🔒":" · ESTAVEL")
-                        +(info.versionCode<=installed?" (ja instalada/anterior)":"");
+                    GitHubReleaseUpdater.ReleaseInfo item=items.get(i);
+                    labels[i]=item.tag+(item.prerelease?"  ·  TESTE 🔒":"  ·  ESTÁVEL")
+                        +(item.versionCode<=installed?"  ·  instalada/anterior":"");
                 }
-                setUpdateStatus(items.size()+" versões disponíveis.");
+                setUpdateStatus(items.size()+" versoes encontradas.");
                 new AlertDialog.Builder(MainActivity.this)
                     .setTitle("Versões disponíveis")
-                    .setItems(options,(dialog,index)->{
-                        GitHubReleaseUpdater.ReleaseInfo info=items.get(index);
-                        if(info.versionCode<=installed){
-                            setUpdateStatus("Versao atual ou anterior. Downgrade bloqueado.");return;
+                    .setItems(labels,(dialog,index)->{
+                        GitHubReleaseUpdater.ReleaseInfo choice=items.get(index);
+                        if(choice.versionCode<=installed){
+                            setUpdateStatus("Versao instalada ou anterior; downgrade bloqueado.");return;
                         }
-                        if(info.prerelease)requirePrereleasePassword(()->downloadManualRelease(info));
-                        else downloadManualRelease(info);
+                        if(choice.prerelease)requireDebugPassword(()->downloadManual(choice));
+                        else downloadManual(choice);
                     })
                     .setNegativeButton("Fechar",null).show();
             }
         });
     }
 
-    private void downloadManualRelease(GitHubReleaseUpdater.ReleaseInfo info){
+    private void downloadManual(GitHubReleaseUpdater.ReleaseInfo choice){
         if(githubChecking){toast("Download em andamento.");return;}
-        if(info.prerelease && !DebugUpdateAccess.allowed()){
-            requirePrereleasePassword(()->downloadManualRelease(info));return;
+        if(choice.prerelease && !DebugUpdateAccess.allowed()){
+            requireDebugPassword(()->downloadManual(choice));return;
         }
         githubChecking=true;
-        GitHubReleaseUpdater.downloadSelected(getApplicationContext(),info,new GitHubReleaseUpdater.Callback(){
-            @Override public void status(String text){setUpdateStatus(text);}
-            @Override public void upToDate(String text){githubChecking=false;setUpdateStatus(text);}
+        GitHubReleaseUpdater.downloadSelected(choice,new GitHubReleaseUpdater.Callback(){
+            @Override public void status(String message){setUpdateStatus(message);}
+            @Override public void upToDate(String message){githubChecking=false;setUpdateStatus(message);}
             @Override public void error(String message){githubChecking=false;setUpdateStatus("Falha: "+message);}
             @Override public void ready(File file,String tag){
                 githubChecking=false;
-                setUpdateStatus(tag+" pronto.");
+                setUpdateStatus(tag+(choice.prerelease?" (teste)":" (estavel)")+" pronto.");
                 new AlertDialog.Builder(MainActivity.this)
-                    .setTitle("Instalar "+tag+(info.prerelease?" · TESTE":""))
-                    .setMessage("APK verificado. Instalar?")
+                    .setTitle("Instalar "+tag+(choice.prerelease?" (TESTE)":""))
+                    .setMessage("APK assinado e verificado.")
                     .setPositiveButton("Shizuku",(d,w)->installCachedShizuku())
                     .setNeutralButton("Android",(d,w)->installVerifiedApk(file))
                     .setNegativeButton("Depois",null).show();
             }
-        });
+        },getApplicationContext());
     }
+
     private void installCachedViaAndroid(){
         try {
             GitHubReleaseUpdater.Update checked=GitHubReleaseUpdater.cachedVerified(this);
             if(checked==null){setUpdateStatus("Nao ha APK atualizado e validado em cache.");return;}
             if(checked.debug && !DebugUpdateAccess.allowed()){
-                requirePrereleasePassword(this::installCachedViaAndroid);return;
+                requireDebugPassword(this::installCachedViaAndroid);return;
             }
             installVerifiedApk(checked.apk);
         } catch(Exception ex) {setUpdateStatus("Falha ao verificar APK para Android: "+ex.getMessage());}
@@ -759,7 +887,7 @@ public final class MainActivity extends Activity {
                 setUpdateStatus("Instalacao cancelada: APK nao verificado no cache.");return;
             }
             if(verified.debug && !DebugUpdateAccess.allowed()){
-                requirePrereleasePassword(()->installVerifiedApk(apk));return;
+                requireDebugPassword(()->installVerifiedApk(apk));return;
             }
         } catch(Exception ex) {setUpdateStatus("APK invalido: "+ex.getMessage());return;}
         if(apk==null || !apk.isFile()){setUpdateStatus("Arquivo da atualização não encontrado.");return;}

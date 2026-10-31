@@ -43,7 +43,8 @@ final class ShizukuApkInstaller {
         installAsync(context,false,callback);
     }
 
-    static void installAsync(Context context, boolean manualPrereleaseAuthorized, Callback callback) {
+    /** Manual-only installation of password-authorized prereleases. */
+    static void installAsync(Context context, boolean allowPrerelease, Callback callback) {
         Context app = context.getApplicationContext();
         new Thread(() -> {
             boolean success = false;
@@ -51,9 +52,9 @@ final class ShizukuApkInstaller {
             try {
                 GitHubReleaseUpdater.Update update = GitHubReleaseUpdater.cachedVerified(app);
                 if (update == null) throw new IllegalStateException("Nenhuma atualizacao verificada foi baixada.");
-                if(update.debug && (!manualPrereleaseAuthorized || !DebugUpdateAccess.allowed()))
-                    throw new SecurityException("Pre-release exige senha.");
-                status = installVerified(app, update, manualPrereleaseAuthorized);
+                if(update.debug && (!allowPrerelease || !DebugUpdateAccess.allowed()))
+                    throw new SecurityException("Senha necessaria para instalar pre-release.");
+                status = installVerified(app, update, allowPrerelease);
                 success = true;
             } catch (Exception ex) {
                 status = "Falha na instalacao Shizuku: " + safeMessage(ex);
@@ -72,7 +73,7 @@ final class ShizukuApkInstaller {
     }
 
     private static String installVerified(Context context, GitHubReleaseUpdater.Update update,
-                                          boolean manualPrereleaseAuthorized) throws Exception {
+                                          boolean allowPrerelease) throws Exception {
         if (!INSTALLING.compareAndSet(false, true)) throw new IllegalStateException("Outra instalacao em andamento.");
         String session = null;
         boolean committed = false;
@@ -82,7 +83,7 @@ final class ShizukuApkInstaller {
             GitHubReleaseUpdater.Update checked = GitHubReleaseUpdater.cachedVerified(context);
             if (checked == null || !checked.tag.equals(update.tag))
                 throw new IllegalStateException("APK nao passou na verificacao de assinatura/versao.");
-            if(checked.debug && (!manualPrereleaseAuthorized || !DebugUpdateAccess.allowed()))
+            if(checked.debug && (!allowPrerelease || !DebugUpdateAccess.allowed()))
                 throw new SecurityException("Pre-release sem autorizacao manual por senha.");
             File apk = checked.apk;
             long size = apk.length();
