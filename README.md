@@ -2,7 +2,7 @@
 
 Aplicativo Android para os coletores CMX TC60 (Android 14), integrando o scanner físico ao **MLOG** por broadcast e, no modo escolhido pelo operador, comandos pelo **Shizuku**.
 
-**Versão do projeto:** `3.5.1` · **Repositório:** `seridoplast/MLOG-Scanner-Bridge` · **Pacote:** `br.com.seridoplast.mlogbridge`.
+**Versão do projeto:** `3.5.2` · **Repositório:** `seridoplast/MLOG-Scanner-Bridge` · **Pacote:** `br.com.seridoplast.mlogbridge`.
 
 ## Funcionalidades
 
@@ -10,7 +10,7 @@ Aplicativo Android para os coletores CMX TC60 (Android 14), integrando o scanner
 - Botão flutuante **Resetar Bipe**, recuperação experimental pela câmera e controle protegido de bipes automáticos.
 - Alerta quando o Shizuku não estiver disponível.
 - **Atualizador corporativo:** verifica o GitHub Releases, baixa APK de produção por HTTPS, exige SHA-256 idêntico ao digest informado pelo GitHub, confirma pacote, versão superior e certificado da chave corporativa.
-- **Instalação pelo Shizuku:** transmite o APK diretamente para `pm install -r -S` por `stdin`, sem exigir que o shell acesse o diretório privado do Bridge.
+- **Instalação pelo Shizuku:** usa sessão do Package Manager (`pm install-create` → `install-write` via `stdin` → `install-commit`). Obtém retorno de cada fase; se o Android interromper o canal com EPIPE, apresenta o erro e oferece instalação pelo Android, com confirmação do operador. O shell não acessa o diretório privado do Bridge.
 - **Distribuição gradual:** uma Release publicada com `rollout=0` não instala nada automaticamente. É possível ampliar a liberação para `rollout=10`, `rollout=25`, `rollout=50` e `rollout=100` editando a descrição da mesma Release.
 
 ## Pré-requisitos
@@ -22,32 +22,33 @@ Aplicativo Android para os coletores CMX TC60 (Android 14), integrando o scanner
 
 O Shizuku precisa de inicialização adequada após reinicializações. O atualizador **não consegue iniciar o serviço Shizuku sozinho**. A instalação silenciosa depende também do comportamento do firmware CMX, que deve ser validado no aparelho piloto.
 
-## Teste da detecção — v3.5.1
+## Teste da correção de instalação — v3.5.2
 
-**Alterações em relação à v3.5.0:** somente o nome visível do aplicativo mudou para **MLOG Bridge TESTE**, e a versão Android avançou de **3.5.0** para **3.5.1** (`versionCode` 1.030.500 → 1.030.501). O identificador `br.com.seridoplast.mlogbridge`, o mecanismo de atualização e a assinatura corporativa foram preservados.
+**Mudanças frente à v3.5.1:** correção e diagnóstico do instalador Shizuku, que anteriormente tentava enviar todo o APK a `pm install` em uma única etapa e podia receber `write failed: EPIPE (broken pipe)`. A nova implementação cria uma sessão, transmite o APK e só depois solicita o commit; coleta resposta/erro de cada etapa e abandona sessões que falham. Se a instalação Shizuku falhar ou estiver indisponível, o operador pode escolher **Instalar pelo Android**, sem desinstalar o Bridge e sem ignorar a verificação do APK.
 
-Para validar a detecção sem atualizar todos os coletores:
+O `versionName` passou a `3.5.2` e o `versionCode` a `1030502`. **Não alteramos** `applicationId`, certificado fixado, modo de scanner nem política de liberação gradual. A chave da assinatura continua nos Secrets do GitHub.
 
-1. Instale **v3.5.0** em **um coletor piloto** e confirme que a consulta a GitHub Releases funciona.
-2. Envie **v3.5.1** ao GitHub; confirme que a compilação em Actions está verde.
-3. Em **Actions → Gerar APK do MLOG Scanner Bridge → Run workflow**, habilite `publish_release` e escolha **`rollout_percent = 0`**. A Release **v3.5.1** precisa ser publicada, não apenas compilada. O GitHub Actions criará o APK assinado na Release.
-4. No coletor **ainda com v3.5.0**, abra **Bridge → Sobre → Buscar atualização agora**. Deve aparecer **`v3.5.1`** como atualização assinada, com `rollout 0%`.
-5. Para testar a **instalação manual pelo Shizuku**, feche a Separação, toque em **Instalar via Shizuku** e confirme; depois confira se o nome do ícone mudou para **MLOG Bridge TESTE**.
-6. **Não mude o rollout para 100% durante o teste**, salvo se tiver certeza de que somente coletores de laboratório possuem a v3.5.0 e estão aptos a receber atualizações. O modo automático precisa de Shizuku ativo e inatividade, e é agendado pelo Android, portanto não é instantâneo.
+Teste somente em **um coletor piloto**:
 
-Se o Bridge indicar que não há atualização, confirme que a Release v3.5.1 está publicada como estável (sem marcação de prerelease), é a última Release e contém o APK no nome padrão. Com `rollout=0`, a detecção e o download manual funcionam; a instalação automática fica bloqueada intencionalmente.
+1. Mantenha instalada a versão antiga (3.5.1 ou anterior); **não desinstale nem apague os dados**.
+2. Faça push da `3.5.2`. O workflow compilará e publicará a Release **v3.5.2** automaticamente com `rollout=0` (zero atualização automática).
+3. Na **versão antiga**, abra **Sobre → Buscar atualização agora** e selecione **Instalar pelo Android** para aplicar a 3.5.2. Se preferir, baixe o APK assinado direto da Release e abra pelo instalador do Android. **Não espere que o novo código de Shizuku funcione antes de instalar a 3.5.2**: nesse momento ainda está rodando o instalador antigo.
+4. Confirme que o coletor já executa a **3.5.2** e que scanner, bipes, Shizuku e preferências continuam funcionando.
+5. Para testar o **novo instalador Shizuku**, publique uma versão posterior (por exemplo `3.5.3`, alterando somente `bridgeVersion`), ainda com `rollout=0`. A partir da **3.5.2**, use **Buscar atualização agora → Instalar via Shizuku** para tentar a instalação da 3.5.3. Se o firmware negar a transferência, o Bridge exibirá a etapa/erro e oferecerá **Instalar pelo Android**.
+6. Só depois de validar essa atualização de ponta a ponta, edite a descrição da Release escolhida para ampliar o `rollout` gradualmente.
+
+**Limite importante:** as restrições específicas do Android/firmware podem impedir a instalação silenciosa via Shizuku, mesmo com o APK correto. Nesse caso, a alternativa pelo Android requer permissão para instalar apps dessa fonte e confirmação do usuário. O aplicativo não tenta abrir interfaces em segundo plano.
 
 ## Gerar e publicar uma atualização
 
-1. Aumente a versão no `app/build.gradle`: `def bridgeVersion = '3.5.1'` → uma versão maior, por exemplo `3.5.2` (não reutilize a mesma tag para um APK novo).
-2. Envie os arquivos para o branch `main`. Todo push compila e produz o APK assinado em **Actions → Artifacts**, sem publicar automaticamente um Release.
-3. Baixe e instale o APK do Artifact **somente em um coletor de testes**. Valide leitura, Shizuku, abrir e fechar teclado, Resetar Bipe, bipes automáticos, reinicialização e atualização.
-4. Quando o piloto estiver aprovado, vá a **Actions → Gerar APK do MLOG Scanner Bridge → Run workflow**, marque `publish_release` e deixe `rollout_percent = 0` inicialmente. Isso cria a Release `vN.N.N` com o APK assinado e a descrição `rollout=0`.
-5. Teste o botão de atualização manual em **Sobre → Atualizações automáticas**, usando o Shizuku no piloto.
-6. Edite a **descrição da Release** no GitHub: troque **apenas a linha** `rollout=0` por `rollout=10` e depois por `25`, `50` e `100` conforme a validação. **Não substitua o APK** de uma Release já distribuída.
-7. Para atualizar todos os coletores aprovados, deixe `rollout=100`. Eles consultarão a Release periodicamente e instalarão quando houver Shizuku, conectividade e condição de inatividade.
+1. Altere **somente** `def bridgeVersion` em `app/build.gradle` para a próxima versão (não reutilize uma tag já lançada).
+2. Faça push na branch `main`. O workflow executa testes, assina o APK, publica em Actions → Artifacts e cria automaticamente uma Release pública `vN.N.N` com o APK assinado e `rollout=0`.
+3. A Release fica disponível para **detecção e download manual**. Com `rollout=0`, a instalação automática permanece bloqueada intencionalmente.
+4. Teste o APK assinado no coletor piloto, verificando o scanner, Shizuku, configuração e instalação. Nunca desinstale a versão anterior como primeira tentativa.
+5. Após aprovar, edite a **descrição da mesma Release** para `rollout=10`, `rollout=25`, `rollout=50`, `rollout=100` conforme o progresso.
+6. As verificações periódicas do Android não são instantâneas e a instalação em segundo plano exige Shizuku e inatividade comprovada do MLOG.
 
-**Importante:** mudar a porcentagem **não exige compilar outro APK**. O Bridge usa um grupo estável por coletor e não envia identificadores do aparelho ao GitHub. O agendamento periódico é aproximado; restrições de bateria e Wi-Fi do Android podem atrasá-lo.
+O workflow também admite execução manual por Actions. Se a Release da versão **já existe**, ele não sobrescreve o APK nem altera o rollout. Não substitua uma tag publicada por um APK diferente.
 
 ### Segredos obrigatórios do GitHub Actions
 
@@ -67,7 +68,7 @@ Em **Sobre → Atualizações automáticas**, existem os controles:
 - **Buscar atualização agora**: baixa e verifica imediatamente a última Release aprovada pelo GitHub.
 - **Instalar APK já baixado pelo Shizuku**: comando **manual** para testar a instalação em um coletor piloto, independentemente da porcentagem de rollout.
 
-Caso a instalação Shizuku não funcione, o fluxo manual ainda permite abrir o **instalador padrão do Android**, que poderá exigir autorização e confirmação do operador.
+Se a instalação Shizuku falhar com `EPIPE`, o Bridge apresenta a resposta do gerenciador de pacotes e oferece um botão **Instalar pelo Android**, com confirmação do operador. O modo automático apenas registra a falha; ele não abre uma janela no meio da operação.
 
 ### Instalar o APK via USB (somente o primeiro rollout/piloto)
 
@@ -76,7 +77,7 @@ No PowerShell, com o APK assinado em `Downloads`:
 ```powershell
 cd "$env:USERPROFILE\Downloads"
 .\platform-tools\adb.exe devices
-.\platform-tools\adb.exe install -r ".\MLOG-Scanner-Bridge-v3.5.1.apk"
+.\platform-tools\adb.exe install -r ".\MLOG-Scanner-Bridge-v3.5.2.apk"
 ```
 
 Use sempre `install -r`. Se aparecer erro de assinatura incompatível, **não desinstale automaticamente**: isso apagaria as preferências existentes.
@@ -88,7 +89,8 @@ Use sempre `install -r`. Se aparecer erro de assinatura incompatível, **não de
 3. Verifique o status do Shizuku e a autorização do Bridge.
 4. Confirme se o valor na descrição da Release está como `rollout=N` **sozinho em uma linha**. Uma Release sem essa linha equivale a **0%** por segurança.
 5. Se o aparelho estiver separando, com MLOG em primeiro plano, o Bridge **deve esperar**; não interrompa a separação para forçar atualização.
-6. Para investigar erros técnicos, com ADB autorizado: `adb logcat -d -s MLOGBridge:I`.
+6. `pm install-create`, `install-write` e `install-commit` são as etapas de instalação. Em caso de EPIPE, anote a etapa e a resposta `exit=` que aparecerem em Sobre. O Android pode bloquear o shell por política do fabricante.
+7. Para investigar erros técnicos, com ADB autorizado: `adb logcat -d -s MLOGBridge:I`.
 
 A atualização automática não substitui MDM nem é infalível: o Android controla horários de execução em segundo plano, e os comandos privilegiados dependem de Shizuku. Primeiro faça a validação em 1 coletor antes de ampliar a liberação.
 

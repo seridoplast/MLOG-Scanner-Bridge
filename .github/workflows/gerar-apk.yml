@@ -185,6 +185,16 @@ jobs:
             tests/AutoBipsAccessTest.java
           java -cp /tmp/bridge-bips-tests br.com.seridoplast.mlogbridge.AutoBipsAccessTest
 
+      - name: Testar leitura de retorno do instalador Android
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bridge-pm-test
+          javac -d /tmp/bridge-pm-test \
+            app/src/main/java/br/com/seridoplast/mlogbridge/PmInstallOutput.java \
+            tests/PmInstallOutputTest.java
+          java -cp /tmp/bridge-pm-test br.com.seridoplast.mlogbridge.PmInstallOutputTest
+
       - name: Compilar APK de producao com assinatura fixa
         env:
           BRIDGE_SIGNING_STORE_PASSWORD: ${{ secrets.BRIDGE_KEYSTORE_PASSWORD }}

@@ -719,14 +719,29 @@ public final class MainActivity extends Activity {
     }
     private void installCachedShizuku(){
         if(!ShizukuApkInstaller.ready()){
-            setUpdateStatus("Shizuku nao esta ativo/autorizado. Inicie-o antes de instalar.");return;
+            setUpdateStatus("Shizuku indisponivel. Voce pode instalar pelo Android.");
+            new AlertDialog.Builder(this)
+                .setTitle("Shizuku indisponivel")
+                .setMessage("O Shizuku nao esta ativo ou autorizado. Deseja usar o instalador normal do Android?")
+                .setPositiveButton("Instalar pelo Android",(d,w)->installCachedViaAndroid())
+                .setNegativeButton("Cancelar",null).show();
+            return;
         }
         new AlertDialog.Builder(this)
             .setTitle("Instalar pelo Shizuku")
             .setMessage("A instalacao pode reiniciar o Bridge. Feche a atividade de Separacao antes de continuar.")
             .setPositiveButton("Instalar",(d,w)->{
-                setUpdateStatus("Validando APK e enviando para o instalador...");
-                ShizukuApkInstaller.installAsync(this,(ok,msg)->setUpdateStatus(msg));
+                setUpdateStatus("Validando APK e preparando sessao de instalacao...");
+                ShizukuApkInstaller.installAsync(this,(ok,msg)->{
+                    setUpdateStatus(msg);
+                    if(!ok && !isFinishing() && !isDestroyed()){
+                        new AlertDialog.Builder(this)
+                            .setTitle("Instalacao Shizuku interrompida")
+                            .setMessage(msg+"\n\nDeseja tentar pelo instalador normal do Android? A instalacao exigira sua confirmacao.")
+                            .setPositiveButton("Instalar pelo Android",(dialog,which)->installCachedViaAndroid())
+                            .setNegativeButton("Depois",null).show();
+                    }
+                });
             })
             .setNegativeButton("Cancelar",null).show();
     }
@@ -756,6 +771,13 @@ public final class MainActivity extends Activity {
                     .setNegativeButton("Depois",null).show();
             }
         });
+    }
+    private void installCachedViaAndroid(){
+        try {
+            GitHubReleaseUpdater.Update checked=GitHubReleaseUpdater.cachedVerified(this);
+            if(checked==null){setUpdateStatus("Nao ha APK atualizado e validado em cache.");return;}
+            installVerifiedApk(checked.apk);
+        } catch(Exception ex) {setUpdateStatus("Falha ao verificar APK para Android: "+ex.getMessage());}
     }
     private void installVerifiedApk(File apk){
         if(apk==null || !apk.isFile()){setUpdateStatus("Arquivo da atualização não encontrado.");return;}
