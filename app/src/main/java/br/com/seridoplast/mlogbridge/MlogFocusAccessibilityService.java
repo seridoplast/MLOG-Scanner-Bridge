@@ -77,7 +77,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     // Duplo comando numa unica sessao Shizuku: tocar Volume -> 80ms -> Voltar.
     // Nao reenviar qualquer codigo ou Enter durante a recuperacao.
     private static final long VOLUME_DEBOUNCE_MS=60L;
-    private static final int VOLUME_KEYBOARD_POLL_MS=120L;
+    private static final long VOLUME_KEYBOARD_POLL_MS=120L;
     private final CameraRecoveryPolicy recoveryPolicy=new CameraRecoveryPolicy();
     private int recoveryEpoch;
     private long lastPhysicalShizukuScanAt;
