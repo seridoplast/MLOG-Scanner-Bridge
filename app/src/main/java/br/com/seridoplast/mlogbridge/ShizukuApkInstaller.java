@@ -117,6 +117,40 @@ final class ShizukuApkInstaller {
         }
     }
 
+    /** Third-party Shizuku manager update: verified against the installed manager's signer.
+     * Updating its own manager can interrupt the privileged binder during commit.
+     */
+    static String installVerifiedShizuku(Context context, File candidate) throws Exception {
+        if(!INSTALLING.compareAndSet(false,true))throw new IllegalStateException("Outra instalação em andamento.");
+        String session=null;boolean committed=false;
+        try {
+            if(!ready())throw new IllegalStateException("Shizuku não autorizado.");
+            File verified=ShizukuReleaseUpdater.cachedVerified(context);
+            if(verified==null || candidate==null || !verified.equals(candidate))
+                throw new SecurityException("APK do Shizuku não foi validado.");
+            long size=verified.length();
+            if(size<50*1024 || size>80L*1024*1024)throw new IOException("Tamanho inesperado do Shizuku.");
+            ShizukuReleaseUpdater.status(context,"Instalando atualização oficial do Shizuku...");
+            ProcessResult created=exec(30,PM,"install-create","-r","-S",Long.toString(size));
+            if(!created.ok())throw new IOException("Sessão Shizuku: "+created.description());
+            session=PmInstallOutput.createdSession(created.stdout);
+            if(session==null)throw new IOException("Sessão de instalação inválida.");
+            ProcessResult written=streamApk(verified,size,session);
+            if(!written.ok())throw new IOException("Transferência Shizuku: "+written.description());
+            ProcessResult result=exec(120,PM,"install-commit",session);
+            if(!result.ok())throw new IOException("Instalação Shizuku: "+result.description());
+            committed=true;
+            ShizukuReleaseUpdater.status(context,"Shizuku atualizado. Verifique se o serviço segue ativo.");
+            return "Shizuku atualizado. Confirme a disponibilidade do serviço.";
+        } finally {
+            if(session!=null && !committed){
+                try{if(ready())exec(10,PM,"install-abandon",session);}
+                catch(Exception ignored){}
+            }
+            INSTALLING.set(false);
+        }
+    }
+
     private static ProcessResult streamApk(File apk, long length, String session) throws Exception {
         ShizukuRemoteProcess p = start(PM, "install-write", "-S", Long.toString(length), session, "base.apk", "-");
         IOException pipeFailure = null;

@@ -80,7 +80,8 @@ public final class MainActivity extends Activity {
     private String lastSymbology;
     private String lastMetadataFields;
     private long lastThemeTapAt;
-    private TextView githubUpdateStatus;
+    private TextView githubUpdateStatus, shizukuUpdateStatus;
+    private File shizukuPendingInstall;
     private boolean githubChecking;
     private static final int SHIZUKU_REQUEST=340;
     private final Shizuku.OnRequestPermissionResultListener shizukuPermission=(code,result)->{
@@ -855,6 +856,25 @@ public final class MainActivity extends Activity {
         space(updates,9);updates.addView(githubUpdateStatus);
         button(updates,"Buscar versões",true,this::checkGitHubUpdate);
         button(updates,"Instalar APK baixado",false,this::installCachedShizuku);
+
+        LinearLayout shizukuUpdates=card();
+        LinearLayout shizukuHeading=row();
+        shizukuHeading.addView(icon(R.drawable.ui_refresh,primary,23));
+        TextView shizukuTitle=label("Atualizações do Shizuku",17,ink,true);
+        LinearLayout.LayoutParams titleLp=new LinearLayout.LayoutParams(0,-2,1);
+        titleLp.leftMargin=dp(10);
+        shizukuHeading.addView(shizukuTitle,titleLp);
+        shizukuUpdates.addView(shizukuHeading);
+        subtitle(shizukuUpdates,"APK oficial · verificação diária opcional");
+        check(shizukuUpdates,"Verificar e baixar diariamente",ShizukuReleaseUpdater.PREF_CHECK,false);
+        shizukuUpdateStatus=label(prefs.getString(ShizukuReleaseUpdater.STATUS,
+            "Desativado. Você pode verificar manualmente."),12,muted,false);
+        space(shizukuUpdates,8);shizukuUpdates.addView(shizukuUpdateStatus);
+        button(shizukuUpdates,"Verificar Shizuku agora",true,this::checkShizukuUpdate);
+        button(shizukuUpdates,"Instalar atualização baixada",false,this::installShizukuManual);
+        button(shizukuUpdates,prefs.getBoolean(ShizukuReleaseUpdater.PREF_INSTALL,false)?
+            "Desativar instalação automática":"Instalação automática (desligada)",false,this::toggleShizukuAutoInstall);
+
         LinearLayout control=card();control.addView(label("Permissões",17,ink,true));
         button(control,"Acessibilidade",false,()->startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
         button(control,"Informações do app",false,()->startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
@@ -923,6 +943,164 @@ public final class MainActivity extends Activity {
             })
             .setNegativeButton("Cancelar",null).show();
     }
+    /** Card-based release picker, not the Android's old simple_list_item dialog. */
+    private void showReleasePicker(java.util.List<GitHubReleaseUpdater.ReleaseInfo> items,long installed){
+        ScrollView scroll=new ScrollView(this);scroll.setFillViewport(false);
+        LinearLayout panel=column();panel.setPadding(dp(20),dp(22),dp(20),dp(18));
+        panel.setBackground(shape(card,line,23));scroll.addView(panel);
+        LinearLayout heading=row();heading.addView(icon(R.drawable.ui_refresh,primary,25));
+        TextView header=label("Versões disponíveis",19,ink,true);
+        LinearLayout.LayoutParams hp=new LinearLayout.LayoutParams(0,-2,1);hp.leftMargin=dp(9);
+        heading.addView(header,hp);panel.addView(heading);
+        subtitle(panel,"Escolha uma versão para instalar.");
+        space(panel,15);
+        final AlertDialog dialog=new AlertDialog.Builder(this).setView(scroll).create();
+        int count=0;
+        for(GitHubReleaseUpdater.ReleaseInfo item:items){
+            if(count++>=25)break;
+            boolean isNew=item.versionCode>installed;
+            LinearLayout box=column();box.setPadding(dp(15),dp(14),dp(15),dp(14));
+            box.setBackground(shape(surfaceAlt,line,16));
+            LinearLayout upper=row();
+            upper.addView(icon(item.prerelease?R.drawable.ui_lock:R.drawable.ui_check_circle,
+                item.prerelease?amber:success,21));
+            TextView ver=label(item.tag,17,ink,true);
+            LinearLayout.LayoutParams v=new LinearLayout.LayoutParams(0,-2,1);v.leftMargin=dp(10);
+            upper.addView(ver,v);
+            TextView badge=label(item.prerelease?"TESTE":"ESTÁVEL",11,
+                item.prerelease?amber:success,true);
+            badge.setPadding(dp(9),dp(5),dp(9),dp(5));
+            badge.setBackground(shape(item.prerelease?(darkNow()?0xff403420:0xfffff3da):
+                (darkNow()?0xff1f4639:0xffe2f7eb),0,10));
+            upper.addView(badge);
+            box.addView(upper);
+            TextView detail=label(isNew?(item.prerelease?
+                "Requer senha para instalar":"Pronta para baixar e instalar"):
+                "Versão instalada ou anterior",12,muted,false);
+            LinearLayout.LayoutParams detailLp=new LinearLayout.LayoutParams(-1,-2);
+            detailLp.topMargin=dp(5);box.addView(detail,detailLp);
+            box.setAlpha(isNew?1f:.63f);
+            if(isNew){
+                box.setOnClickListener(vw->{
+                    dialog.dismiss();
+                    if(item.prerelease)requireDebugPassword(()->downloadManual(item));
+                    else downloadManual(item);
+                });
+            }
+            LinearLayout.LayoutParams r=new LinearLayout.LayoutParams(-1,-2);
+            r.bottomMargin=dp(9);panel.addView(box,r);
+        }
+        space(panel,4);
+        button(panel,"Fechar",false,dialog::dismiss);
+        dialog.show();
+        if(dialog.getWindow()!=null){
+            dialog.getWindow().setBackgroundDrawableResource(android.R.color.transparent);
+            dialog.getWindow().setLayout((int)(getResources().getDisplayMetrics().widthPixels*.92f),-2);
+        }
+    }
+    private void showBridgeInstallChooser(File file,String tag,boolean prerelease){
+        LinearLayout panel=column();panel.setBackground(shape(card,line,22));
+        panel.setPadding(dp(20),dp(20),dp(20),dp(16));
+        LinearLayout head=row();head.addView(icon(R.drawable.ui_check_circle,success,25));
+        TextView title=label("Atualização pronta",19,ink,true);
+        LinearLayout.LayoutParams h=new LinearLayout.LayoutParams(0,-2,1);h.leftMargin=dp(9);
+        head.addView(title,h);panel.addView(head);
+        subtitle(panel,tag+(prerelease?" · versão de teste":" · Release estável"));
+        space(panel,8);
+        final AlertDialog dlg=new AlertDialog.Builder(this).setView(panel).create();
+        button(panel,"Instalar pelo Shizuku",true,()->{dlg.dismiss();installCachedShizuku();});
+        button(panel,"Instalar pelo Android",false,()->{dlg.dismiss();installVerifiedApk(file);});
+        button(panel,"Depois",false,dlg::dismiss);
+        dlg.show();
+        if(dlg.getWindow()!=null){dlg.getWindow().setBackgroundDrawableResource(android.R.color.transparent);
+            dlg.getWindow().setLayout((int)(getResources().getDisplayMetrics().widthPixels*.92f),-2);}
+    }
+    private void setShizukuStatus(String text){
+        ShizukuReleaseUpdater.status(this,text);
+        if(shizukuUpdateStatus!=null)shizukuUpdateStatus.setText(text);
+    }
+    private void checkShizukuUpdate(){
+        setShizukuStatus("Consultando Release oficial do Shizuku...");
+        ShizukuReleaseUpdater.checkAsync(this,(available,message)->{
+            if(isFinishing() || isDestroyed())return;
+            setShizukuStatus(message);
+            if(available)toast("Atualização do Shizuku pronta para instalar.");
+        });
+    }
+    private void toggleShizukuAutoInstall(){
+        boolean on=prefs.getBoolean(ShizukuReleaseUpdater.PREF_INSTALL,false);
+        if(on){
+            prefs.edit().putBoolean(ShizukuReleaseUpdater.PREF_INSTALL,false).apply();
+            ShizukuUpdateSchedule.schedule(this);displayPage();
+            toast("Instalação automática do Shizuku desativada.");return;
+        }
+        new AlertDialog.Builder(this).setTitle("Instalação automática do Shizuku")
+            .setMessage("Experimental: atualizar o Shizuku pode interromper seus privilégios " +
+                "e exigir nova inicialização via ADB. Use primeiro em apenas um coletor. " +
+                "O Bridge só instalará APKs oficiais verificados e com o coletor inativo.")
+            .setPositiveButton("Ativar no coletor",(d,w)->{
+                prefs.edit().putBoolean(ShizukuReleaseUpdater.PREF_CHECK,true)
+                    .putBoolean(ShizukuReleaseUpdater.PREF_INSTALL,true).apply();
+                ShizukuUpdateSchedule.schedule(this);
+                ShizukuUpdateSchedule.checkSoon(this);
+                displayPage();
+            }).setNegativeButton("Cancelar",null).show();
+    }
+    private void installShizukuManual(){
+        try {
+            File apk=ShizukuReleaseUpdater.cachedVerified(this);
+            if(apk==null){setShizukuStatus("Nenhuma atualização válida baixada. Verifique primeiro.");return;}
+            new AlertDialog.Builder(this)
+                .setTitle("Atualizar Shizuku")
+                .setMessage("O serviço Shizuku pode parar durante a atualização. " +
+                    "Depois, confira se continua autorizado. Não atualize durante uma separação.")
+                .setPositiveButton("Instalador Android",(d,w)->installShizukuViaAndroid())
+                .setNeutralButton("Via Shizuku (teste)",(d,w)->{
+                    if(!ShizukuApkInstaller.ready()){
+                        setShizukuStatus("Shizuku indisponível; use o instalador do Android.");return;}
+                    setShizukuStatus("Instalando Shizuku...");
+                    new Thread(()->{
+                        String result;
+                        try{
+                            File verified=ShizukuReleaseUpdater.cachedVerified(getApplicationContext());
+                            if(verified==null)throw new SecurityException("APK inválido.");
+                            result=ShizukuApkInstaller.installVerifiedShizuku(getApplicationContext(),verified);
+                        }catch(Exception e){
+                            result=ShizukuReleaseUpdater.stagedVersionInstalled(getApplicationContext())?
+                                "Shizuku instalado. Confira se o serviço está ativo.":
+                                "Shizuku: "+e.getMessage()+". Confira a versão antes de repetir.";
+                        }
+                        final String outcome=result;
+                        handler.post(()->setShizukuStatus(outcome));
+                    },"shizuku-self-update").start();
+                })
+                .setNegativeButton("Cancelar",null).show();
+        }catch(Exception ex){setShizukuStatus("APK rejeitado: "+ex.getMessage());}
+    }
+    private void installShizukuViaAndroid(){
+        File apk;
+        try{apk=ShizukuReleaseUpdater.cachedVerified(this);
+            if(apk==null){setShizukuStatus("Arquivo não passou pela verificação.");return;}}
+        catch(Exception e){setShizukuStatus("APK inválido: "+e.getMessage());return;}
+        if(Build.VERSION.SDK_INT>=26 && !getPackageManager().canRequestPackageInstalls()){
+            shizukuPendingInstall=apk;
+            new AlertDialog.Builder(this).setTitle("Autorizar instalação")
+                .setMessage("Autorize o Bridge a instalar APKs pelo Android e volte.")
+                .setPositiveButton("Configurações",(d,w)->startActivity(new Intent(
+                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,Uri.parse("package:"+getPackageName()))))
+                .setNegativeButton("Cancelar",(d,w)->shizukuPendingInstall=null).show();
+            return;
+        }
+        try {
+            Uri uri=FileProvider.getUriForFile(this,getPackageName()+".updates",apk);
+            Intent intent=new Intent(Intent.ACTION_VIEW);
+            intent.setDataAndType(uri,"application/vnd.android.package-archive");
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivity(intent);
+            setShizukuStatus("Confirme a instalação do Shizuku no Android.");
+        }catch(Exception e){setShizukuStatus("Não foi possível abrir o instalador: "+e.getMessage());}
+    }
+
     private void checkGitHubUpdate(){
         if(githubChecking){toast("Busca em andamento.");return;}
         githubChecking=true;
@@ -940,34 +1118,8 @@ public final class MainActivity extends Activity {
                     current=Build.VERSION.SDK_INT>=28?pkg.getLongVersionCode():pkg.versionCode;
                 } catch(Exception ignored) { }
                 final long installed=current;
-                String[] labels=new String[items.size()];
-                for(int i=0;i<items.size();i++){
-                    GitHubReleaseUpdater.ReleaseInfo item=items.get(i);
-                    labels[i]=item.tag+(item.prerelease?"  ·  TESTE":"  ·  ESTÁVEL")
-                        +(item.versionCode<=installed?"  ·  instalada/anterior":"");
-                }
-                setUpdateStatus(items.size()+" versoes encontradas.");
-                android.widget.ArrayAdapter<String> adapter=new android.widget.ArrayAdapter<String>(
-                    MainActivity.this,android.R.layout.simple_list_item_1,labels){
-                    @Override public View getView(int position,View convertView,android.view.ViewGroup parent){
-                        TextView itemView=(TextView)super.getView(position,convertView,parent);
-                        boolean test=items.get(position).prerelease;
-                        leadingIcon(itemView,test?R.drawable.ui_lock:R.drawable.ui_check_circle,
-                            test?amber:success,18);
-                        return itemView;
-                    }
-                };
-                new AlertDialog.Builder(MainActivity.this)
-                    .setTitle("Versões disponíveis")
-                    .setAdapter(adapter,(dialog,index)->{
-                        GitHubReleaseUpdater.ReleaseInfo choice=items.get(index);
-                        if(choice.versionCode<=installed){
-                            setUpdateStatus("Versao instalada ou anterior; downgrade bloqueado.");return;
-                        }
-                        if(choice.prerelease)requireDebugPassword(()->downloadManual(choice));
-                        else downloadManual(choice);
-                    })
-                    .setNegativeButton("Fechar",null).show();
+                setUpdateStatus(items.size()+" versões encontradas.");
+                showReleasePicker(items,installed);
             }
         });
     }
@@ -985,12 +1137,7 @@ public final class MainActivity extends Activity {
             @Override public void ready(File file,String tag){
                 githubChecking=false;
                 setUpdateStatus(tag+(choice.prerelease?" (teste)":" (estavel)")+" pronto.");
-                new AlertDialog.Builder(MainActivity.this)
-                    .setTitle("Instalar "+tag+(choice.prerelease?" (TESTE)":""))
-                    .setMessage("APK assinado e verificado.")
-                    .setPositiveButton("Shizuku",(d,w)->installCachedShizuku())
-                    .setNeutralButton("Android",(d,w)->installVerifiedApk(file))
-                    .setNegativeButton("Depois",null).show();
+                showBridgeInstallChooser(file,tag,choice.prerelease);
             }
         },getApplicationContext());
     }
@@ -1046,6 +1193,12 @@ public final class MainActivity extends Activity {
             if(BridgeUpdater.PREF_ENABLED.equals(key) || BridgeUpdater.PREF_INSTALL.equals(key)){
                 BridgeUpdater.schedule(this);
                 if(on && BridgeUpdater.PREF_ENABLED.equals(key))BridgeUpdater.checkSoon(this);
+            }
+            if(ShizukuReleaseUpdater.PREF_CHECK.equals(key)){
+                if(!on)prefs.edit().putBoolean(ShizukuReleaseUpdater.PREF_INSTALL,false).apply();
+                ShizukuUpdateSchedule.schedule(this);
+                if(on){ShizukuUpdateSchedule.checkSoon(this);toast("Verificação diária do Shizuku ativada.");}
+                displayPage();
             }
             if("fast_ime_mode".equals(key) || "experimental_bridge_ime".equals(key) ||
                 "trigger_prefocus".equals(key) || NativeScannerController.LONG_HOLD_PREF.equals(key)){
@@ -1108,6 +1261,11 @@ public final class MainActivity extends Activity {
 
     @Override protected void onResume(){
         super.onResume();
+        ShizukuUpdateSchedule.schedule(this);
+        if(shizukuPendingInstall!=null && (Build.VERSION.SDK_INT<26 || getPackageManager().canRequestPackageInstalls())){
+            shizukuPendingInstall=null;
+            handler.post(this::installShizukuViaAndroid);
+        }
         if(githubPendingInstall!=null && (Build.VERSION.SDK_INT<26 || getPackageManager().canRequestPackageInstalls())){
             File pending=githubPendingInstall; githubPendingInstall=null;
             handler.post(() -> installVerifiedApk(pending));

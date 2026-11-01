@@ -44,10 +44,12 @@ public final class FloatingToolsService extends Service {
     private int bubbleX=-1, bubbleY=-1;
     private boolean batchDrawerOpen;
     private String statusText="Tratador de códigos disponível.";
-    private final int background=0xff161616;
-    private final int text=0xffffffff;
-    private final int green=0xff20c977;
-    private final int red=0xffef5350;
+    private final int background=0xff172337;
+    private final int text=0xfff4f7ff;
+    private final int green=0xff4bd79c;
+    private final int red=0xfffb7b83;
+    private final int accent=0xff6b9aff;
+    private static final int BUBBLE_DP=52;
 
     static void report(String message){
         FloatingToolsService instance=visible;
@@ -82,7 +84,14 @@ public final class FloatingToolsService extends Service {
     private int dp(int value){return (int)(value*getResources().getDisplayMetrics().density+.5f);}
     private GradientDrawable bg(int color,int corner){
         GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(dp(corner));
-        d.setStroke(dp(1),0xff505050);return d;
+        d.setStroke(dp(1),0xff324763);return d;
+    }
+    private GradientDrawable accentBubble(){
+        GradientDrawable d=new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+            new int[]{0xff4b87fb,0xff2356bc});
+        d.setShape(GradientDrawable.OVAL);
+        d.setStroke(dp(2),0xff95b8ff);
+        return d;
     }
     private TextView label(String value,int size,boolean bold){
         TextView t=new TextView(this); t.setText(value);t.setTextColor(text);
@@ -90,9 +99,10 @@ public final class FloatingToolsService extends Service {
         return t;
     }
     private TextView button(String value,Runnable cb){
-        TextView t=label(value,14,true);t.setPadding(dp(12),dp(11),dp(12),dp(11));
-        t.setGravity(Gravity.CENTER);t.setBackground(bg(0xff353535,12));
-        t.setOnClickListener(v->cb.run()); return t;
+        TextView t=label(value,13,true);t.setPadding(dp(14),dp(14),dp(14),dp(14));
+        t.setGravity(Gravity.CENTER_VERTICAL);t.setBackground(bg(0xff253b60,14));
+        t.setFocusable(false); // Enter do scanner nunca ativa ferramentas acidentalmente.
+        t.setOnClickListener(v->cb.run());return t;
     }
     private TextView iconButton(String value,int iconRes,Runnable callback){
         TextView t=button(value,callback);
@@ -116,7 +126,7 @@ public final class FloatingToolsService extends Service {
     }
     private TextView muted(String value,int sp){
         TextView t=label(value,sp,false);
-        t.setTextColor(0xffb5b8bf);
+        t.setTextColor(0xffa8bddb);
         return t;
     }
     private Switch toggle(boolean active){
@@ -125,13 +135,13 @@ public final class FloatingToolsService extends Service {
         sw.setShowText(false);
         int[][] states=new int[][]{new int[]{android.R.attr.state_checked},new int[]{}};
         sw.setThumbTintList(new ColorStateList(states,new int[]{green,red}));
-        sw.setTrackTintList(new ColorStateList(states,new int[]{0xff18754c,0xff7d2d32}));
+        sw.setTrackTintList(new ColorStateList(states,new int[]{0xff246e59,0xff45556c}));
         sw.setContentDescription(active?"Ativado":"Desativado");
         sw.setOnCheckedChangeListener((v,on)->sw.setContentDescription(on?"Ativado":"Desativado"));
         return sw;
     }
     private View separator(){
-        View line=new View(this);line.setBackgroundColor(0xff34373b);
+        View line=new View(this);line.setBackgroundColor(0xff33465e);
         LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,dp(1));
         lp.topMargin=dp(14);lp.bottomMargin=dp(14);line.setLayoutParams(lp);
         return line;
@@ -169,8 +179,9 @@ public final class FloatingToolsService extends Service {
         expanded=open;
         LinearLayout layout=new LinearLayout(this);layout.setOrientation(LinearLayout.VERTICAL);
         if(open){
-            layout.setBackground(bg(background,18));
-            layout.setPadding(dp(20),dp(19),dp(20),dp(19));
+            layout.setBackground(bg(background,24));
+            layout.setElevation(dp(12));
+            layout.setPadding(dp(18),dp(18),dp(18),dp(18));
         }
         view=layout;
         // A janela expandida antiga roubava o foco do Flutter ate para
@@ -180,25 +191,25 @@ public final class FloatingToolsService extends Service {
         int overlayFlags=WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL;
         if(!needsTextInput)overlayFlags|=WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
         params=new WindowManager.LayoutParams(
-            open?dp(310):dp(40),WindowManager.LayoutParams.WRAP_CONTENT,
+            open?dp(310):dp(BUBBLE_DP),WindowManager.LayoutParams.WRAP_CONTENT,
             Build.VERSION.SDK_INT>=26?WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY:
                 WindowManager.LayoutParams.TYPE_PHONE,
             overlayFlags,
             PixelFormat.TRANSLUCENT);
         params.gravity=Gravity.TOP|Gravity.START;
         int width=getResources().getDisplayMetrics().widthPixels;
-        params.x=Math.max(0,Math.min(oldX,Math.max(0,width-(open?dp(310):dp(40)))));
+        params.x=Math.max(0,Math.min(oldX,Math.max(0,width-(open?dp(310):dp(BUBBLE_DP)))));
         params.y=Math.max(0,Math.min(oldY,Math.max(0,getResources().getDisplayMetrics().heightPixels-dp(72))));
         params.softInputMode=WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;
         if(!open){
             FrameLayout bubble=new FrameLayout(this);
-            bubble.setBackground(bg(0xff252525,40));bubble.setAlpha(.50f);
+            bubble.setBackground(accentBubble());bubble.setElevation(dp(12));
             bubble.setContentDescription("Abrir ferramentas do MLOG Bridge");
             ImageView gear=new ImageView(this);
             gear.setImageResource(R.drawable.ic_floating_gear);
-            gear.setColorFilter(0xffffffff);gear.setPadding(dp(9),dp(9),dp(9),dp(9));
-            bubble.addView(gear,new FrameLayout.LayoutParams(dp(40),dp(40),Gravity.CENTER));
-            layout.addView(bubble,new LinearLayout.LayoutParams(dp(40),dp(40)));
+            gear.setColorFilter(0xffffffff);gear.setPadding(dp(13),dp(13),dp(13),dp(13));
+            bubble.addView(gear,new FrameLayout.LayoutParams(dp(BUBBLE_DP),dp(BUBBLE_DP),Gravity.CENTER));
+            layout.addView(bubble,new LinearLayout.LayoutParams(dp(BUBBLE_DP),dp(BUBBLE_DP)));
             bubble.setOnTouchListener(new View.OnTouchListener(){
                 private float downX,downY;private int startX,startY;private boolean moved;
                 @Override public boolean onTouch(View v,MotionEvent e){
@@ -212,7 +223,7 @@ public final class FloatingToolsService extends Service {
                         if(moved){
                             int width=getResources().getDisplayMetrics().widthPixels;
                             int height=getResources().getDisplayMetrics().heightPixels;
-                            params.x=Math.max(0,Math.min(width-dp(40),startX+dx));
+                            params.x=Math.max(0,Math.min(width-dp(BUBBLE_DP),startX+dx));
                             params.y=Math.max(0,Math.min(height-dp(72),startY+dy));
                             bubbleX=params.x;bubbleY=params.y;
                             try{wm.updateViewLayout(view,params);}catch(RuntimeException ignored){}
@@ -232,9 +243,20 @@ public final class FloatingToolsService extends Service {
         }else{
             LinearLayout header=new LinearLayout(this);header.setOrientation(LinearLayout.HORIZONTAL);
             header.setGravity(Gravity.CENTER_VERTICAL);
-            TextView title=label("MLOG • Ferramentas",16,true);
-            header.addView(title,new LinearLayout.LayoutParams(0,-2,1));
-            header.addView(iconButton("",R.drawable.ui_minus,this::collapse));layout.addView(header);
+            ImageView headerIcon=new ImageView(this);
+            headerIcon.setImageResource(R.drawable.ui_sliders);
+            headerIcon.setColorFilter(accent);
+            LinearLayout.LayoutParams hip=new LinearLayout.LayoutParams(dp(28),dp(28));
+            hip.rightMargin=dp(9);header.addView(headerIcon,hip);
+            LinearLayout heading=new LinearLayout(this);heading.setOrientation(LinearLayout.VERTICAL);
+            heading.addView(label("Ferramentas",18,true));
+            heading.addView(muted("MLOG Bridge",11));
+            header.addView(heading,new LinearLayout.LayoutParams(0,-2,1));
+            TextView minimize=iconButton("",R.drawable.ui_minus,this::collapse);
+            minimize.setContentDescription("Recolher ferramentas");
+            minimize.setBackground(bg(0xff253b60,14));
+            header.addView(minimize,new LinearLayout.LayoutParams(dp(48),dp(45)));
+            layout.addView(header);
             layout.addView(separator());
             SharedPreferences pref=ScanAssistState.prefs(this);
             // Reaplica broadcast CMX e tenta recuperar a Conferencia de Venda
@@ -250,6 +272,8 @@ public final class FloatingToolsService extends Service {
                     "Acessibilidade do Bridge desligada; nao foi possivel recuperar.",
                     android.widget.Toast.LENGTH_LONG).show();
             });
+            reset.setBackground(bg(0xff275dd0,14));
+            reset.setGravity(Gravity.CENTER_VERTICAL);
             layout.addView(reset,new LinearLayout.LayoutParams(-1,-2));
             if(pref.getBoolean(ShizukuScanMode.PREF,false)){
                 boolean ok=ShizukuHealthMonitor.ready();
@@ -329,7 +353,7 @@ public final class FloatingToolsService extends Service {
                 });
                 LinearLayout.LayoutParams slp=new LinearLayout.LayoutParams(-1,-2);
                 slp.topMargin=dp(8);drawer.addView(stop,slp);
-                TextView foot=muted("Shizuku: só repete após SEPARADO aumentar 1 no mesmo produto. Sem confirmação, interrompe o lote. Confira o pedido.",11);
+                TextView foot=muted("Confirme a quantidade no MLOG após o lote.",11);
                 LinearLayout.LayoutParams fl=new LinearLayout.LayoutParams(-1,-2);
                 fl.topMargin=dp(10);drawer.addView(foot,fl);
             }

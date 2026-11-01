@@ -205,6 +205,16 @@ jobs:
             tests/BridgeUpdateIntervalsTest.java
           java -cp /tmp/bridge-update-intervals br.com.seridoplast.mlogbridge.BridgeUpdateIntervalsTest
 
+      - name: Testar canal Shizuku oficial e proteção contra downgrade
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bridge-shizuku-update-policy
+          javac -d /tmp/bridge-shizuku-update-policy \
+            app/src/main/java/br/com/seridoplast/mlogbridge/ShizukuUpdatePolicy.java \
+            tests/ShizukuUpdatePolicyTest.java
+          java -cp /tmp/bridge-shizuku-update-policy br.com.seridoplast.mlogbridge.ShizukuUpdatePolicyTest
+
       - name: Compilar APK de producao com assinatura fixa
         env:
           BRIDGE_SIGNING_STORE_PASSWORD: ${{ secrets.BRIDGE_KEYSTORE_PASSWORD }}
