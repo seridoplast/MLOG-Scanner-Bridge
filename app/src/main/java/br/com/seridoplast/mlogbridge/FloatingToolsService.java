@@ -2,6 +2,7 @@ package br.com.seridoplast.mlogbridge;
 
 import android.app.Service;
 import android.content.Context;
+import android.content.res.Configuration;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.PixelFormat;
@@ -29,6 +30,7 @@ import android.widget.TextView;
 /** Optional user-controlled overlay. Never captures screen contents. */
 public final class FloatingToolsService extends Service {
     private static FloatingToolsService visible;
+    static final String ACTION_REFRESH_THEME = "br.com.seridoplast.mlogbridge.REFRESH_FLOATING_THEME";
     static boolean isRunning(){return visible!=null && visible.view!=null;}
     static boolean isBatchInputOpen(){
         FloatingToolsService svc=visible;
@@ -44,12 +46,13 @@ public final class FloatingToolsService extends Service {
     private int bubbleX=-1, bubbleY=-1;
     private boolean batchDrawerOpen;
     private String statusText="Tratador de códigos disponível.";
-    private final int background=0xff172337;
-    private final int text=0xfff4f7ff;
-    private final int green=0xff4bd79c;
-    private final int red=0xfffb7b83;
-    private final int accent=0xff6b9aff;
-    private static final int BUBBLE_DP=52;
+    private int background, text, mutedText, green, red, accent, buttonBackground;
+    private int buttonStroke, dividerColor, actionBackground, inputHint;
+    // 40 dp para nao cobrir campos da separacao; cor preta com 50% de opacidade.
+    private static final int BUBBLE_DP=40;
+    // Alvo de toque maior que a bolha visual, para operacao com luvas no CD.
+    private static final int BUBBLE_TOUCH_DP=48;
+    private static final int BUBBLE_FILL=0x80000000;
 
     static void report(String message){
         FloatingToolsService instance=visible;
@@ -70,6 +73,10 @@ public final class FloatingToolsService extends Service {
         }
         visible=this;
         if(wm==null)wm=(WindowManager)getSystemService(Context.WINDOW_SERVICE);
+        if(intent!=null && ACTION_REFRESH_THEME.equals(intent.getAction())){
+            if(view!=null)draw(expanded);
+            return START_NOT_STICKY;
+        }
         // Never preserve an armed batch across process/service restarts.
         if(view==null){
             android.content.SharedPreferences p=ScanAssistState.prefs(this);
@@ -81,16 +88,37 @@ public final class FloatingToolsService extends Service {
         }
         return START_NOT_STICKY;
     }
+    @Override public void onConfigurationChanged(Configuration newConfig){
+        super.onConfigurationChanged(newConfig);
+        if(view!=null)draw(expanded);
+    }
+    private void applyTheme(){
+        String choice=ScanAssistState.prefs(this).getString("theme_choice","auto");
+        boolean dark="dark".equals(choice) || (!"light".equals(choice) &&
+            (getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK)==
+                Configuration.UI_MODE_NIGHT_YES);
+        background=dark?0xff172337:0xffffffff;
+        text=dark?0xfff4f7ff:0xff17233a;
+        mutedText=dark?0xffa8bddb:0xff63758d;
+        green=dark?0xff4bd79c:0xff138255;
+        red=dark?0xfffb7b83:0xffb63747;
+        accent=dark?0xff8ab4ff:0xff2864e8;
+        buttonBackground=dark?0xff253b60:0xffe9f0ff;
+        buttonStroke=dark?0xff324763:0xffdce5f2;
+        dividerColor=dark?0xff33465e:0xffdce5f2;
+        actionBackground=dark?0xff275dd0:0xff2864e8;
+        inputHint=dark?0xffa8bddb:0xff63758d;
+    }
     private int dp(int value){return (int)(value*getResources().getDisplayMetrics().density+.5f);}
     private GradientDrawable bg(int color,int corner){
         GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(dp(corner));
-        d.setStroke(dp(1),0xff324763);return d;
+        d.setStroke(dp(1),buttonStroke);return d;
     }
     private GradientDrawable accentBubble(){
-        GradientDrawable d=new GradientDrawable(GradientDrawable.Orientation.TL_BR,
-            new int[]{0xff4b87fb,0xff2356bc});
+        GradientDrawable d=new GradientDrawable();
         d.setShape(GradientDrawable.OVAL);
-        d.setStroke(dp(2),0xff95b8ff);
+        d.setColor(BUBBLE_FILL);
+        // Sem contorno: mantem a bolha discreta sobre o MLOG.
         return d;
     }
     private TextView label(String value,int size,boolean bold){
@@ -100,13 +128,13 @@ public final class FloatingToolsService extends Service {
     }
     private TextView button(String value,Runnable cb){
         TextView t=label(value,13,true);t.setPadding(dp(14),dp(14),dp(14),dp(14));
-        t.setGravity(Gravity.CENTER_VERTICAL);t.setBackground(bg(0xff253b60,14));
+        t.setGravity(Gravity.CENTER_VERTICAL);t.setBackground(bg(buttonBackground,14));
         t.setFocusable(false); // Enter do scanner nunca ativa ferramentas acidentalmente.
         t.setOnClickListener(v->cb.run());return t;
     }
     private TextView iconButton(String value,int iconRes,Runnable callback){
         TextView t=button(value,callback);
-        leadingIcon(t,iconRes,0xffffffff,17);
+        leadingIcon(t,iconRes,text,17);
         return t;
     }
     private void leadingIcon(TextView view,int res,int tint,int size){
@@ -126,7 +154,7 @@ public final class FloatingToolsService extends Service {
     }
     private TextView muted(String value,int sp){
         TextView t=label(value,sp,false);
-        t.setTextColor(0xffa8bddb);
+        t.setTextColor(mutedText);
         return t;
     }
     private Switch toggle(boolean active){
@@ -135,13 +163,13 @@ public final class FloatingToolsService extends Service {
         sw.setShowText(false);
         int[][] states=new int[][]{new int[]{android.R.attr.state_checked},new int[]{}};
         sw.setThumbTintList(new ColorStateList(states,new int[]{green,red}));
-        sw.setTrackTintList(new ColorStateList(states,new int[]{0xff246e59,0xff45556c}));
+        sw.setTrackTintList(new ColorStateList(states,new int[]{0xff246e59,0xff96a2b5}));
         sw.setContentDescription(active?"Ativado":"Desativado");
         sw.setOnCheckedChangeListener((v,on)->sw.setContentDescription(on?"Ativado":"Desativado"));
         return sw;
     }
     private View separator(){
-        View line=new View(this);line.setBackgroundColor(0xff33465e);
+        View line=new View(this);line.setBackgroundColor(dividerColor);
         LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,dp(1));
         lp.topMargin=dp(14);lp.bottomMargin=dp(14);line.setLayoutParams(lp);
         return line;
@@ -170,6 +198,7 @@ public final class FloatingToolsService extends Service {
     }
     private void draw(boolean open){
         if(wm==null)return;
+        applyTheme();
         if(bubbleX<0)bubbleX=dp(12);
         if(bubbleY<0)bubbleY=dp(160);
         // Abrir painel pode deslocá-lo para caber na tela; não deslocar a engrenagem.
@@ -191,26 +220,28 @@ public final class FloatingToolsService extends Service {
         int overlayFlags=WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL;
         if(!needsTextInput)overlayFlags|=WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
         params=new WindowManager.LayoutParams(
-            open?dp(310):dp(BUBBLE_DP),WindowManager.LayoutParams.WRAP_CONTENT,
+            open?dp(310):dp(BUBBLE_TOUCH_DP),WindowManager.LayoutParams.WRAP_CONTENT,
             Build.VERSION.SDK_INT>=26?WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY:
                 WindowManager.LayoutParams.TYPE_PHONE,
             overlayFlags,
             PixelFormat.TRANSLUCENT);
         params.gravity=Gravity.TOP|Gravity.START;
         int width=getResources().getDisplayMetrics().widthPixels;
-        params.x=Math.max(0,Math.min(oldX,Math.max(0,width-(open?dp(310):dp(BUBBLE_DP)))));
+        params.x=Math.max(0,Math.min(oldX,Math.max(0,width-(open?dp(310):dp(BUBBLE_TOUCH_DP)))));
         params.y=Math.max(0,Math.min(oldY,Math.max(0,getResources().getDisplayMetrics().heightPixels-dp(72))));
         params.softInputMode=WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;
         if(!open){
+            FrameLayout touchTarget=new FrameLayout(this);
+            touchTarget.setContentDescription("Abrir ferramentas do MLOG Bridge");
             FrameLayout bubble=new FrameLayout(this);
-            bubble.setBackground(accentBubble());bubble.setElevation(dp(12));
-            bubble.setContentDescription("Abrir ferramentas do MLOG Bridge");
+            bubble.setBackground(accentBubble());bubble.setElevation(dp(5));
             ImageView gear=new ImageView(this);
             gear.setImageResource(R.drawable.ic_floating_gear);
-            gear.setColorFilter(0xffffffff);gear.setPadding(dp(13),dp(13),dp(13),dp(13));
+            gear.setColorFilter(0xffffffff);gear.setPadding(dp(10),dp(10),dp(10),dp(10));
             bubble.addView(gear,new FrameLayout.LayoutParams(dp(BUBBLE_DP),dp(BUBBLE_DP),Gravity.CENTER));
-            layout.addView(bubble,new LinearLayout.LayoutParams(dp(BUBBLE_DP),dp(BUBBLE_DP)));
-            bubble.setOnTouchListener(new View.OnTouchListener(){
+            touchTarget.addView(bubble,new FrameLayout.LayoutParams(dp(BUBBLE_DP),dp(BUBBLE_DP),Gravity.CENTER));
+            layout.addView(touchTarget,new LinearLayout.LayoutParams(dp(BUBBLE_TOUCH_DP),dp(BUBBLE_TOUCH_DP)));
+            touchTarget.setOnTouchListener(new View.OnTouchListener(){
                 private float downX,downY;private int startX,startY;private boolean moved;
                 @Override public boolean onTouch(View v,MotionEvent e){
                     if(e.getActionMasked()==MotionEvent.ACTION_DOWN){
@@ -223,7 +254,7 @@ public final class FloatingToolsService extends Service {
                         if(moved){
                             int width=getResources().getDisplayMetrics().widthPixels;
                             int height=getResources().getDisplayMetrics().heightPixels;
-                            params.x=Math.max(0,Math.min(width-dp(BUBBLE_DP),startX+dx));
+                            params.x=Math.max(0,Math.min(width-dp(BUBBLE_TOUCH_DP),startX+dx));
                             params.y=Math.max(0,Math.min(height-dp(72),startY+dy));
                             bubbleX=params.x;bubbleY=params.y;
                             try{wm.updateViewLayout(view,params);}catch(RuntimeException ignored){}
@@ -254,7 +285,7 @@ public final class FloatingToolsService extends Service {
             header.addView(heading,new LinearLayout.LayoutParams(0,-2,1));
             TextView minimize=iconButton("",R.drawable.ui_minus,this::collapse);
             minimize.setContentDescription("Recolher ferramentas");
-            minimize.setBackground(bg(0xff253b60,14));
+            minimize.setBackground(bg(buttonBackground,14));
             header.addView(minimize,new LinearLayout.LayoutParams(dp(48),dp(45)));
             layout.addView(header);
             layout.addView(separator());
@@ -272,7 +303,9 @@ public final class FloatingToolsService extends Service {
                     "Acessibilidade do Bridge desligada; nao foi possivel recuperar.",
                     android.widget.Toast.LENGTH_LONG).show();
             });
-            reset.setBackground(bg(0xff275dd0,14));
+            reset.setBackground(bg(actionBackground,14));
+            reset.setTextColor(0xffffffff);
+            leadingIcon(reset,R.drawable.ui_refresh,0xffffffff,17);
             reset.setGravity(Gravity.CENTER_VERTICAL);
             layout.addView(reset,new LinearLayout.LayoutParams(-1,-2));
             if(pref.getBoolean(ShizukuScanMode.PREF,false)){
@@ -314,7 +347,7 @@ public final class FloatingToolsService extends Service {
                 LinearLayout.LayoutParams rlp=new LinearLayout.LayoutParams(-1,-2);rlp.topMargin=dp(10);
                 row.addView(label("Total de bipes",14,true),new LinearLayout.LayoutParams(0,-2,1));
                 EditText amount=new EditText(this);amount.setSingleLine(true);
-                amount.setTextColor(text);amount.setHintTextColor(0xffbbbbbb);
+                amount.setTextColor(text);amount.setHintTextColor(inputHint);
                 amount.setInputType(InputType.TYPE_CLASS_NUMBER);
                 amount.setSelectAllOnFocus(true);
                 amount.setText(String.valueOf(ScanAssistState.clamp(pref.getInt(ScanAssistState.COUNT,1))));

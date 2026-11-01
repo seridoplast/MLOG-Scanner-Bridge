@@ -351,7 +351,7 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams blp=new LinearLayout.LayoutParams(-2,-2);blp.leftMargin=dp(8);
         left.addView(branding,blp);
         head.addView(left,new LinearLayout.LayoutParams(0,-2,1));
-        TextView version=capsule("v3.6.3",primary,primarySoft);
+        TextView version=capsule("v"+installedVersionName(),primary,primarySoft);
         LinearLayout.LayoutParams vlp=new LinearLayout.LayoutParams(-2,-2);vlp.rightMargin=dp(8);
         head.addView(version,vlp);
         ImageView moon=icon(darkNow()?R.drawable.ui_sun:R.drawable.ui_moon,ink,22);
@@ -843,11 +843,14 @@ public final class MainActivity extends Activity {
         });
         button(card,"Abrir MLOG",true,this::openMlog);
     }
+    private String installedVersionName(){
+        try{
+            String value=getPackageManager().getPackageInfo(getPackageName(),0).versionName;
+            return value==null || value.isEmpty()?"?":value;
+        }catch(Exception ignored){return "?";}
+    }
     private void about(){
-        String installedVersion="";
-        try{installedVersion=getPackageManager().getPackageInfo(getPackageName(),0).versionName;}
-        catch(Exception ignored){installedVersion="?";}
-        title("Versão "+installedVersion,"Atualizações e permissões do Bridge.");
+        title("Versão "+installedVersionName(),"Atualizações e permissões do Bridge.");
         LinearLayout updates=card();updates.addView(label("Atualizações",17,ink,true));
         subtitle(updates,"Busca a cada ~10 min, quando o Android permitir.");
         check(updates,"Buscar automaticamente",BridgeUpdater.PREF_ENABLED,true);
@@ -1236,6 +1239,11 @@ public final class MainActivity extends Activity {
     }
     private void chooseTheme(String value){
         prefs.edit().putString("theme_choice",value).apply();themeChoice=value;
+        // Atualiza o painel flutuante imediatamente, mesmo quando o servico
+        // permanece ativo sobre o MLOG; evita manter as cores do tema anterior.
+        if(FloatingToolsService.isRunning())
+            startService(new Intent(this,FloatingToolsService.class)
+                .setAction(FloatingToolsService.ACTION_REFRESH_THEME));
         recreate();
     }
     private void nextTheme(){chooseTheme(darkNow()?"light":"dark");}
