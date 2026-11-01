@@ -48,11 +48,13 @@ public final class FloatingToolsService extends Service {
     private String statusText="Tratador de códigos disponível.";
     private int background, text, mutedText, green, red, accent, buttonBackground;
     private int buttonStroke, dividerColor, actionBackground, inputHint;
-    // 40 dp para nao cobrir campos da separacao; cor preta com 50% de opacidade.
+    // 40 dp para nao cobrir campos da separacao; fundo e icone com 15% de opacidade.
     private static final int BUBBLE_DP=40;
     // Alvo de toque maior que a bolha visual, para operacao com luvas no CD.
     private static final int BUBBLE_TOUCH_DP=48;
-    private static final int BUBBLE_FILL=0x80000000;
+    // Aplicar opacidade no contêiner, e nao apenas no fundo, para incluir o icone.
+    private static final int BUBBLE_FILL=0xff000000;
+    private static final float BUBBLE_OPACITY=0.15f;
 
     static void report(String message){
         FloatingToolsService instance=visible;
@@ -234,7 +236,11 @@ public final class FloatingToolsService extends Service {
             FrameLayout touchTarget=new FrameLayout(this);
             touchTarget.setContentDescription("Abrir ferramentas do MLOG Bridge");
             FrameLayout bubble=new FrameLayout(this);
-            bubble.setBackground(accentBubble());bubble.setElevation(dp(5));
+            bubble.setBackground(accentBubble());
+            // Toda a bolha, incluindo a engrenagem branca, fica com 15% de opacidade.
+            // A area de toque de 48 dp permanece 100% ativa e invisivel.
+            bubble.setAlpha(BUBBLE_OPACITY);
+            bubble.setElevation(0f);
             ImageView gear=new ImageView(this);
             gear.setImageResource(R.drawable.ic_floating_gear);
             gear.setColorFilter(0xffffffff);gear.setPadding(dp(10),dp(10),dp(10),dp(10));

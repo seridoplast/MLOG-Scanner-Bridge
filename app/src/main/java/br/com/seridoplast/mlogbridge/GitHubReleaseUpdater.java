@@ -30,7 +30,9 @@ import java.util.List;
 public final class GitHubReleaseUpdater {
     private static final String REPOSITORY = "seridoplast/MLOG-Scanner-Bridge";
     private static final String API = "https://api.github.com/repos/" + REPOSITORY + "/releases/latest";
-    private static final String LIST_API = "https://api.github.com/repos/" + REPOSITORY + "/releases?per_page=100";
+    private static final int MAX_MANUAL_RELEASES = 4;
+    // API fornece somente as quatro Releases mais recentes (estaveis ou testes).
+    private static final String LIST_API = "https://api.github.com/repos/" + REPOSITORY + "/releases?per_page=" + MAX_MANUAL_RELEASES;
     private static final String RELEASE_ASSET_PREFIX = "https://github.com/" + REPOSITORY + "/releases/download/";
     private static final String LEGACY_APK_NAME = "app-release.apk";
     // Matches the verified corporate release certificate in .github/workflows/gerar-apk.yml.
@@ -90,6 +92,9 @@ public final class GitHubReleaseUpdater {
                     releases.add(info);
                 }
                 Collections.sort(releases,(a,b)->Long.compare(b.versionCode,a.versionCode));
+                // Limite defensivo, inclusive se o endpoint mudar de comportamento.
+                if(releases.size()>MAX_MANUAL_RELEASES)
+                    releases.subList(MAX_MANUAL_RELEASES,releases.size()).clear();
                 UI.post(()->callback.loaded(releases));
             } catch(Exception ex) {
                 UI.post(()->callback.error(ex.getMessage()==null?"Nao foi possivel consultar as Releases.":ex.getMessage()));
