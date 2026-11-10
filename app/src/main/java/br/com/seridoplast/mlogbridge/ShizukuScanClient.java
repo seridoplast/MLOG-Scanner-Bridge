@@ -75,11 +75,18 @@ final class ShizukuScanClient {
     boolean hasPendingScans(){return pending.get()>0 || cameraBusy.get();}
 
     /** No coalescing by barcode value: two deliberate reads must remain two. */
-    boolean scan(String code) {
+    boolean scan(String raw) {
+        // O CMX pode anexar CR/LF/TAB/NUL ou marcadores invisiveis. O teste
+        // de leitura mostra o codigo, mas o caminho Shizuku antigo recusava
+        // o payload completo antes de digitar no Flutter.
+        final String code=ShizukuBarcodePayload.prepare(raw);
         if(!ShizukuScanMode.supported(code)){
-            ScanCoordinator.status(context,"Formato do codigo nao suportado; leitura bloqueada.");
+            Log.w("MLOGBridge","SHIZUKU_PAYLOAD_UNSUPPORTED_OR_EMPTY");
+            ScanCoordinator.status(context,"Leitura nao enviada: caracteres incompatíveis ou codigo vazio.");
             return false;
         }
+        if(raw!=null && raw.length()!=code.length())
+            Log.i("MLOGBridge","SHIZUKU_TRANSPORT_SUFFIX_REMOVED_COUNT_"+(raw.length()-code.length()));
         if(cameraBusy.get()){
             ScanCoordinator.status(context,"Recuperacao de Volume em andamento. Bipe novamente depois.");
             return false;
@@ -111,6 +118,10 @@ final class ShizukuScanClient {
                         ScanCoordinator.status(context,"Falha ao digitar. Confira o MLOG.");
                         return;
                     }
+                    // O MLOG usa Flutter: deixe um frame/evento de input
+                    // processar o texto antes de confirmar com Enter. Nao
+                    // reenviar barcode em caso de falha: evita duplicatas.
+                    android.os.SystemClock.sleep(110L);
                     if(!runInput("keyevent","66")){
                         ScanCoordinator.status(context,"Falha no Enter. Confira o MLOG.");
                         return;

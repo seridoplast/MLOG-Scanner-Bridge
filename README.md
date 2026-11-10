@@ -44,3 +44,14 @@
 - O código do Bipe Normal permanece por compatibilidade, mas a interface oferece apenas Bipe Shizuku.
 - O teste real em coletor é indispensável para confirmar a aparência e a instalação automática.
 - A assinatura release depende dos GitHub Actions Secrets já configurados; não inclua certificados ou senhas no repositório.
+
+
+### v3.6.7 — Compatibilidade de leituras (piloto)
+
+- Remove somente caracteres de enquadramento do broadcast CMX (CR/LF/TAB/NUL/STX/ETX e BOM) antes de enviar pelo Shizuku. Não altera zeros à esquerda nem dígitos.
+- Rejeita caracteres de controle **internos** em vez de apagar separadores GS1 silenciosamente.
+- Aceita códigos simples com hífen, ponto, barra, sublinhado e mais, além dos alfanuméricos.
+- Adiciona uma pausa de 110 ms entre `input text` e `Enter` para permitir ao Flutter processar o texto.
+- O resultado do comando ADB **não confirma** que o MLOG aceitou o código ou encontrou um produto. Não há retentativa automática do mesmo bipe para evitar duplicação.
+- Observação: o exemplo `7890000000105` **não passa na validação GTIN-13** (dígito correto para os 12 primeiros é 9). O Bridge entrega o valor original e não corrige etiquetas; o MLOG pode rejeitar essa referência por regra própria.
+- Primeira publicação prevista como pré-release (`rollout=0`) para testar no coletor piloto.

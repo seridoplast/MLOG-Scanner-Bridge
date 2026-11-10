@@ -12,8 +12,12 @@ final class ShizukuScanMode {
         if (code == null || code.isEmpty() || code.length() > 80) return false;
         for (int i = 0; i < code.length(); i++) {
             char c=code.charAt(i);
+            // `input text` recebe argv diretamente, sem interpretacao por shell.
+            // Suporte a pontuacao simples de etiquetas internas/Code 39/128.
+            // Excluir espaco e % para nao acionar a sintaxe especial %s do input.
             if (!((c >= '0' && c <= '9') ||
-                  (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))) return false;
+                  (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                  c=='-' || c=='.' || c=='_' || c=='/' || c=='+')) return false;
         }
         return true;
     }

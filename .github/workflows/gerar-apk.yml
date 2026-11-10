@@ -165,15 +165,18 @@ jobs:
             tests/ZebraProfile0ModeTest.java
           java -cp /tmp/bridge-profile0 br.com.seridoplast.mlogbridge.ZebraProfile0ModeTest
 
-      - name: Testar modo Shizuku (validacao e exclusao de caracteres perigosos)
+      - name: Testar modo Shizuku (codigos, sufixos CMX e fidelidade)
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p /tmp/bridge-shizuku-tests
           javac -d /tmp/bridge-shizuku-tests \
             app/src/main/java/br/com/seridoplast/mlogbridge/ShizukuScanMode.java \
-            tests/ShizukuScanModeTest.java
+            app/src/main/java/br/com/seridoplast/mlogbridge/ShizukuBarcodePayload.java \
+            tests/ShizukuScanModeTest.java \
+            tests/ShizukuBarcodePayloadTest.java
           java -cp /tmp/bridge-shizuku-tests br.com.seridoplast.mlogbridge.ShizukuScanModeTest
+          java -cp /tmp/bridge-shizuku-tests br.com.seridoplast.mlogbridge.ShizukuBarcodePayloadTest
 
       - name: Testar bloqueio por senha do lote automático
         shell: bash
