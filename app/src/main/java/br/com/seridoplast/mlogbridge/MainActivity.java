@@ -1108,7 +1108,7 @@ public final class MainActivity extends Activity {
         if(githubChecking){toast("Busca em andamento.");return;}
         githubChecking=true;
         setUpdateStatus("Consultando versoes...");
-        GitHubReleaseUpdater.listForManualSelection(new GitHubReleaseUpdater.ReleasesCallback(){
+        GitHubReleaseUpdater.listForManualSelection(getApplicationContext(),new GitHubReleaseUpdater.ReleasesCallback(){
             @Override public void error(String message){
                 githubChecking=false;setUpdateStatus("Falha: "+message);
             }

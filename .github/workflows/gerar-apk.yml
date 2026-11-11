@@ -198,6 +198,20 @@ jobs:
             tests/PmInstallOutputTest.java
           java -cp /tmp/bridge-pm-test br.com.seridoplast.mlogbridge.PmInstallOutputTest
 
+      - name: Testar gerador do catalogo publico
+        shell: bash
+        run: python3 tests/test_release_feed.py
+
+      - name: Testar espera segura do limite GitHub
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bridge-api-limit
+          javac -d /tmp/bridge-api-limit \
+            app/src/main/java/br/com/seridoplast/mlogbridge/GitHubRatePolicy.java \
+            tests/GitHubRatePolicyTest.java
+          java -cp /tmp/bridge-api-limit br.com.seridoplast.mlogbridge.GitHubRatePolicyTest
+
       - name: Validar intervalos de atualizacao
         shell: bash
         run: |
@@ -317,7 +331,7 @@ jobs:
           cp app/build/outputs/apk/release/app-release.apk \
              "app/build/outputs/apk/release/MLOG-Scanner-Bridge-v${VERSION}.apk"
 
-      - name: Publicar teste pendente ou aprovar Release estavel
+      - name: Publicar Release estavel 3.6.8 ou pre-release das demais
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
         shell: bash
         env:
@@ -341,6 +355,22 @@ jobs:
               gh release create "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" \
                 --target "$GITHUB_SHA" --title "MLOG Scanner Bridge ${TAG}" \
                 --notes "rollout=${ROLLOUT}" --latest
+            fi
+          elif [[ "$GITHUB_EVENT_NAME" == "push" && "$VERSION" == "3.6.8" ]]; then
+            # v3.6.8 aprovada para distribuicao direta; mesmo que a tag ja exista
+            # como pre-release, converter para release estavel/Latest/rollout=100.
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+                   --json assets --jq '.assets[].name' | grep -Fxq "$(basename "$ASSET")"; then
+                gh release upload "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY"
+              fi
+              gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" \
+                --prerelease=false --latest --title "MLOG Scanner Bridge ${TAG}" \
+                --notes 'rollout=100'
+            else
+              gh release create "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" \
+                --target "$GITHUB_SHA" --title "MLOG Scanner Bridge ${TAG}" \
+                --notes 'rollout=100' --latest
             fi
           elif [[ "$GITHUB_EVENT_NAME" == "push" && "$VERSION" == "3.6.6" ]] && \
                ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
@@ -370,3 +400,33 @@ jobs:
         if: always()
         shell: bash
         run: rm -f "$RUNNER_TEMP/seridoplast-bridge-release.jks"
+  # A Release e assinada/publicada acima. Este job adicional distribui apenas
+  # metadados publicos via Pages para TODOS os coletores sem gastar REST API.
+  # Ative Settings > Pages > Source: GitHub Actions uma unica vez.
+  publicar-catalogo:
+    needs: compilar-apk
+    if: success()
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    continue-on-error: true
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    concurrency:
+      group: bridge-pages-catalog
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Gerar catalogo de Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/build_release_feed.py
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - uses: actions/deploy-pages@v4
+        id: deployment

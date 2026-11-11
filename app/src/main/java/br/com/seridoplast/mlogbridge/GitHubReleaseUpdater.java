@@ -30,6 +30,14 @@ import java.util.List;
 public final class GitHubReleaseUpdater {
     private static final String REPOSITORY = "seridoplast/MLOG-Scanner-Bridge";
     private static final String API = "https://api.github.com/repos/" + REPOSITORY + "/releases/latest";
+    // Catalogo CDN: servido por GitHub Pages, sem consumir a cota REST por coletor.
+    private static final String FEED = "https://seridoplast.github.io/MLOG-Scanner-Bridge/releases.json";
+    private static final String RATE_UNTIL = "updater_github_api_blocked_until_v368";
+    private static final String API_AUTO_ATTEMPT = "updater_fallback_auto_v368";
+    private static final String API_MANUAL_ATTEMPT = "updater_fallback_manual_v368";
+    private static final long API_AUTO_INTERVAL_MS = 4L*60*60*1000;
+    private static final long API_MANUAL_INTERVAL_MS = 15L*60*1000;
+    private static final Object FEED_LOCK = new Object();
     private static final int MAX_MANUAL_RELEASES = 4;
     // API fornece somente as quatro Releases mais recentes (estaveis ou testes).
     private static final String LIST_API = "https://api.github.com/repos/" + REPOSITORY + "/releases?per_page=" + MAX_MANUAL_RELEASES;
@@ -79,10 +87,10 @@ public final class GitHubReleaseUpdater {
     }
 
     /** Manual picker sees stable releases AND prereleases; automatic worker never calls this. */
-    static void listForManualSelection(ReleasesCallback callback) {
+    static void listForManualSelection(Context context, ReleasesCallback callback) {
         new Thread(() -> {
             try {
-                JSONArray items=new JSONArray(new String(fetchJson(LIST_API),"UTF-8"));
+                JSONArray items=manualReleases(context.getApplicationContext());
                 ArrayList<ReleaseInfo> releases=new ArrayList<>();
                 for(int i=0;i<items.length();i++) {
                     JSONObject source=items.optJSONObject(i);
@@ -142,7 +150,7 @@ public final class GitHubReleaseUpdater {
 
     /** Release /latest excludes GitHub prereleases; unattended upgrades use this channel only. */
     static Update downloadLatest(Context context) throws Exception {
-        JSONObject release = new JSONObject(new String(fetchJson(API), "UTF-8"));
+        JSONObject release = latestRelease(context.getApplicationContext());
         if(!BridgeUpdateChannel.isAutoChannel(release.optBoolean("draft",false),release.optBoolean("prerelease",false)))
             throw new IOException("A release consultada nao esta aprovada para atualizacao automatica.");
         return downloadRelease(context, release, false);
@@ -249,19 +257,79 @@ public final class GitHubReleaseUpdater {
         return Build.VERSION.SDK_INT >= 28 ? info.getLongVersionCode() : info.versionCode;
     }
 
-    private static byte[] fetchJson(String url) throws Exception {
+    /** GitHub Pages e servido por CDN; nenhum dispositivo precisa de token GitHub. */
+    private static JSONObject readFeed() throws Exception {
+        JSONObject feed=new JSONObject(new String(fetchJson(FEED,null),"UTF-8"));
+        if(feed.optInt("schema",-1)!=1 || !REPOSITORY.equals(feed.optString("repository","")))
+            throw new IOException("Catalogo de atualizacoes inesperado.");
+        if(feed.optJSONArray("releases")==null)
+            throw new IOException("Catalogo sem lista de versoes.");
+        return feed;
+    }
+
+    private static JSONObject latestRelease(Context ctx) throws Exception {
+        try {
+            JSONObject feed=readFeed();
+            JSONObject latest=feed.optJSONObject("latest");
+            if(latest==null)throw new IOException("Catalogo sem Release estavel.");
+            return latest;
+        } catch(Exception feedError) {
+            // Se Pages ainda nao foi ativado, a consulta REST de contingencia e rara.
+            return new JSONObject(new String(fetchApiFallback(ctx,API,false),"UTF-8"));
+        }
+    }
+
+    private static JSONArray manualReleases(Context ctx) throws Exception {
+        try {return readFeed().getJSONArray("releases");}
+        catch(Exception feedError) {
+            return new JSONArray(new String(fetchApiFallback(ctx,LIST_API,true),"UTF-8"));
+        }
+    }
+
+    /** Fallback compartilhado por toda a instalacao: pausa nas cotas, sem token no APK. */
+    private static byte[] fetchApiFallback(Context ctx,String url,boolean manual) throws Exception {
+        synchronized(FEED_LOCK){
+            SharedPreferences sp=ctx.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE);
+            long now=System.currentTimeMillis();
+            long until=sp.getLong(RATE_UNTIL,0);
+            if(GitHubRatePolicy.blocked(now,until))
+                throw new IOException("Limite temporario do GitHub. Nova tentativa apos " +
+                    android.text.format.DateFormat.format("HH:mm",until)+". Ative o GitHub Pages para eliminar esta dependencia.");
+            String key=manual?API_MANUAL_ATTEMPT:API_AUTO_ATTEMPT;
+            long last=sp.getLong(key,0);
+            long interval=manual?API_MANUAL_INTERVAL_MS:API_AUTO_INTERVAL_MS;
+            if(GitHubRatePolicy.waitForFallback(now,last,interval))
+                throw new IOException("Catalogo ainda indisponivel. Consulta reserva aguardando; ative o GitHub Pages.");
+            sp.edit().putLong(key,now).apply();
+            return fetchJson(url,ctx);
+        }
+    }
+
+    private static byte[] fetchJson(String url,Context ctx) throws Exception {
         HttpURLConnection conn = connect(url);
         try {
-            if (conn.getResponseCode() != 200) {
-                int result = conn.getResponseCode();
-                if (result == 404) throw new IOException("GitHub Releases indisponível. O repositório pode ser privado ou ainda não ter uma versão publicada.");
-                if (result == 403) throw new IOException("GitHub limitou a consulta. Tente novamente mais tarde.");
-                throw new IOException("GitHub respondeu HTTP " + result + ".");
+            int status=conn.getResponseCode();
+            if (status != 200) {
+                if(status==403 || status==429){
+                    long now=System.currentTimeMillis();
+                    String remaining=conn.getHeaderField("X-RateLimit-Remaining");
+                    String retry=conn.getHeaderField("Retry-After");
+                    if("0".equals(remaining) || retry!=null || status==429){
+                        long blockedUntil=GitHubRatePolicy.nextAllowedAt(now,
+                            conn.getHeaderField("X-RateLimit-Reset"),retry);
+                        if(ctx!=null)ctx.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE)
+                            .edit().putLong(RATE_UNTIL,blockedUntil).apply();
+                        throw new IOException("GitHub limitou consultas. Proxima tentativa apos " +
+                            android.text.format.DateFormat.format("HH:mm",blockedUntil)+".");
+                    }
+                }
+                if (status == 404) throw new IOException("Catalogo GitHub Pages nao publicado (HTTP 404).");
+                throw new IOException("Servidor de atualizacoes respondeu HTTP " + status + ".");
             }
             try (InputStream in = conn.getInputStream(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
                 byte[] buffer = new byte[8192]; int n;
                 while ((n = in.read(buffer)) != -1) {
-                    if (output.size() + n > 512 * 1024) throw new IOException("Resposta do GitHub excedeu o limite.");
+                    if (output.size() + n > 512 * 1024) throw new IOException("Resposta excedeu 512 KB.");
                     output.write(buffer, 0, n);
                 }
                 return output.toByteArray();
@@ -317,7 +385,7 @@ public final class GitHubReleaseUpdater {
 
     private static boolean allowedHost(String host) {
         String h = host.toLowerCase(Locale.ROOT);
-        return h.equals("github.com") || h.equals("api.github.com") || h.equals("objects.githubusercontent.com")
+        return h.equals("github.com") || h.equals("api.github.com") || h.equals("seridoplast.github.io") || h.equals("objects.githubusercontent.com")
                 || h.endsWith(".githubusercontent.com");
     }
 

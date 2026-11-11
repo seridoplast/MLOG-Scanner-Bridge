@@ -1,6 +1,6 @@
 # MLOG Scanner Bridge — Seridóplast
 
-**Versão:** 3.6.6 · Pacote: `br.com.seridoplast.mlogbridge`
+**Versão:** 3.6.8 · Pacote: `br.com.seridoplast.mlogbridge`
 
 ## Novidades da v3.6.6
 - Bolha flutuante de 40 dp com **15% de opacidade em todo o conjunto** (fundo preto e ícone). A área de toque invisível continua com 48 dp, e o painel expandido conserva a legibilidade.
@@ -55,3 +55,45 @@
 - O resultado do comando ADB **não confirma** que o MLOG aceitou o código ou encontrou um produto. Não há retentativa automática do mesmo bipe para evitar duplicação.
 - Observação: o exemplo `7890000000105` **não passa na validação GTIN-13** (dígito correto para os 12 primeiros é 9). O Bridge entrega o valor original e não corrige etiquetas; o MLOG pode rejeitar essa referência por regra própria.
 - Primeira publicação prevista como pré-release (`rollout=0`) para testar no coletor piloto.
+
+## v3.6.8 — Correção do limite GitHub API
+
+- O Bridge consulta primeiramente um catálogo estático e público em
+  `https://seridoplast.github.io/MLOG-Scanner-Bridge/releases.json`.
+- O catálogo inclui as últimas quatro Releases para seleção manual (estáveis e testes)
+  e, independentemente delas, a última Release estável para a busca automática.
+- O workflow compila e assina APKs como antes; só o workflow de GitHub Actions
+  gera o JSON com metadados oficiais, SEM tokens nos coletores.
+- Continua verificando o SHA-256 e o certificado corporativo antes de instalar.
+- Em caso de indisponibilidade do catálogo, usa API de forma controlada:
+  consultas automáticas de contingência no máximo uma a cada 4 horas por coletor;
+  consultas manuais de contingência no máximo a cada 15 minutos.
+  Em `403/429` por limite, respeita `X-RateLimit-Reset`/`Retry-After` e aguarda.
+- **Configuração única obrigatória para remover a dependência da API:** no GitHub,
+  acesse `seridoplast/MLOG-Scanner-Bridge` → **Settings → Pages → Build and deployment →
+  Source: GitHub Actions**. Depois acesse **Actions → Atualizar catalogo publico de
+  Releases → Run workflow**, e confirme o JSON no endereço acima.
+- Publicar novas Releases dispara a atualização do catálogo. Aprovações manuais
+  (`Edit release`) também disparam. Um agendamento de hora em hora é redundância.
+- Se o Pages não estiver habilitado, o Bridge continua funcionando com a consulta
+  reserva mais espaçada, mas a frequência automática de 10 minutos dependerá da
+  disponibilidade do catálogo para não esgotar a cota REST.
+- O APK da 3.6.8 ainda precisa ser compilado pelo GitHub Actions e testado no coletor.
+- **A v3.6.8 agora é publicada diretamente como Release estável** com `rollout=100` e marcada como `Latest`, após um `git push` e build bem-sucedido. Não será criada como pré-release.
+- Se `v3.6.8` já existir como pré-release, o mesmo workflow a promove automaticamente para **Release estável + Latest** e ajusta `rollout=100`, sem sobrescrever um APK já publicado. Se o APK estiver ausente, adiciona o binário assinado.
+- O job de Pages publica em seguida o catálogo contendo a nova versão estável. Se o Pages estiver desativado, o app dependerá da consulta de contingência à API, sujeita à limitação temporária.
+- **Cuidado:** `rollout=100` permite distribuição a toda a frota elegível. Se um coletor já estiver executando a própria 3.6.8, ele não reinstalará a mesma versão automaticamente.
+
+### Publicar a v3.6.8 como Release estável
+
+Após substituir os arquivos do repositório local:
+
+```bash
+git add .
+git commit -m "v3.6.8 - Publicacao direta como Release estavel"
+git push origin main
+```
+
+Acompanhe a compilação e a publicação em **Actions**. Ao final, confirme na página de Releases que `v3.6.8` está marcada como **Latest**, **não** como *Pre-release*, com `rollout=100` no corpo e com o arquivo `MLOG-Scanner-Bridge-v3.6.8.apk` anexado. Em seguida, confirme que `https://seridoplast.github.io/MLOG-Scanner-Bridge/releases.json` contém `latest.tag_name` igual a `v3.6.8`. Se necessário, execute o workflow **Atualizar catalogo publico de Releases**.
+
+**Nota:** alterar o estado de pré-release para estável e marcar como Latest são ações diferentes; o texto `rollout=100` também é necessário para os coletores do Bridge elegíveis à instalação automática.

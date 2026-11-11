@@ -1,0 +1,38 @@
+name: Atualizar catalogo publico de Releases
+
+on:
+  release:
+    types: [published, edited, released, prereleased, deleted, unpublished]
+  workflow_dispatch:
+  schedule:
+    - cron: '13 * * * *'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: bridge-pages-catalog
+  cancel-in-progress: false
+
+jobs:
+  publicar-catalogo:
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Gerar catalogo de Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/build_release_feed.py
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - uses: actions/deploy-pages@v4
+        id: deployment
