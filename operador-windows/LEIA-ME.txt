@@ -1,4 +1,4 @@
-SERIDÓPLAST | PAINEL DE OBSERVAÇÕES E AVISOS — v3.6.10
+SERIDÓPLAST | PAINEL DE OBSERVAÇÕES E AVISOS — v3.6.11
 
 USO RÁPIDO
 1. No Windows 10/11 64 bits, execute Seridoplast-Observacoes-Pedidos.exe.
@@ -13,7 +13,7 @@ USO RÁPIDO
    ao painel automaticamente.
 
 SEM CADASTRO INDIVIDUAL
-- Após atualizar o Bridge para v3.6.10, os coletores buscam o painel por UDP
+- Após atualizar o Bridge para v3.6.11, os coletores buscam o painel por UDP
   na rede privada e se conectam automaticamente, sem inserir IP ou chave.
 - Mantenha PC e coletores no MESMO SEGMENTO de LAN/Wi-Fi corporativa.
 - Habilite TCP 8765 (HTTP) e UDP 8766 (descoberta) no Firewall do Windows,
@@ -37,5 +37,7 @@ CUIDADOS COM SEGURANÇA
   Faça backup regular com o programa fechado.
 
 LANÇAMENTO
-- Bridge v3.6.10: PRÉ-RELEASE para teste por cabo/ADB.
+- Bridge v3.6.11: PRÉ-RELEASE para teste por cabo/ADB.
 - O GitHub Actions precisa compilar o APK. Teste no coletor real.
+
+Na v3.6.11, cada aviso exibe os dispositivos destinatarios e seus estados: disponibilizado, confirmado pelo aplicativo e visto pelo operador. Apenas dispositivos com Bridge 3.6.11 ou posterior enviam o novo ACK de recebimento.

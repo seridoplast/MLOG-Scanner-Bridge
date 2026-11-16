@@ -547,13 +547,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                         return;
                     }
                     String raw=ScannerProtocol.barcodeRaw(intent);
-                    // Apenas o campo de entrada DE PEDIDOS dispara observações.
-                    // Nunca consultar durante a bipagem de produtos da Separação.
-                    {
-                        ScreenInfo noteScreen=inspect(active);
-                        if(OrderNumberPolicy.isOrderScreen(noteScreen.screen))
-                            OrderNotesClient.observedOrder(MlogFocusAccessibilityService.this,raw);
-                    }
+                    // Observações são vinculadas exclusivamente ao número do pedido
+                    // visível no cabeçalho, nunca ao código de um produto ou bip.
                     lastPhysicalShizukuScanAt=SystemClock.elapsedRealtime();
                     // Cancela recuperacao pendente se houve nova leitura.
                     ++recoveryEpoch;
@@ -1030,7 +1025,88 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         return cx>.77f && cx<.97f && cy>.15f && cy<.42f;
     }
 
+    // Passive header observation: receives Flutter accessibility updates even when no barcode is scanned.
+    private String visibleOrderCandidate="";
+    private String visibleOrderConfirmed="";
+    private int visibleOrderEpoch;
+    private long visibleOrderProbeAt;
+    private final Runnable visibleOrderProbe=new Runnable(){
+        @Override public void run(){
+            AccessibilityNodeInfo root=mlogRoot();
+            if(root==null || root.getPackageName()==null ||
+               !ScanCoordinator.TARGET.contentEquals(root.getPackageName()))return;
+            List<AccessibilityNodeInfo> nodes=new ArrayList<>();
+            visit(root,nodes,0);
+            boolean hasTitle=false;
+            String candidate=null;
+            int width=getResources().getDisplayMetrics().widthPixels;
+            int height=getResources().getDisplayMetrics().heightPixels;
+            for(AccessibilityNodeInfo node:nodes){
+                if(node==null || !node.isVisibleToUser() || node.isPassword())continue;
+                CharSequence content=node.getText();
+                CharSequence desc=node.getContentDescription();
+                if((content!=null && VisibleOrderHeaderPolicy.isRelevantTitle(content.toString())) ||
+                   (desc!=null && VisibleOrderHeaderPolicy.isRelevantTitle(desc.toString()))) {
+                    android.graphics.Rect box=new android.graphics.Rect();node.getBoundsInScreen(box);
+                    if(VisibleOrderHeaderPolicy.isCombinedHeaderPosition(box.top,box.bottom,height))
+                        hasTitle=true;
+                }
+            }
+            if(!hasTitle){visibleOrderCandidate="";return;}
+            for(AccessibilityNodeInfo node:nodes){
+                if(node==null || !node.isVisibleToUser() || node.isPassword())continue;
+                android.graphics.Rect box=new android.graphics.Rect();node.getBoundsInScreen(box);
+                String raw=node.getText()==null?null:node.getText().toString();
+                String code=VisibleOrderHeaderPolicy.parse(raw);
+                if(code==null && node.getContentDescription()!=null)
+                    code=VisibleOrderHeaderPolicy.parse(node.getContentDescription().toString());
+                if(code==null)continue;
+                boolean combined=VisibleOrderHeaderPolicy.hasExplicitHeaderNumber(raw);
+                if(!combined && node.getContentDescription()!=null)
+                    combined=VisibleOrderHeaderPolicy.hasExplicitHeaderNumber(node.getContentDescription().toString());
+                if(combined ? VisibleOrderHeaderPolicy.isCombinedHeaderPosition(box.top,box.bottom,height) :
+                     VisibleOrderHeaderPolicy.isHeaderPosition(box.left,box.top,box.right,box.bottom,width,height)){
+                    // If two different identifiers occupy the header, don't guess.
+                    if(candidate!=null && !candidate.equals(code))return;
+                    candidate=code;
+                }
+            }
+            if(candidate==null){visibleOrderCandidate="";return;}
+            if(candidate.equals(visibleOrderConfirmed))return;
+            if(!candidate.equals(visibleOrderCandidate)){
+                visibleOrderCandidate=candidate;
+                final String expected=candidate;
+                int epoch=++visibleOrderEpoch;
+                main.postDelayed(()->{
+                    if(epoch!=visibleOrderEpoch || !expected.equals(visibleOrderCandidate))return;
+                    // Two observations of the same header prevent transient Flutter labels.
+                    visibleOrderProbe.run();
+                },380L);
+                return;
+            }
+            String old=visibleOrderConfirmed;
+            visibleOrderConfirmed=candidate;
+            if(!old.isEmpty() && !old.equals(candidate))
+                FloatingToolsService.orderHeaderChanged(old,candidate);
+            OrderNotesClient.observedOrder(MlogFocusAccessibilityService.this,candidate);
+        }
+    };
+    private void observeVisibleOrder(AccessibilityEvent event){
+        if(event==null || event.getPackageName()==null ||
+           !ScanCoordinator.TARGET.contentEquals(event.getPackageName()))return;
+        int type=event.getEventType();
+        if(type!=AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED &&
+           type!=AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+           type!=AccessibilityEvent.TYPE_WINDOWS_CHANGED)return;
+        long now=SystemClock.elapsedRealtime();
+        if(now-visibleOrderProbeAt<320L)return;
+        visibleOrderProbeAt=now;
+        main.removeCallbacks(visibleOrderProbe);
+        main.postDelayed(visibleOrderProbe,180L);
+    }
+
     @Override public void onAccessibilityEvent(AccessibilityEvent event){
+        observeVisibleOrder(event);
         if(prefs().getBoolean(ShizukuScanMode.PREF,false)){
             observeAndroidKeyboard(event);
             return;

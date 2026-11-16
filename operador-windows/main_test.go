@@ -178,6 +178,23 @@ func TestBroadcastAllConnectedAndAcks(t *testing.T) {
 	if len(received.Broadcasts) != 1 {
 		t.Fatalf("not delivered: %s", w.Body.String())
 	}
+	if len(s.db.Broadcasts[0].Received) != 0 {
+		t.Fatal("server response must not count as app receipt")
+	}
+	if w = testAPI(t, s, "POST", "/api/device/received", s.db.Token, map[string]interface{}{"id": d1, "broadcastIds": []string{bid}}); w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	if len(s.db.Broadcasts[0].Received) != 1 {
+		t.Fatal("missing collector acknowledgement")
+	}
+	// Other collectors may not acknowledge someone else's broadcast.
+	if w = testAPI(t, s, "POST", "/api/device/received", s.db.Token,
+		map[string]interface{}{"id": "00000000000000000000000000000003", "broadcastIds": []string{bid}}); w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	if len(s.db.Broadcasts[0].Received) != 1 {
+		t.Fatal("unauthorized target marked as received")
+	}
 	if w = testAPI(t, s, "POST", "/api/device/seen", s.db.Token, map[string]string{"id": d1, "broadcastId": bid}); w.Code != 200 {
 		t.Fatal(w.Body.String())
 	}

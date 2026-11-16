@@ -78,6 +78,17 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
+      - name: Testar identificação segura do pedido na tela
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/order-header-test
+          javac -d /tmp/order-header-test \
+            app/src/main/java/br/com/seridoplast/mlogbridge/OrderNumberPolicy.java \
+            app/src/main/java/br/com/seridoplast/mlogbridge/VisibleOrderHeaderPolicy.java \
+            tests/VisibleOrderHeaderPolicyTest.java
+          java -cp /tmp/order-header-test br.com.seridoplast.mlogbridge.VisibleOrderHeaderPolicyTest
+
       - name: Testar regra de Enter e mapeamento de conferencia
         shell: bash
         run: |

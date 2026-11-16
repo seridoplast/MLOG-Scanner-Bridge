@@ -327,10 +327,26 @@ public final class MainActivity extends Activity {
         TextView t=label(value,12,muted,false);
         LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.topMargin=dp(6);c.addView(t,lp);
     }
+    /** One consistent monochrome vector icon set for all command buttons. */
+    private int actionIcon(String label){
+        String n=label.toLowerCase(Locale.ROOT);
+        if(n.contains("avis")||n.contains("observ")||n.contains("mensag"))return R.drawable.ui_bell;
+        if(n.contains("buscar")||n.contains("procurar")||n.contains("verificar")||
+           n.contains("reconectar")||n.contains("reconfigurar"))return R.drawable.ui_refresh;
+        if(n.contains("instalar")||n.contains("ativar")||n.contains("confirmar"))return R.drawable.ui_check_circle;
+        if(n.contains("acessibilidade")||n.contains("permiss")||n.contains("senha"))return R.drawable.ui_lock;
+        if(n.contains("ferrament")||n.contains("ajuste"))return R.drawable.ui_sliders;
+        if(n.contains("copiar")||n.contains("diagn"))return R.drawable.ui_history;
+        if(n.contains("desligar")||n.contains("desativar")||n.contains("fechar"))return R.drawable.ui_square;
+        if(n.contains("informações")||n.contains("informaç"))return R.drawable.ui_info;
+        if(n.contains("mlog")||n.contains("leitor"))return R.drawable.ui_scan;
+        return R.drawable.ui_info;
+    }
     private TextView action(String name,boolean filled,Runnable callback){
         TextView b=label(name,14,filled?0xffffffff:primary,true);
         b.setGravity(Gravity.CENTER);b.setPadding(dp(12),dp(14),dp(12),dp(14));
         b.setBackground(filled?gradient(0xff3a7cfa,0xff2457d0,15):shape(primarySoft,0,15));
+        leadingIcon(b,actionIcon(name),filled?0xffffffff:primary,18);
         b.setFocusable(false);b.setFocusableInTouchMode(false);
         b.setOnClickListener(w->callback.run());b.setClickable(true);
         return b;

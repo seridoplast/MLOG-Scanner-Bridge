@@ -59,6 +59,15 @@ public final class FloatingToolsService extends Service {
     private String statusText="Tratador de códigos disponível.";
     private String activeOrder="";
     private final ArrayList<OrderNotesClient.Note> activeNotes=new ArrayList<>();
+    private static final class PendingCompletion {
+        final String order;
+        final ArrayList<OrderNotesClient.Note> notes;
+        PendingCompletion(String order,List<OrderNotesClient.Note> notes){
+            this.order=order;this.notes=new ArrayList<>(notes);
+        }
+    }
+    private final ArrayList<PendingCompletion> pendingCompletions=new ArrayList<>();
+    private String confirmingOrder="";
     private final ArrayList<OrderNotesClient.Broadcast> activeBroadcasts=new ArrayList<>();
     private boolean confirmComplete;
     private int background, text, mutedText, green, red, accent, buttonBackground;
@@ -70,6 +79,28 @@ public final class FloatingToolsService extends Service {
     // Aplicar opacidade no contêiner, e nao apenas no fundo, para incluir o icone.
     private static final int BUBBLE_FILL=0xff000000;
     private static final float BUBBLE_OPACITY=0.15f;
+
+    /** A change of order permits confirmation of the PREVIOUS order, not automatic completion.
+     * Navigation, cancellation and reassignment are not proof of finished separation. */
+    static void orderHeaderChanged(String previous,String next){
+        FloatingToolsService svc=visible;
+        if(svc==null || previous==null || next==null || previous.equals(next))return;
+        svc.main.post(()->{
+            if(!previous.equals(svc.activeOrder))return;
+            if(!svc.activeNotes.isEmpty()){
+                boolean queued=false;
+                for(PendingCompletion pending:svc.pendingCompletions){
+                    if(previous.equals(pending.order)){queued=true;break;}
+                }
+                if(!queued)svc.pendingCompletions.add(new PendingCompletion(previous,svc.activeNotes));
+            }
+            svc.activeNotes.clear();
+            svc.activeOrder="";
+            svc.confirmComplete=false;
+            svc.confirmingOrder="";
+            svc.draw(svc.expanded);
+        });
+    }
 
     static void showOrderNotes(String order,List<OrderNotesClient.Note> notes){
         FloatingToolsService instance=visible;
@@ -101,6 +132,9 @@ public final class FloatingToolsService extends Service {
         });
     }
     static void showBroadcasts(List<OrderNotesClient.Broadcast> messages){
+        showBroadcasts(messages,null);
+    }
+    static void showBroadcasts(List<OrderNotesClient.Broadcast> messages,Runnable confirmedByApp){
         FloatingToolsService instance=visible;if(instance==null)return;
         instance.main.post(()->{
             boolean changed=(messages==null?0:messages.size())!=instance.activeBroadcasts.size();
@@ -114,10 +148,13 @@ public final class FloatingToolsService extends Service {
                     if(!found){newMessage=true;changed=true;}
                 }
             }
-            if(!changed)return;
-            instance.activeBroadcasts.clear();
-            if(messages!=null)instance.activeBroadcasts.addAll(messages);
-            instance.draw(newMessage || instance.expanded);
+            if(changed){
+                instance.activeBroadcasts.clear();
+                if(messages!=null)instance.activeBroadcasts.addAll(messages);
+                instance.draw(newMessage || instance.expanded);
+            }
+            // Ack only once the overlay accepted the broadcast payload.
+            if(confirmedByApp!=null)confirmedByApp.run();
         });
     }
     static void clearCompleted(String order){
@@ -320,7 +357,7 @@ public final class FloatingToolsService extends Service {
             bell.setColorFilter(0xffffffff);bell.setPadding(dp(9),dp(9),dp(9),dp(9));
             bubble.addView(bell,new FrameLayout.LayoutParams(dp(BUBBLE_DP),dp(BUBBLE_DP),Gravity.CENTER));
             touchTarget.addView(bubble,new FrameLayout.LayoutParams(dp(BUBBLE_DP),dp(BUBBLE_DP),Gravity.CENTER));
-            int unread=activeNotes.size()+activeBroadcasts.size();
+            int unread=activeNotes.size()+activeBroadcasts.size()+pendingCompletions.size();
             if(unread>0){
                 TextView badge=label(String.valueOf(Math.min(unread,99)),11,true);
                 badge.setGravity(Gravity.CENTER);badge.setTextColor(0xffffffff);
@@ -371,8 +408,8 @@ public final class FloatingToolsService extends Service {
             LinearLayout.LayoutParams hip=new LinearLayout.LayoutParams(dp(28),dp(28));
             hip.rightMargin=dp(9);header.addView(headerIcon,hip);
             LinearLayout heading=new LinearLayout(this);heading.setOrientation(LinearLayout.VERTICAL);
-            heading.addView(label("Mensagens",18,true));
-            heading.addView(muted(activeNotes.isEmpty()?"Avisos do coletor":"Pedido "+activeOrder,11));
+            heading.addView(label("Avisos e observações",18,true));
+            // Minimal panel; order number appears only when there are active observations.
             header.addView(heading,new LinearLayout.LayoutParams(0,-2,1));
             TextView minimize=iconButton("",R.drawable.ui_minus,this::collapse);
             minimize.setContentDescription("Recolher ferramentas");
@@ -385,6 +422,7 @@ public final class FloatingToolsService extends Service {
                 layout.addView(label("Avisos gerais",15,true));
                 for(OrderNotesClient.Broadcast alert:activeBroadcasts){
                     TextView item=label(alert.text,14,false);
+                    leadingIcon(item,R.drawable.ui_bell,accent,18);
                     item.setPadding(dp(13),dp(12),dp(13),dp(12));
                     item.setBackground(bg(buttonBackground,12));
                     LinearLayout.LayoutParams np=new LinearLayout.LayoutParams(-1,-2);np.topMargin=dp(8);
@@ -403,53 +441,45 @@ public final class FloatingToolsService extends Service {
                 layout.addView(separator());
             }
             if(!activeNotes.isEmpty()){
-                TextView notice=muted(activeNotes.size()+
-                    (activeNotes.size()==1?" observação pendente":" observações pendentes"),12);
-                layout.addView(notice);
+                layout.addView(label("Observação · Pedido "+activeOrder,15,true));
                 for(OrderNotesClient.Note note:activeNotes){
-                    TextView item=label(note.text,14,false);
-                    item.setPadding(dp(13),dp(12),dp(13),dp(12));
+                    TextView item=label(note.text,15,false);
+                    leadingIcon(item,R.drawable.ui_info,accent,18);
+                    item.setPadding(dp(13),dp(11),dp(13),dp(11));
                     item.setBackground(bg(buttonBackground,12));
-                    LinearLayout.LayoutParams np=new LinearLayout.LayoutParams(-1,-2);
-                    np.topMargin=dp(8);
-                    layout.addView(item,np);
+                    LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.topMargin=dp(8);
+                    layout.addView(item,lp);
                 }
-                TextView done=iconButton(confirmComplete?"Confirmar: pedido finalizado":"Marcar pedido como feito",
-                    R.drawable.ui_check_circle,()->{
-                        if(!confirmComplete){confirmComplete=true;draw(true);return;}
-                        confirmComplete=false;
-                        String order=activeOrder;
-                        ArrayList<OrderNotesClient.Note> records=new ArrayList<>(activeNotes);
-                        statusText="Enviando conclusão...";
-                        OrderNotesClient.complete(this,order,records,(ok,message)->{
-                            statusText=message;
-                            if(ok && order.equals(activeOrder)){
-                                clearCompleted(order);
-                                OrderNotesClient.refresh(this,order);
-                            }
-                            else {draw(true);android.widget.Toast.makeText(this,message,android.widget.Toast.LENGTH_LONG).show();}
-                        });
-                    });
-                done.setBackground(bg(confirmComplete?0xffb63747:actionBackground,12));
-                done.setTextColor(0xffffffff);
-                leadingIcon(done,R.drawable.ui_check_circle,0xffffffff,17);
-                LinearLayout.LayoutParams dl=new LinearLayout.LayoutParams(-1,-2);dl.topMargin=dp(10);
-                layout.addView(done,dl);
-                TextView confirmHint=muted(confirmComplete?
-                    "Confirme somente após encerrar a separação no MLOG.":
-                    "As observações continuam no painel até a confirmação.",11);
-                LinearLayout.LayoutParams hp=new LinearLayout.LayoutParams(-1,-2);hp.topMargin=dp(6);
-                layout.addView(confirmHint,hp);
                 layout.addView(separator());
             }
-            if(pref.getBoolean(ShizukuScanMode.PREF,false)){
-                boolean ok=ShizukuHealthMonitor.ready();
-                TextView state=muted(ok?"Shizuku ativo":"Shizuku parado",12);
-                leadingIcon(state,ok?R.drawable.ui_check_circle:R.drawable.ui_alert_circle,
-                    ok?green:red,15);
-                if(!ok)state.setTextColor(red);
-                LinearLayout.LayoutParams statusLp=new LinearLayout.LayoutParams(-1,-2);
-                statusLp.topMargin=dp(6);layout.addView(state,statusLp);
+            // The previous order is eligible for operator confirmation only AFTER
+            // MLOG displays a different stable order number. Never silently auto-complete.
+            if(!pendingCompletions.isEmpty()){
+                layout.addView(label("Aguardando conclusão",14,true));
+                for(PendingCompletion pending:new ArrayList<>(pendingCompletions)){
+                    TextView done=iconButton(pending.order.equals(confirmingOrder)?
+                        "Confirmar pedido "+pending.order:"Concluir pedido "+pending.order,
+                        R.drawable.ui_check_circle,()->{
+                            if(!pending.order.equals(confirmingOrder)){
+                                confirmingOrder=pending.order;draw(true);return;
+                            }
+                            confirmingOrder="";
+                            OrderNotesClient.complete(this,pending.order,pending.notes,(ok,message)->{
+                                if(ok){
+                                    pendingCompletions.removeIf(n->n.order.equals(pending.order));
+                                    draw(expanded);
+                                }else android.widget.Toast.makeText(this,message,android.widget.Toast.LENGTH_LONG).show();
+                            });
+                        });
+                    LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.topMargin=dp(7);
+                    layout.addView(done,lp);
+                }
+                if(!confirmingOrder.isEmpty()){
+                    TextView hint=muted("Confirme só se a separação terminou no MLOG.",11);
+                    LinearLayout.LayoutParams hlp=new LinearLayout.LayoutParams(-1,-2);hlp.topMargin=dp(5);
+                    layout.addView(hint,hlp);
+                }
+                layout.addView(separator());
             }
             // O recurso protegido só aparece no flutuante quando liberado em Ajustes.
             if(ScanAssistState.isBatch(this)){

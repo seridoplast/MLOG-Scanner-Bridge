@@ -92,11 +92,26 @@ final class OrderNotesClient {
                     if(id.matches("[0-9a-f]{32}")&&!message.isEmpty()&&message.length()<=1500)
                         messages.add(new Broadcast(id,message));
                 }
-                MAIN.post(()->FloatingToolsService.showBroadcasts(messages));
+                MAIN.post(()->FloatingToolsService.showBroadcasts(messages,()->received(app,messages)));
             }catch(Exception ex){
                 // A previous PC IP or key may have changed. Retry LAN discovery.
                 discover(app,true);
             }
+        });
+    }
+    /** Server acknowledgement that the Bridge actually accepted the message. */
+    private static void received(Context c,List<Broadcast> messages){
+        if(messages==null || messages.isEmpty())return;
+        final Context app=c.getApplicationContext();
+        final JSONArray ids=new JSONArray();
+        for(Broadcast b:messages)if(b!=null && b.id.matches("[0-9a-f]{32}"))ids.put(b.id);
+        if(ids.length()==0)return;
+        IO.execute(()->{
+            try{
+                JSONObject body=new JSONObject();
+                body.put("id",deviceId(app));body.put("broadcastIds",ids);
+                request(app,"POST","/api/device/received",body);
+            }catch(Exception ignored){ /* Retry on next heartbeat; do not interfere with scans. */ }
         });
     }
     static void seen(Context c,String broadcastId,Callback callback){

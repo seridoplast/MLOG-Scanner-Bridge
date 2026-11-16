@@ -148,3 +148,27 @@ Para testes do servidor: `go test ./...`. Para executar o painel, basta abrir o
 - O antigo controle **Leitura** foi removido e o tratamento de leitura fica ativado. **Resetar Bipe** também saiu da bolha. Bipes automáticos com senha continuam opcionais.
 - A atualização mantém permissões existentes, mas Android não permite conceder sobreposição, acessibilidade ou Shizuku silenciosamente. PC e coletor precisam estar na mesma rede, com TCP 8765 e UDP 8766 permitidos no firewall de rede privada.
 - Versão experimental **v3.6.10**, publicada como **pré-release** (`rollout=0`) após compilação no Actions.
+
+
+## v3.6.11 — Observações pela tela e confirmação por coletor (pré-release)
+
+- O número do pedido é lido **do cabeçalho visível do MLOG** via árvore de acessibilidade, sem bipar o pedido e sem OCR. A foto de referência mostra `136122` ao lado de `Conf. de Entrada`. O mesmo critério cobre cabeçalhos compatíveis de separação/conferência. **Somente números expostos pela acessibilidade podem ser reconhecidos.**
+- Consulta o painel pelo número exato, preservando zeros à esquerda. Nunca usa códigos de produto como número de pedido.
+- O sino abre automaticamente quando há observações. Janela simplificada: pedido, observações e avisos gerais.
+- Ao aparecer um **novo pedido**, o anterior fica em *Aguardando conclusão*. Só depois é permitido tocar em **Concluir pedido** e confirmar. A simples mudança de tela **não marca pedidos como feitos** automaticamente, pois pode ocorrer cancelamento ou troca de operador.
+- Várias conclusões pendentes podem ficar na fila do coletor até a confirmação. O painel do PC sincroniza após a confirmação.
+- Ícones de ações do Bridge padronizados em vetores monocromáticos; os ícones do MLOG original não são modificados.
+- Os comunicados gerais agora distinguem **destinado**, **disponibilizado na resposta HTTP**, **confirmado pelo aplicativo** e **visto (Entendi)**. O painel mostra por equipamento. Coletores antigos não confirmam recebimento por protocolo, embora ainda possam registrar *Visto*.
+- Mantém descoberta automática por rede privada e recursos de leitura Shizuku existentes.
+- **Pré-release / rollout=0**: teste primeiro no coletor piloto. A compilação Android depende do GitHub Actions.
+
+### Teste do pedido na tela
+
+1. Abra uma tela do MLOG com o número do pedido no cabeçalho.
+2. Execute `TESTAR-PEDIDO-TELA-ADB.cmd` no Windows com `adb` no PATH.
+3. Se o número não aparecer no XML da acessibilidade, o Bridge não terá como lê-lo com confiabilidade por esse método. Nesse caso envie o XML e registro da tela do MLOG, sem usar OCR silencioso.
+4. Cadastre a observação no painel, abra o pedido e verifique o sino; mude para outro pedido e então confirme a conclusão do pedido anterior no sino.
+
+### Atualização do painel Windows
+
+O programa foi gerado em `Seridoplast-Observacoes-Pedidos-v3.6.11.exe` (arquivo de entrega separado). Feche a versão anterior e execute a nova, mantendo a mesma pasta/dados. Um aviso destinado a 10 coletores **não implica confirmação de 10**: acompanhe a lista individual no painel.

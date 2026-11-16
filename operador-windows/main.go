@@ -39,13 +39,15 @@ type Note struct {
 	CompletedBy string `json:"completedBy,omitempty"`
 }
 type Broadcast struct {
-	ID        string            `json:"id"`
-	Text      string            `json:"text"`
-	CreatedAt string            `json:"createdAt"`
-	Status    string            `json:"status"`
-	Targets   []string          `json:"targets"`
-	Delivered map[string]string `json:"delivered"`
-	Seen      map[string]string `json:"seen"`
+	ID          string            `json:"id"`
+	Text        string            `json:"text"`
+	CreatedAt   string            `json:"createdAt"`
+	Status      string            `json:"status"`
+	Targets     []string          `json:"targets"`
+	Delivered   map[string]string `json:"delivered"`          // servidor ofereceu na resposta HTTP
+	Received    map[string]string `json:"received,omitempty"` // app confirmou processamento
+	Seen        map[string]string `json:"seen"`               // operador tocou Entendi
+	TargetNames map[string]string `json:"targetNames,omitempty"`
 }
 type Device struct {
 	ID        string `json:"id"`
@@ -404,11 +406,13 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		targets := make([]string, 0, len(connected))
+		targetNames := make(map[string]string, len(connected))
 		for _, d := range connected {
 			targets = append(targets, d.ID)
+			targetNames[d.ID] = d.Name
 		}
 		s.db.Broadcasts = append(s.db.Broadcasts, Broadcast{
-			ID: uid(), Text: strings.TrimSpace(in.Text), CreatedAt: time.Now().Format(time.RFC3339), Status: "active", Targets: targets, Delivered: map[string]string{}, Seen: map[string]string{},
+			ID: uid(), Text: strings.TrimSpace(in.Text), CreatedAt: time.Now().Format(time.RFC3339), Status: "active", Targets: targets, Delivered: map[string]string{}, Received: map[string]string{}, Seen: map[string]string{}, TargetNames: targetNames,
 		})
 		if err := s.save(); err != nil {
 			fail(w, 500, err.Error())
@@ -467,6 +471,56 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		reply(w, 200, map[string]interface{}{"ok": true, "broadcasts": alerts})
+	case "/api/device/received":
+		if r.Method != "POST" {
+			fail(w, 405, "metodo")
+			return
+		}
+		if !s.authorized(w, r) {
+			return
+		}
+		var in struct {
+			ID           string   `json:"id"`
+			BroadcastIDs []string `json:"broadcastIds"`
+		}
+		if !readJSON(w, r, &in) {
+			return
+		}
+		if !validDeviceID(in.ID) || len(in.BroadcastIDs) > 60 {
+			fail(w, 400, "identificadores invalidos")
+			return
+		}
+		s.Lock()
+		defer s.Unlock()
+		found := 0
+		now := time.Now().Format(time.RFC3339)
+		for _, id := range in.BroadcastIDs {
+			if !validDeviceID(id) {
+				fail(w, 400, "aviso invalido")
+				return
+			}
+			for i := range s.db.Broadcasts {
+				b := &s.db.Broadcasts[i]
+				if b.ID != id || !contains(b.Targets, in.ID) {
+					continue
+				}
+				if b.Received == nil {
+					b.Received = map[string]string{}
+				}
+				if _, ok := b.Received[in.ID]; !ok {
+					b.Received[in.ID] = now
+				}
+				found++
+				break
+			}
+		}
+		if found > 0 {
+			if err := s.save(); err != nil {
+				fail(w, 500, err.Error())
+				return
+			}
+		}
+		reply(w, 200, map[string]interface{}{"ok": true, "confirmed": found})
 	case "/api/device/seen":
 		if r.Method != "POST" {
 			fail(w, 405, "metodo")
