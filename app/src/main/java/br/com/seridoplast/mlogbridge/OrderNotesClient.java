@@ -5,6 +5,7 @@ import android.content.SharedPreferences;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.net.wifi.WifiManager;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
@@ -12,6 +13,7 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.InetAddress;
+import java.net.MulticastSocket;
 import java.net.InterfaceAddress;
 import java.net.NetworkInterface;
 import java.net.DatagramPacket;
@@ -29,6 +31,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicBoolean;
+import android.os.SystemClock;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -40,7 +43,16 @@ final class OrderNotesClient {
     static final String PREF_DEVICE_ID="order_notes_device_id_v3610";
     private static final String DISCOVER="SERIDOPLAST_NOTES_DISCOVER_V1";
     private static final int DISCOVER_PORT=8766;
-    private static final AtomicBoolean DISCOVERING=new AtomicBoolean(false);
+    private static final String BEACON_GROUP="239.255.42.99";
+    private static final int BEACON_PORT=8767;
+    private static final String BEACON="SERIDOPLAST_NOTES_BEACON_V1";
+    private static final AtomicBoolean BEACON_LISTENING=new AtomicBoolean(false);
+    private static volatile Thread beaconThread;
+    private static volatile MulticastSocket beaconSocket;
+    private static volatile long lastGoodAt=0L;
+    private static volatile long lastDiscoveryAt=0L;
+    private static volatile String lastProblem="Aguardando descoberta da rede.";
+
     private static volatile String LAST_ORDER="";
     static final class Broadcast {
         final String id,text;
@@ -70,20 +82,84 @@ final class OrderNotesClient {
         String model=Build.MODEL==null?"Coletor":Build.MODEL;
         return (model.length()>55?model.substring(0,55):model)+" · "+deviceId(c).substring(28);
     }
-    static void reconnect(Context c){
+    static void reconnect(Context c){ reconnect(c,null); }
+    /** Informa o resultado real, sem esperar um tempo fixo que pode terminar cedo. */
+    static void reconnect(Context c,Callback callback){
         Context app=c.getApplicationContext();
-        IO.execute(()->discover(app,true));
+        IO.execute(()->{
+            boolean found=discover(app,true,null);
+            if(callback!=null){
+                String message=found?"Conectado: "+base(app):"Não encontrou o painel. "+lastProblem;
+                MAIN.post(()->callback.done(found,message));
+            }
+        });
+    }
+    static String connectionStatus(Context c){
+        if(configured(c)&&lastGoodAt>0 && SystemClock.elapsedRealtime()-lastGoodAt<45000L)
+            return "Conectado: "+base(c);
+        return "Desconectado · "+lastProblem;
+    }
+    /** Escuta anúncios sem credenciais; descobre o endereço novo por UDP unicast. */
+    static void startBeaconListener(Context c){
+        if(!BEACON_LISTENING.compareAndSet(false,true))return;
+        final Context app=c.getApplicationContext();
+        Thread t=new Thread(()->{
+            WifiManager.MulticastLock lock=null;
+            try{
+                WifiManager wifi=(WifiManager)app.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+                if(wifi!=null){
+                    lock=wifi.createMulticastLock("mlog-bridge-observacoes");
+                    lock.setReferenceCounted(false);
+                    lock.acquire();
+                }
+                try(MulticastSocket udp=new MulticastSocket(BEACON_PORT)){
+                    beaconSocket=udp;
+                    udp.setSoTimeout(3500);
+                    InetAddress group=InetAddress.getByName(BEACON_GROUP);
+                    udp.joinGroup(group);
+                    while(BEACON_LISTENING.get()){
+                        byte[] buf=new byte[128];
+                        DatagramPacket packet=new DatagramPacket(buf,buf.length);
+                        try{udp.receive(packet);}catch(SocketTimeoutException e){continue;}
+                        String message=new String(packet.getData(),packet.getOffset(),packet.getLength(),StandardCharsets.UTF_8);
+                        if(!BEACON.equals(message))continue;
+                        String sender=packet.getAddress().getHostAddress();
+                        if(!validHost("http://"+sender+":8765"))continue;
+                        long now=SystemClock.elapsedRealtime();
+                        if(lastGoodAt>0 && now-lastGoodAt<45000L)continue;
+                        if(now-lastDiscoveryAt<10000L)continue;
+                        IO.execute(()->discover(app,true,sender));
+                    }
+                    udp.leaveGroup(group);
+                }
+            }catch(Exception e){lastProblem="Anúncio multicast indisponível; busca UDP continua ativa.";}
+            finally{
+                beaconSocket=null;
+                if(lock!=null)try{if(lock.isHeld())lock.release();}catch(Exception ignored){}
+                BEACON_LISTENING.set(false);
+            }
+        },"bridge-notes-beacon");
+        t.setDaemon(true);beaconThread=t;t.start();
+    }
+    static void stopBeaconListener(){
+        BEACON_LISTENING.set(false);
+        MulticastSocket socket=beaconSocket;
+        if(socket!=null)socket.close();
+        Thread t=beaconThread;
+        if(t!=null)t.interrupt();
     }
     /** Periodic connection/poll. No operator configuration required on a trusted LAN. */
     static void heartbeat(Context c){
         final Context app=c.getApplicationContext();
         IO.execute(()->{
-            if(!configured(app))discover(app,false);
+            if(!configured(app))discover(app,false,null);
             if(!configured(app))return;
             try{
                 JSONObject body=new JSONObject();
                 body.put("id",deviceId(app));body.put("name",deviceName(app));body.put("order",LAST_ORDER);
                 JSONObject data=request(app,"POST","/api/device/heartbeat",body);
+                lastGoodAt=SystemClock.elapsedRealtime();
+                lastProblem="";
                 ArrayList<Broadcast> messages=new ArrayList<>();
                 JSONArray arr=data.optJSONArray("broadcasts");
                 if(arr!=null)for(int i=0;i<arr.length()&&i<60;i++){
@@ -95,7 +171,9 @@ final class OrderNotesClient {
                 MAIN.post(()->FloatingToolsService.showBroadcasts(messages,()->received(app,messages)));
             }catch(Exception ex){
                 // A previous PC IP or key may have changed. Retry LAN discovery.
-                discover(app,true);
+                lastGoodAt=0L;
+                lastProblem="Servidor anterior não responde; procurando novo IP.";
+                discover(app,true,null);
             }
         });
     }
@@ -125,13 +203,13 @@ final class OrderNotesClient {
             }catch(Exception ex){MAIN.post(()->callback.done(false,"Sem conexão; tente novamente."));}
         });
     }
-    private static void discover(Context app,boolean force){
-        if(!DISCOVERING.compareAndSet(false,true))return;
+    private static synchronized boolean discover(Context app,boolean force,String preferredIP){
+        lastDiscoveryAt=SystemClock.elapsedRealtime();
         try{
-            // Keep a working manually configured server unless force is required.
-            if(!force&&configured(app))return;
+            if(!force && configured(app) && lastGoodAt>0)return true;
             LinkedHashSet<String> addresses=new LinkedHashSet<>();
-            addresses.add("255.255.255.255");
+            if(preferredIP!=null && validHost("http://"+preferredIP+":8765"))addresses.add(preferredIP);
+            // IPv4 broadcast por interface: importante para coletores com varias interfaces.
             Enumeration<NetworkInterface> interfaces=NetworkInterface.getNetworkInterfaces();
             if(interfaces!=null)while(interfaces.hasMoreElements()){
                 NetworkInterface ni=interfaces.nextElement();
@@ -141,34 +219,47 @@ final class OrderNotesClient {
                     if(broadcast!=null)addresses.add(broadcast.getHostAddress());
                 }
             }
+            addresses.add("255.255.255.255");
             byte[] query=DISCOVER.getBytes(StandardCharsets.UTF_8);
+            boolean hadResponse=false;
             try(DatagramSocket udp=new DatagramSocket()){
-                udp.setBroadcast(true);udp.setSoTimeout(850);
-                for(String address:addresses){
-                    try{udp.send(new DatagramPacket(query,query.length,InetAddress.getByName(address),DISCOVER_PORT));}
-                    catch(Exception ignored){}
-                }
-                long deadline=android.os.SystemClock.elapsedRealtime()+1500L;
-                while(android.os.SystemClock.elapsedRealtime()<deadline){
-                    byte[] buffer=new byte[2048];
-                    DatagramPacket response=new DatagramPacket(buffer,buffer.length);
-                    try{udp.receive(response);}catch(SocketTimeoutException timeout){break;}
-                    try{
-                        JSONObject info=new JSONObject(new String(response.getData(),0,response.getLength(),StandardCharsets.UTF_8));
-                        if(!"SERIDOPLAST_NOTES_V1".equals(info.optString("service")))continue;
-                        String host=info.optString("host","");String key=info.optString("token","");
-                        if(!validHost(host)||!key.matches("[0-9a-f]{64}"))continue;
-                        URI address=new URI(host);
-                        if(!address.getHost().equals(response.getAddress().getHostAddress()))continue;
-                        JSONObject ping=requestAt(host,key,"GET","/api/ping",null);
-                        if(!ping.optBoolean("ok",false))continue;
-                        saveConnection(app,host,key,deviceName(app));
-                        if(!LAST_ORDER.isEmpty())observedOrder(app,LAST_ORDER);
-                        return;
-                    }catch(Exception ignored){}
+                udp.setBroadcast(true);
+                // Duas rodadas para contornar perda ocasional de broadcast no Wi-Fi.
+                for(int round=0;round<2;round++){
+                    for(String address:addresses){
+                        try{InetAddress target=InetAddress.getByName(address);
+                            udp.send(new DatagramPacket(query,query.length,target,DISCOVER_PORT));
+                        }catch(Exception ignored){}
+                    }
+                    long deadline=SystemClock.elapsedRealtime()+1400L;
+                    while(SystemClock.elapsedRealtime()<deadline){
+                        udp.setSoTimeout((int)Math.max(100L,deadline-SystemClock.elapsedRealtime()));
+                        byte[] buffer=new byte[2048];
+                        DatagramPacket response=new DatagramPacket(buffer,buffer.length);
+                        try{udp.receive(response);}catch(SocketTimeoutException timeout){break;}
+                        hadResponse=true;
+                        try{
+                            JSONObject info=new JSONObject(new String(response.getData(),0,response.getLength(),StandardCharsets.UTF_8));
+                            if(!"SERIDOPLAST_NOTES_V1".equals(info.optString("service")))continue;
+                            String host=info.optString("host","");String key=info.optString("token","");
+                            if(!validHost(host)||!key.matches("[0-9a-fA-F]{64}"))continue;
+                            URI address=new URI(host);
+                            if(!address.getHost().equals(response.getAddress().getHostAddress()))continue;
+                            JSONObject ping=requestAt(host,key,"GET","/api/ping",null);
+                            if(!ping.optBoolean("ok",false))continue;
+                            saveConnection(app,host,key,deviceName(app));
+                            lastGoodAt=SystemClock.elapsedRealtime();
+                            lastProblem="";
+                            if(!LAST_ORDER.isEmpty())observedOrder(app,LAST_ORDER);
+                            return true;
+                        }catch(Exception ignored){}
+                    }
                 }
             }
-        }catch(Exception ignored){}finally{DISCOVERING.set(false);}
+            lastProblem=hadResponse?"Servidor respondeu, mas não passou na validação HTTP/credenciais.":
+                "Sem resposta UDP 8766: confira firewall do PC, mesma sub-rede e isolamento do Wi-Fi.";
+            return false;
+        }catch(Exception e){lastProblem="Falha de rede: "+e.getClass().getSimpleName();return false;}
     }
 
     /** Avoid sending a bearer token to any public IP, DNS alias or arbitrary URL. */

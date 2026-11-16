@@ -183,3 +183,21 @@ O programa foi gerado em `Seridoplast-Observacoes-Pedidos-v3.6.11.exe` (arquivo 
 - A confirmação **Concluir pedido** só aparece depois da mudança de número de pedido no MLOG e requer confirmação explícita; mudança de número sozinha não é conclusão.
 - O painel Windows passa a identificar o formulário de mensagens gerais como **Aviso geral**. Não há mudança no protocolo de rede nem é preciso recadastrar os coletores.
 - Publicação inicial: pré-release `v3.6.12` (`rollout=0`), para validar primeiro no coletor piloto.
+
+
+## v3.6.13: reconexão automática ao painel
+
+O Bridge tenta encontrar o painel via UDP na rede local; o servidor responde na
+porta 8766 e também envia um anúncio **sem senha** para
+`239.255.42.99:8767` a cada 12 segundos. Ao detectar a mudança de IP, o coletor
+consulta o novo servidor e valida via HTTP antes de sincronizar mensagens.
+A tela Ajustes mostra o resultado real da descoberta e o painel Windows
+indica o número de consultas UDP recebidas.
+
+No Windows, execute `CONFIGURAR-FIREWALL-PRIVADO.cmd` como administrador para
+liberar TCP 8765 e UDP 8766 no perfil Privado. O `DIAGNOSTICAR-REDE.cmd` verifica
+perfil, IP, portas e regras. Descoberta não atravessa isolamento Wi-Fi/VLANs
+por configuração do aplicativo, e permissões Android permanecem necessárias.
+
+**Segurança:** o protocolo original V1 entrega a credencial de acesso em resposta
+à descoberta dentro da sub-rede; use apenas rede corporativa confiável.

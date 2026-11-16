@@ -195,6 +195,7 @@ public final class FloatingToolsService extends Service {
         }
         // Never preserve an armed batch across process/service restarts.
         if(view==null){
+            OrderNotesClient.startBeaconListener(this);
             main.removeCallbacks(refreshNotes);main.postDelayed(refreshNotes,1500L);
             android.content.SharedPreferences p=ScanAssistState.prefs(this);
             bubbleX=p.getInt("floating_gear_x",dp(12));
@@ -651,6 +652,7 @@ public final class FloatingToolsService extends Service {
         try{wm.addView(view,params);}catch(RuntimeException ex){view=null;stopSelf();}
     }
     @Override public void onDestroy(){
+        OrderNotesClient.stopBeaconListener();
         main.removeCallbacks(refreshNotes);
         if(visible==this)visible=null;
         if(wm!=null && view!=null)try{wm.removeView(view);}catch(RuntimeException ignored){}

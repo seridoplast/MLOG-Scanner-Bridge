@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"net"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -230,5 +232,28 @@ func TestBroadcastAllConnectedAndAcks(t *testing.T) {
 	w = testAPI(t, s, "POST", "/api/admin/broadcast", "", map[string]interface{}{"action": "close", "id": bid})
 	if w.Code != 200 {
 		t.Fatal(w.Body.String())
+	}
+}
+
+func TestDiscoveryHostUsesCurrentLANInterface(t *testing.T) {
+	ips := localIPs()
+	if len(ips) == 0 {
+		t.Skip("sem IP privado na rede de testes")
+	}
+	peer := net.ParseIP(ips[0])
+	if peer == nil {
+		t.Fatal("IP invalido")
+	}
+	if !sameLocalSubnet(peer) {
+		t.Fatalf("host %s nao reconheceu sua propria rede", peer)
+	}
+	if got := localIPForPeer(peer); got != "" && net.ParseIP(got) == nil {
+		t.Fatalf("endereco ruim %q", got)
+	}
+	if !strings.HasPrefix(notesBeacon, "SERIDOPLAST_NOTES_BEACON_") {
+		t.Fatal("identificador anuncio invalido")
+	}
+	if strings.Contains(notesBeacon, "token") {
+		t.Fatal("anuncio nao pode transmitir chave")
 	}
 }

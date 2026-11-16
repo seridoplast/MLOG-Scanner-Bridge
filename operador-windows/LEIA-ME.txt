@@ -1,4 +1,4 @@
-SERIDÓPLAST | PAINEL DE OBSERVAÇÕES E AVISOS — v3.6.12
+SERIDÓPLAST | PAINEL DE OBSERVAÇÕES E AVISOS — v3.6.13
 
 USO RÁPIDO
 1. No Windows 10/11 64 bits, execute Seridoplast-Observacoes-Pedidos.exe.
@@ -14,11 +14,15 @@ USO RÁPIDO
    ao painel automaticamente.
 
 SEM CADASTRO INDIVIDUAL
-- Após atualizar o Bridge para v3.6.12, os coletores buscam o painel por UDP
+- Após atualizar o Bridge para v3.6.13, os coletores buscam o painel por UDP
   na rede privada e se conectam automaticamente, sem inserir IP ou chave.
+- O PC agora também envia anúncios multicast leves (239.255.42.99:8767), SEM
+  a chave de acesso. Assim o coletor pode localizar o novo IP após DHCP.
+- Caso continue sem conectar, execute DIAGNOSTICAR-REDE.cmd com o painel aberto
+  e leia no próprio painel o contador de solicitações recebidas.
 - Mantenha PC e coletores no MESMO SEGMENTO de LAN/Wi-Fi corporativa.
 - Habilite TCP 8765 (HTTP) e UDP 8766 (descoberta) no Firewall do Windows,
-  APENAS para redes PRIVADAS. Se necessário, execute o script opcional
+  APENAS para redes PRIVADAS; os anúncios utilizam UDP 8767 de saída. Se necessário, execute o script opcional
   CONFIGURAR-FIREWALL-PRIVADO.cmd com direitos de administrador.
 - Wi-Fi com isolamento entre clientes/VLANs separadas pode impedir a descoberta.
 - Se houver mais de um painel na mesma rede, desligue os extras durante o teste.
@@ -26,6 +30,10 @@ SEM CADASTRO INDIVIDUAL
   permissões de acessibilidade/Shizuku continuam exigindo autorização do sistema.
 - Se o Android restringir iniciar serviços em segundo plano após atualizar,
   abra o Bridge uma vez; nas próximas aberturas a conexão será automática.
+- Não é possível garantir descoberta entre VLANs diferentes, Wi-Fi de
+  visitantes ou redes com bloqueio de broadcast/multicast. Nesses casos,
+  o administrador deve liberar comunicação entre os dispositivos ou implantar
+  descoberta/roteamento adequados na infraestrutura.
 
 CUIDADOS COM SEGURANÇA
 - Protocolo destinado a LAN CORPORATIVA CONFIÁVEL. A descoberta transmite uma
@@ -38,7 +46,7 @@ CUIDADOS COM SEGURANÇA
   Faça backup regular com o programa fechado.
 
 LANÇAMENTO
-- Bridge v3.6.12: PRÉ-RELEASE para teste por cabo/ADB.
+- Bridge v3.6.13: PRÉ-RELEASE para teste por cabo/ADB.
 - O GitHub Actions precisa compilar o APK. Teste no coletor real.
 
-Na v3.6.12, cada aviso exibe os dispositivos destinatarios e seus estados: disponibilizado, confirmado pelo aplicativo e visto pelo operador. Apenas dispositivos com Bridge 3.6.11 ou posterior enviam o novo ACK de recebimento.
+Na v3.6.13, cada aviso exibe os dispositivos destinatarios e seus estados: disponibilizado, confirmado pelo aplicativo e visto pelo operador. Apenas dispositivos com Bridge 3.6.11 ou posterior enviam o novo ACK de recebimento.

@@ -63,10 +63,12 @@ type DB struct {
 }
 type Server struct {
 	sync.Mutex
-	db      DB
-	devices map[string]Device
-	path    string
-	port    int
+	db             DB
+	devices        map[string]Device
+	path           string
+	port           int
+	lastDiscovery  string
+	discoveryCount uint64
 }
 
 func uid() string {
@@ -227,7 +229,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		devices := s.onlineDevicesLocked()
 		broadcasts := append([]Broadcast{}, s.db.Broadcasts...)
 		sort.Slice(broadcasts, func(i, j int) bool { return broadcasts[i].CreatedAt > broadcasts[j].CreatedAt })
-		reply(w, 200, map[string]interface{}{"notes": copied, "token": s.db.Token, "addresses": localIPs(), "port": s.port, "devices": devices, "broadcasts": broadcasts})
+		reply(w, 200, map[string]interface{}{"notes": copied, "token": s.db.Token, "addresses": localIPs(), "port": s.port, "devices": devices, "broadcasts": broadcasts, "lastDiscovery": s.lastDiscovery, "discoveryCount": s.discoveryCount})
 	case "/api/admin/save":
 		if !s.admin(w, r) {
 			return
@@ -718,8 +720,10 @@ func (s *Server) serveDiscovery() {
 		if string(buf[:n]) != "SERIDOPLAST_NOTES_DISCOVER_V1" || !sameLocalSubnet(addr.IP) {
 			continue
 		}
-		local := conn.LocalAddr().(*net.UDPAddr)
-		_ = local
+		s.Lock()
+		s.lastDiscovery = time.Now().Format(time.RFC3339) + " · " + addr.IP.String()
+		s.discoveryCount++
+		s.Unlock()
 		host := localIPForPeer(addr.IP)
 		if host == "" {
 			continue
@@ -728,6 +732,43 @@ func (s *Server) serveDiscovery() {
 		_, _ = conn.WriteToUDP(out, addr)
 	}
 }
+
+// O anúncio não contém a chave de acesso. O coletor o utiliza apenas para
+// descobrir o novo IP via requisição UDP e validar a resposta com HTTP.
+const notesBeacon = "SERIDOPLAST_NOTES_BEACON_V1"
+const notesBeaconGroup = "239.255.42.99"
+const notesBeaconPort = 8767
+
+// Envia anúncios leves em cada interface IPv4 privada ativa; o endereço é
+// descoberto pelo receptor a partir do remetente do datagrama.
+func announceLAN() {
+	addr := &net.UDPAddr{IP: net.ParseIP(notesBeaconGroup), Port: notesBeaconPort}
+	for {
+		ifaces, err := net.Interfaces()
+		if err == nil {
+			for _, iface := range ifaces {
+				if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 || iface.Flags&net.FlagMulticast == 0 {
+					continue
+				}
+				addrs, _ := iface.Addrs()
+				for _, item := range addrs {
+					ipnet, ok := item.(*net.IPNet)
+					if !ok || ipnet.IP.To4() == nil || !ipnet.IP.IsPrivate() {
+						continue
+					}
+					conn, err := net.DialUDP("udp4", &net.UDPAddr{IP: ipnet.IP.To4()}, addr)
+					if err == nil {
+						_ = conn.SetWriteDeadline(time.Now().Add(700 * time.Millisecond))
+						_, _ = conn.Write([]byte(notesBeacon))
+						_ = conn.Close()
+					}
+				}
+			}
+		}
+		time.Sleep(12 * time.Second)
+	}
+}
+
 func localIPForPeer(peer net.IP) string {
 	ifaces, _ := net.Interfaces()
 	for _, iface := range ifaces {
@@ -794,9 +835,11 @@ func main() {
 		fmt.Printf("Coletores: http://%s:%d\n", ip, *port)
 	}
 	fmt.Println("Mantenha este programa aberto. Dados salvos em:", path)
-	fmt.Println("Descoberta automatica: UDP 8766. Libere TCP", *port, "e UDP 8766 somente em redes PRIVADAS.")
+	fmt.Println("Descoberta: UDP 8766 (pedido/resposta) + anúncio multicast 239.255.42.99:8767.")
+	fmt.Println("Libere TCP", *port, "e UDP 8766 no Firewall Privado; não exponha à internet.")
 	fmt.Println("Os coletores descobrem o painel sem cadastrar IP/chave. Use apenas LAN corporativa confiavel.")
 	go server.serveDiscovery()
+	go announceLAN()
 	go func() { time.Sleep(600 * time.Millisecond); openBrowser(fmt.Sprintf("http://127.0.0.1:%d", *port)) }()
 	log.Fatal(http.Serve(listen, http.HandlerFunc(server.handle)))
 }

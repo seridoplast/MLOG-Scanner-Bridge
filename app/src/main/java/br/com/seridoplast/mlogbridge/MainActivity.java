@@ -822,19 +822,14 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams obsTitleLp=new LinearLayout.LayoutParams(-1,-2);obsTitleLp.leftMargin=dp(9);
         obsHead.addView(obsTitle,obsTitleLp);observations.addView(obsHead);
         subtitle(observations,"Conexão automática com o painel do PC na mesma rede privada.");
-        TextView noteConnection=label(OrderNotesClient.configured(this)?
-            "Servidor encontrado: "+prefs.getString(OrderNotesClient.PREF_HOST,""):
-            "Procurando painel na rede...",12,muted,false);
+        TextView noteConnection=label(OrderNotesClient.connectionStatus(this),12,muted,false);
         LinearLayout.LayoutParams noteLp=new LinearLayout.LayoutParams(-1,-2);
         noteLp.topMargin=dp(12);observations.addView(noteConnection,noteLp);
         button(observations,"Procurar painel agora",true,()->{
             noteConnection.setText("Procurando na rede local...");
-            OrderNotesClient.reconnect(this);
-            handler.postDelayed(()->{
-                if(isFinishing()||isDestroyed())return;
-                OrderNotesClient.ping(this,(ok,message)->noteConnection.setText(ok?
-                    "Conectado automaticamente. "+prefs.getString(OrderNotesClient.PREF_HOST,""):message));
-            },2600L);
+            OrderNotesClient.reconnect(this,(ok,message)->{
+                if(!isFinishing()&&!isDestroyed())noteConnection.setText(message);
+            });
         });
         LinearLayout appearance=card();appearance.addView(label("Aparência",17,ink,true));
         LinearLayout themes=row();
