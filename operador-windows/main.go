@@ -46,7 +46,7 @@ type Broadcast struct {
 	Targets     []string          `json:"targets"`
 	Delivered   map[string]string `json:"delivered"`          // servidor ofereceu na resposta HTTP
 	Received    map[string]string `json:"received,omitempty"` // app confirmou processamento
-	Seen        map[string]string `json:"seen"`               // operador tocou Entendi
+	Seen        map[string]string `json:"seen"`               // operador tocou Entendido
 	TargetNames map[string]string `json:"targetNames,omitempty"`
 }
 type Device struct {

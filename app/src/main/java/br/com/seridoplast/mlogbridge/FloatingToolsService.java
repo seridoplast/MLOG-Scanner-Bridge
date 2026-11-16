@@ -53,6 +53,7 @@ public final class FloatingToolsService extends Service {
     private View view;
     private TextView status;
     private boolean expanded;
+    private int selectedMessagePage=FloatingMessageViewPolicy.OBSERVATION;
     // Persistir posição da BOLHA, não a coordenada do painel expandido.
     private int bubbleX=-1, bubbleY=-1;
     private boolean batchDrawerOpen;
@@ -127,8 +128,10 @@ public final class FloatingToolsService extends Service {
             instance.activeNotes.clear();
             if(notes!=null)instance.activeNotes.addAll(notes);
             if(orderChanged)instance.confirmComplete=false;
-            if(newObservation&&!instance.activeNotes.isEmpty())instance.draw(true);
-            else instance.draw(instance.expanded);
+            if(newObservation&&!instance.activeNotes.isEmpty()){
+                instance.selectedMessagePage=FloatingMessageViewPolicy.OBSERVATION;
+                instance.draw(true);
+            }else instance.draw(instance.expanded);
         });
     }
     static void showBroadcasts(List<OrderNotesClient.Broadcast> messages){
@@ -151,6 +154,7 @@ public final class FloatingToolsService extends Service {
             if(changed){
                 instance.activeBroadcasts.clear();
                 if(messages!=null)instance.activeBroadcasts.addAll(messages);
+                if(newMessage)instance.selectedMessagePage=FloatingMessageViewPolicy.GENERAL_NOTICE;
                 instance.draw(newMessage || instance.expanded);
             }
             // Ack only once the overlay accepted the broadcast payload.
@@ -309,9 +313,42 @@ public final class FloatingToolsService extends Service {
         }
         return row;
     }
+    private TextView messageBody(String message){
+        TextView body=label(message,18,false);
+        body.setTextColor(0xfff7fbff);
+        body.setLineSpacing(dp(4),1.04f);
+        body.setBreakStrategy(android.text.Layout.BREAK_STRATEGY_HIGH_QUALITY);
+        return body;
+    }
+    private TextView compactLink(String name,Runnable callback){
+        TextView link=label(name,11,true);
+        link.setGravity(Gravity.CENTER);
+        link.setPadding(dp(5),dp(11),dp(5),dp(11));
+        link.setBackground(bg(buttonBackground,11));
+        link.setOnClickListener(v->callback.run());
+        link.setFocusable(false);
+        return link;
+    }
+    private void switchMessagePage(int page){
+        selectedMessagePage=page;
+        confirmingOrder="";
+        draw(true);
+    }
     private void draw(boolean open){
         if(wm==null)return;
         applyTheme();
+        if(open){
+            // Sempre usar a mesma identidade da referência para observações e avisos.
+            background=0xff071e32;
+            text=0xfffcfdff;
+            mutedText=0xffb8cede;
+            accent=0xffa5c8e9;
+            buttonBackground=0xff103857;
+            buttonStroke=0xff234b67;
+            dividerColor=0xff294b62;
+            actionBackground=0xff164c75;
+            inputHint=0xffb8cede;
+        }
         if(bubbleX<0)bubbleX=dp(12);
         if(bubbleY<0)bubbleY=dp(160);
         // Abrir painel pode deslocá-lo para caber na tela; não deslocar a engrenagem.
@@ -321,9 +358,12 @@ public final class FloatingToolsService extends Service {
         expanded=open;
         LinearLayout layout=new LinearLayout(this);layout.setOrientation(LinearLayout.VERTICAL);
         if(open){
-            layout.setBackground(bg(background,24));
+            GradientDrawable panel=new GradientDrawable();
+            panel.setColor(background);
+            panel.setCornerRadius(dp(25));
+            layout.setBackground(panel);
             layout.setElevation(dp(12));
-            layout.setPadding(dp(18),dp(18),dp(18),dp(18));
+            layout.setPadding(dp(21),dp(19),dp(21),dp(22));
         }
         view=layout;
         // A janela expandida antiga roubava o foco do Flutter ate para
@@ -332,15 +372,17 @@ public final class FloatingToolsService extends Service {
         boolean needsTextInput=open && batchDrawerOpen && ScanAssistState.isBatch(this);
         int overlayFlags=WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL;
         if(!needsTextInput)overlayFlags|=WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
+        int panelWidth=Math.min(dp(350),Math.max(dp(260),
+            getResources().getDisplayMetrics().widthPixels-dp(22)));
         params=new WindowManager.LayoutParams(
-            open?dp(310):dp(BUBBLE_TOUCH_DP),WindowManager.LayoutParams.WRAP_CONTENT,
+            open?panelWidth:dp(BUBBLE_TOUCH_DP),WindowManager.LayoutParams.WRAP_CONTENT,
             Build.VERSION.SDK_INT>=26?WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY:
                 WindowManager.LayoutParams.TYPE_PHONE,
             overlayFlags,
             PixelFormat.TRANSLUCENT);
         params.gravity=Gravity.TOP|Gravity.START;
         int width=getResources().getDisplayMetrics().widthPixels;
-        params.x=Math.max(0,Math.min(oldX,Math.max(0,width-(open?dp(310):dp(BUBBLE_TOUCH_DP)))));
+        params.x=Math.max(0,Math.min(oldX,Math.max(0,width-(open?panelWidth:dp(BUBBLE_TOUCH_DP)))));
         params.y=Math.max(0,Math.min(oldY,Math.max(0,getResources().getDisplayMetrics().heightPixels-dp(72))));
         params.softInputMode=WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;
         if(!open){
@@ -400,62 +442,69 @@ public final class FloatingToolsService extends Service {
                 }
             });
         }else{
-            LinearLayout header=new LinearLayout(this);header.setOrientation(LinearLayout.HORIZONTAL);
+            int currentPage=FloatingMessageViewPolicy.select(selectedMessagePage,
+                activeNotes.size(),activeBroadcasts.size(),pendingCompletions.size());
+            selectedMessagePage=currentPage;
+            String headingText=currentPage==FloatingMessageViewPolicy.OBSERVATION?"Observação":
+                currentPage==FloatingMessageViewPolicy.GENERAL_NOTICE?"Aviso geral":
+                currentPage==FloatingMessageViewPolicy.COMPLETION?"Concluir pedido":"Mensagens";
+            LinearLayout header=new LinearLayout(this);
+            header.setOrientation(LinearLayout.HORIZONTAL);
             header.setGravity(Gravity.CENTER_VERTICAL);
-            ImageView headerIcon=new ImageView(this);
-            headerIcon.setImageResource(R.drawable.ui_bell);
-            headerIcon.setColorFilter(accent);
-            LinearLayout.LayoutParams hip=new LinearLayout.LayoutParams(dp(28),dp(28));
-            hip.rightMargin=dp(9);header.addView(headerIcon,hip);
-            LinearLayout heading=new LinearLayout(this);heading.setOrientation(LinearLayout.VERTICAL);
-            heading.addView(label("Avisos e observações",18,true));
-            // Minimal panel; order number appears only when there are active observations.
+            TextView heading=label(headingText,23,true);
             header.addView(heading,new LinearLayout.LayoutParams(0,-2,1));
-            TextView minimize=iconButton("",R.drawable.ui_minus,this::collapse);
-            minimize.setContentDescription("Recolher ferramentas");
-            minimize.setBackground(bg(buttonBackground,14));
-            header.addView(minimize,new LinearLayout.LayoutParams(dp(48),dp(45)));
+            ImageView minimize=new ImageView(this);
+            minimize.setImageResource(R.drawable.ui_minus);
+            minimize.setColorFilter(0xffffffff);
+            minimize.setPadding(dp(10),dp(10),dp(10),dp(10));
+            minimize.setBackground(bg(buttonBackground,13));
+            minimize.setContentDescription("Recolher observação ou aviso");
+            minimize.setOnClickListener(v->collapse());
+            LinearLayout.LayoutParams minLp=new LinearLayout.LayoutParams(dp(43),dp(43));
+            minLp.leftMargin=dp(10);
+            header.addView(minimize,minLp);
             layout.addView(header);
             layout.addView(separator());
             SharedPreferences pref=ScanAssistState.prefs(this);
-            if(!activeBroadcasts.isEmpty()){
-                layout.addView(label("Avisos gerais",15,true));
-                for(OrderNotesClient.Broadcast alert:activeBroadcasts){
-                    TextView item=label(alert.text,14,false);
-                    leadingIcon(item,R.drawable.ui_bell,accent,18);
-                    item.setPadding(dp(13),dp(12),dp(13),dp(12));
-                    item.setBackground(bg(buttonBackground,12));
-                    LinearLayout.LayoutParams np=new LinearLayout.LayoutParams(-1,-2);np.topMargin=dp(8);
-                    layout.addView(item,np);
-                    TextView seen=iconButton("Entendi",R.drawable.ui_check_circle,()->{
+
+            if(currentPage==FloatingMessageViewPolicy.OBSERVATION){
+                TextView orderLabel=muted("Pedido "+activeOrder,12);
+                LinearLayout.LayoutParams orderLp=new LinearLayout.LayoutParams(-1,-2);
+                orderLp.bottomMargin=dp(11);
+                layout.addView(orderLabel,orderLp);
+                for(int i=0;i<activeNotes.size();i++){
+                    if(i>0)layout.addView(separator());
+                    TextView message=messageBody(activeNotes.get(i).text);
+                    layout.addView(message,new LinearLayout.LayoutParams(-1,-2));
+                }
+                // Não mostrar botão 'Entendido' nas observações de pedidos.
+                // A conclusão permanece disponível somente após trocar de pedido.
+            }else if(currentPage==FloatingMessageViewPolicy.GENERAL_NOTICE){
+                for(int i=0;i<activeBroadcasts.size();i++){
+                    if(i>0)layout.addView(separator());
+                    OrderNotesClient.Broadcast alert=activeBroadcasts.get(i);
+                    layout.addView(messageBody(alert.text),new LinearLayout.LayoutParams(-1,-2));
+                    TextView understood=iconButton("Entendido",R.drawable.ui_check_circle,()->{
                         OrderNotesClient.seen(this,alert.id,(ok,message)->{
                             if(ok){
                                 activeBroadcasts.removeIf(n->n.id.equals(alert.id));
-                                draw(expanded);
-                            }else android.widget.Toast.makeText(this,message,android.widget.Toast.LENGTH_LONG).show();
+                                if(activeBroadcasts.isEmpty() && activeNotes.isEmpty() &&
+                                   pendingCompletions.isEmpty() && !ScanAssistState.isBatch(this))
+                                    collapse();
+                                else draw(true);
+                            }else android.widget.Toast.makeText(this,message,
+                                android.widget.Toast.LENGTH_LONG).show();
                         });
                     });
-                    LinearLayout.LayoutParams ap=new LinearLayout.LayoutParams(-1,-2);ap.topMargin=dp(5);
-                    layout.addView(seen,ap);
+                    understood.setGravity(Gravity.CENTER);
+                    understood.setTextColor(0xffffffff);
+                    understood.setBackground(bg(actionBackground,13));
+                    LinearLayout.LayoutParams ap=new LinearLayout.LayoutParams(-1,-2);
+                    ap.topMargin=dp(19);
+                    layout.addView(understood,ap);
                 }
-                layout.addView(separator());
-            }
-            if(!activeNotes.isEmpty()){
-                layout.addView(label("Observação · Pedido "+activeOrder,15,true));
-                for(OrderNotesClient.Note note:activeNotes){
-                    TextView item=label(note.text,15,false);
-                    leadingIcon(item,R.drawable.ui_info,accent,18);
-                    item.setPadding(dp(13),dp(11),dp(13),dp(11));
-                    item.setBackground(bg(buttonBackground,12));
-                    LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.topMargin=dp(8);
-                    layout.addView(item,lp);
-                }
-                layout.addView(separator());
-            }
-            // The previous order is eligible for operator confirmation only AFTER
-            // MLOG displays a different stable order number. Never silently auto-complete.
-            if(!pendingCompletions.isEmpty()){
-                layout.addView(label("Aguardando conclusão",14,true));
+            }else if(currentPage==FloatingMessageViewPolicy.COMPLETION){
+                layout.addView(messageBody("Confirme somente após finalizar a separação no MLOG."));
                 for(PendingCompletion pending:new ArrayList<>(pendingCompletions)){
                     TextView done=iconButton(pending.order.equals(confirmingOrder)?
                         "Confirmar pedido "+pending.order:"Concluir pedido "+pending.order,
@@ -467,19 +516,49 @@ public final class FloatingToolsService extends Service {
                             OrderNotesClient.complete(this,pending.order,pending.notes,(ok,message)->{
                                 if(ok){
                                     pendingCompletions.removeIf(n->n.order.equals(pending.order));
-                                    draw(expanded);
-                                }else android.widget.Toast.makeText(this,message,android.widget.Toast.LENGTH_LONG).show();
+                                    if(pendingCompletions.isEmpty() && activeBroadcasts.isEmpty() &&
+                                       activeNotes.isEmpty() && !ScanAssistState.isBatch(this))collapse();
+                                    else draw(true);
+                                }else android.widget.Toast.makeText(this,message,
+                                    android.widget.Toast.LENGTH_LONG).show();
                             });
                         });
-                    LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.topMargin=dp(7);
-                    layout.addView(done,lp);
+                    done.setBackground(bg(actionBackground,13));
+                    done.setGravity(Gravity.CENTER);
+                    LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
+                    lp.topMargin=dp(12);layout.addView(done,lp);
                 }
                 if(!confirmingOrder.isEmpty()){
-                    TextView hint=muted("Confirme só se a separação terminou no MLOG.",11);
-                    LinearLayout.LayoutParams hlp=new LinearLayout.LayoutParams(-1,-2);hlp.topMargin=dp(5);
-                    layout.addView(hint,hlp);
+                    TextView warning=muted("Toque novamente para confirmar a conclusão.",12);
+                    LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);
+                    lp.topMargin=dp(8);layout.addView(warning,lp);
                 }
-                layout.addView(separator());
+            }else{
+                layout.addView(messageBody("Nenhuma mensagem pendente."));
+            }
+
+            // Só aparece quando há outra categoria de mensagem disponível.
+            LinearLayout navigation=new LinearLayout(this);
+            navigation.setOrientation(LinearLayout.HORIZONTAL);
+            navigation.setGravity(Gravity.CENTER_VERTICAL);
+            int navItems=0;
+            if(!activeNotes.isEmpty()&&currentPage!=FloatingMessageViewPolicy.OBSERVATION){
+                TextView openNote=compactLink("Observação",()->switchMessagePage(FloatingMessageViewPolicy.OBSERVATION));
+                navigation.addView(openNote,new LinearLayout.LayoutParams(0,-2,1));navItems++;
+            }
+            if(!activeBroadcasts.isEmpty()&&currentPage!=FloatingMessageViewPolicy.GENERAL_NOTICE){
+                TextView openNotice=compactLink("Aviso geral ("+activeBroadcasts.size()+")",
+                    ()->switchMessagePage(FloatingMessageViewPolicy.GENERAL_NOTICE));
+                navigation.addView(openNotice,new LinearLayout.LayoutParams(0,-2,1));navItems++;
+            }
+            if(!pendingCompletions.isEmpty()&&currentPage!=FloatingMessageViewPolicy.COMPLETION){
+                TextView openDone=compactLink("Concluir ("+pendingCompletions.size()+")",
+                    ()->switchMessagePage(FloatingMessageViewPolicy.COMPLETION));
+                navigation.addView(openDone,new LinearLayout.LayoutParams(0,-2,1));navItems++;
+            }
+            if(navItems>0){
+                LinearLayout.LayoutParams nlp=new LinearLayout.LayoutParams(-1,-2);
+                nlp.topMargin=dp(21);layout.addView(navigation,nlp);
             }
             // O recurso protegido só aparece no flutuante quando liberado em Ajustes.
             if(ScanAssistState.isBatch(this)){

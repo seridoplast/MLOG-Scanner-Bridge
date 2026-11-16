@@ -1,19 +1,20 @@
-SERIDÓPLAST | PAINEL DE OBSERVAÇÕES E AVISOS — v3.6.11
+SERIDÓPLAST | PAINEL DE OBSERVAÇÕES E AVISOS — v3.6.12
 
 USO RÁPIDO
 1. No Windows 10/11 64 bits, execute Seridoplast-Observacoes-Pedidos.exe.
 2. O painel abre em http://127.0.0.1:8765. Mantenha o programa aberto.
 3. Cadastre observações indicando número exato do pedido (zeros são preservados).
-4. Em "Enviar para todos", escreva a mensagem e confirme o envio.
+4. Em "Aviso geral", escreva a mensagem e confirme o envio.
    A mensagem é direcionada apenas aos coletores que apareçam online no painel
    naquele momento. O status informa destinatários, recebidos e vistos.
-5. Quando o separador bipar o número do pedido no MLOG, a observação aparecerá
-   no sino. Conclua o pedido no MLOG e depois confirme "Marcar pedido como feito".
-6. Avisos gerais aparecem no sino com botão "Entendi". A confirmação é enviada
+5. Quando o número do pedido aparecer no cabeçalho da tela de separação
+   do MLOG, o Bridge tentará abrir a observação automaticamente, sem bipar o pedido.
+   Depois de concluir no MLOG e mudar o número, use "Concluir pedido" no sino.
+6. Avisos gerais aparecem no sino com botão "Entendido". A confirmação é enviada
    ao painel automaticamente.
 
 SEM CADASTRO INDIVIDUAL
-- Após atualizar o Bridge para v3.6.11, os coletores buscam o painel por UDP
+- Após atualizar o Bridge para v3.6.12, os coletores buscam o painel por UDP
   na rede privada e se conectam automaticamente, sem inserir IP ou chave.
 - Mantenha PC e coletores no MESMO SEGMENTO de LAN/Wi-Fi corporativa.
 - Habilite TCP 8765 (HTTP) e UDP 8766 (descoberta) no Firewall do Windows,
@@ -37,7 +38,7 @@ CUIDADOS COM SEGURANÇA
   Faça backup regular com o programa fechado.
 
 LANÇAMENTO
-- Bridge v3.6.11: PRÉ-RELEASE para teste por cabo/ADB.
+- Bridge v3.6.12: PRÉ-RELEASE para teste por cabo/ADB.
 - O GitHub Actions precisa compilar o APK. Teste no coletor real.
 
-Na v3.6.11, cada aviso exibe os dispositivos destinatarios e seus estados: disponibilizado, confirmado pelo aplicativo e visto pelo operador. Apenas dispositivos com Bridge 3.6.11 ou posterior enviam o novo ACK de recebimento.
+Na v3.6.12, cada aviso exibe os dispositivos destinatarios e seus estados: disponibilizado, confirmado pelo aplicativo e visto pelo operador. Apenas dispositivos com Bridge 3.6.11 ou posterior enviam o novo ACK de recebimento.

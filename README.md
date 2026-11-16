@@ -172,3 +172,14 @@ Para testes do servidor: `go test ./...`. Para executar o painel, basta abrir o
 ### Atualização do painel Windows
 
 O programa foi gerado em `Seridoplast-Observacoes-Pedidos-v3.6.11.exe` (arquivo de entrega separado). Feche a versão anterior e execute a nova, mantendo a mesma pasta/dados. Um aviso destinado a 10 coletores **não implica confirmação de 10**: acompanhe a lista individual no painel.
+
+
+## v3.6.12 — Janelas de Observação e Aviso geral (pré-release)
+
+- Tela do sino redesenhada conforme referência: painel azul-marinho, cantos arredondados, texto branco legível, divisor e botão vetorial para recolher.
+- **Observação**: exibe o pedido identificado no cabeçalho do MLOG e as observações vinculadas. Não usa botão Entendido nem dá baixa no pedido ao apenas ler a mensagem.
+- **Aviso geral**: aberto automaticamente para mensagens destinadas aos coletores conectados; apresenta botão **Entendido**, com confirmação sincronizada ao painel Windows.
+- Se coexistirem várias categorias, links discretos permitem alternar entre Observação, Aviso geral e Concluir pedido.
+- A confirmação **Concluir pedido** só aparece depois da mudança de número de pedido no MLOG e requer confirmação explícita; mudança de número sozinha não é conclusão.
+- O painel Windows passa a identificar o formulário de mensagens gerais como **Aviso geral**. Não há mudança no protocolo de rede nem é preciso recadastrar os coletores.
+- Publicação inicial: pré-release `v3.6.12` (`rollout=0`), para validar primeiro no coletor piloto.
