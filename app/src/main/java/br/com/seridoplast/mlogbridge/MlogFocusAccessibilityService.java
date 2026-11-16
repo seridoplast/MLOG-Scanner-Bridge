@@ -547,6 +547,13 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                         return;
                     }
                     String raw=ScannerProtocol.barcodeRaw(intent);
+                    // Apenas o campo de entrada DE PEDIDOS dispara observações.
+                    // Nunca consultar durante a bipagem de produtos da Separação.
+                    if(OrderNotesClient.configured(MlogFocusAccessibilityService.this)) {
+                        ScreenInfo noteScreen=inspect(active);
+                        if(OrderNumberPolicy.isOrderScreen(noteScreen.screen))
+                            OrderNotesClient.observedOrder(MlogFocusAccessibilityService.this,raw);
+                    }
                     lastPhysicalShizukuScanAt=SystemClock.elapsedRealtime();
                     // Cancela recuperacao pendente se houve nova leitura.
                     ++recoveryEpoch;

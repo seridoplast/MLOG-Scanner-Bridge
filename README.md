@@ -97,3 +97,44 @@ git push origin main
 Acompanhe a compilação e a publicação em **Actions**. Ao final, confirme na página de Releases que `v3.6.8` está marcada como **Latest**, **não** como *Pre-release*, com `rollout=100` no corpo e com o arquivo `MLOG-Scanner-Bridge-v3.6.8.apk` anexado. Em seguida, confirme que `https://seridoplast.github.io/MLOG-Scanner-Bridge/releases.json` contém `latest.tag_name` igual a `v3.6.8`. Se necessário, execute o workflow **Atualizar catalogo publico de Releases**.
 
 **Nota:** alterar o estado de pré-release para estável e marcar como Latest são ações diferentes; o texto `rollout=100` também é necessário para os coletores do Bridge elegíveis à instalação automática.
+
+## v3.6.9 (pré-release) — Observações de pedidos
+
+Inclui painel Windows em `operador-windows` e suporte ao sino no botão
+flutuante. Os coletores acessam o painel via LAN `http://IP:8765` com chave
+aleatória de 64 caracteres. O servidor só aceita a administração pelo próprio PC;
+a rede local recebe apenas pedidos autenticados para consulta e conclusão.
+
+**Como funciona:** cadastre uma ou mais observações usando o número do pedido
+completo, incluindo zeros à esquerda. Quando o Bipe Shizuku ler o número na
+tela de **Bipar pedidos** reconhecida pela acessibilidade, o Bridge consulta
+as observações. Se existirem, abre o painel do sino e mostra o contador. Enquanto
+o pedido estiver em foco, consulta mudanças a cada aproximadamente 20 segundos.
+Leituras de produtos em **Separação** não acionam essa busca.
+
+Para concluir, é obrigatório tocar **Marcar pedido como feito** e confirmar no
+coletor após finalizar a separação no MLOG, pois ainda não há um sinal seguro
+de conclusão do próprio MLOG. A conclusão só é removida do coletor quando o
+servidor confirma o recebimento. No painel, a observação aparece como **Feito**
+com horário e identificação do aparelho.
+
+**Segurança:** o canal HTTP local usa chave de acesso, porém não criptografa o
+tráfego. Configure somente em Wi-Fi corporativo isolado; não exponha a porta
+8765 na Internet. O Bridge bloqueia servidores com IP fora das faixas privadas.
+O usuário precisa conceder as permissões normais de sobreposição e acessibilidade.
+
+### Compilar o painel Windows
+
+O painel foi escrito em Go 1.23+ (biblioteca padrão, sem serviços externos).
+Na pasta `operador-windows`, execute:
+
+```bat
+set GOOS=windows
+set GOARCH=amd64
+go build -o Seridoplast-Observacoes-Pedidos.exe .
+```
+
+Para testes do servidor: `go test ./...`. Para executar o painel, basta abrir o
+`.exe` em Windows 10/11 x64; não requer Go instalado. O banco fica em
+`%APPDATA%\\Seridoplast\\ObservacoesPedidos\\dados.json`. Consulte
+`operador-windows/LEIA-ME.txt`.

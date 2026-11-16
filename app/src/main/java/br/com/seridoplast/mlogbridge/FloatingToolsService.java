@@ -26,6 +26,9 @@ import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.ScrollView;
+import java.util.ArrayList;
+import java.util.List;
 
 /** Optional user-controlled overlay. Never captures screen contents. */
 public final class FloatingToolsService extends Service {
@@ -37,6 +40,13 @@ public final class FloatingToolsService extends Service {
         return svc!=null && svc.expanded && svc.batchDrawerOpen && ScanAssistState.isBatch(svc);
     }
     private final Handler main = new Handler(Looper.getMainLooper());
+    private final Runnable refreshNotes=new Runnable(){
+        @Override public void run(){
+            if(!activeOrder.isEmpty()&&OrderNotesClient.configured(FloatingToolsService.this))
+                OrderNotesClient.refresh(FloatingToolsService.this,activeOrder);
+            main.postDelayed(this,20000L);
+        }
+    };
     private WindowManager wm;
     private WindowManager.LayoutParams params;
     private View view;
@@ -46,6 +56,9 @@ public final class FloatingToolsService extends Service {
     private int bubbleX=-1, bubbleY=-1;
     private boolean batchDrawerOpen;
     private String statusText="Tratador de códigos disponível.";
+    private String activeOrder="";
+    private final ArrayList<OrderNotesClient.Note> activeNotes=new ArrayList<>();
+    private boolean confirmComplete;
     private int background, text, mutedText, green, red, accent, buttonBackground;
     private int buttonStroke, dividerColor, actionBackground, inputHint;
     // 40 dp para nao cobrir campos da separacao; fundo e icone com 15% de opacidade.
@@ -55,6 +68,44 @@ public final class FloatingToolsService extends Service {
     // Aplicar opacidade no contêiner, e nao apenas no fundo, para incluir o icone.
     private static final int BUBBLE_FILL=0xff000000;
     private static final float BUBBLE_OPACITY=0.15f;
+
+    static void showOrderNotes(String order,List<OrderNotesClient.Note> notes){
+        FloatingToolsService instance=visible;
+        if(instance==null)return;
+        instance.main.post(()->{
+            boolean orderChanged=!order.equals(instance.activeOrder);
+            boolean changed=orderChanged || (notes==null?0:notes.size())!=instance.activeNotes.size();
+            boolean newObservation=false;
+            if(notes!=null){
+                for(OrderNotesClient.Note next:notes){
+                    boolean existing=false;
+                    for(OrderNotesClient.Note previous:instance.activeNotes){
+                        if(previous.id.equals(next.id)){
+                            existing=true;
+                            if(!previous.text.equals(next.text))changed=true;
+                            break;
+                        }
+                    }
+                    if(!existing){newObservation=true;changed=true;}
+                }
+            }
+            instance.activeOrder=order;
+            if(!changed)return;
+            instance.activeNotes.clear();
+            if(notes!=null)instance.activeNotes.addAll(notes);
+            if(orderChanged)instance.confirmComplete=false;
+            if(newObservation&&!instance.activeNotes.isEmpty())instance.draw(true);
+            else instance.draw(instance.expanded);
+        });
+    }
+    static void clearCompleted(String order){
+        FloatingToolsService instance=visible;
+        if(instance==null)return;
+        instance.main.post(()->{
+            if(!order.equals(instance.activeOrder))return;
+            instance.activeNotes.clear();instance.activeOrder="";instance.confirmComplete=false;instance.draw(false);
+        });
+    }
 
     static void report(String message){
         FloatingToolsService instance=visible;
@@ -81,6 +132,7 @@ public final class FloatingToolsService extends Service {
         }
         // Never preserve an armed batch across process/service restarts.
         if(view==null){
+            main.removeCallbacks(refreshNotes);main.postDelayed(refreshNotes,20000L);
             android.content.SharedPreferences p=ScanAssistState.prefs(this);
             bubbleX=p.getInt("floating_gear_x",dp(12));
             bubbleY=p.getInt("floating_gear_y",dp(160));
@@ -234,18 +286,25 @@ public final class FloatingToolsService extends Service {
         params.softInputMode=WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;
         if(!open){
             FrameLayout touchTarget=new FrameLayout(this);
-            touchTarget.setContentDescription("Abrir ferramentas do MLOG Bridge");
+            touchTarget.setContentDescription("Abrir observações e ferramentas do MLOG Bridge");
             FrameLayout bubble=new FrameLayout(this);
             bubble.setBackground(accentBubble());
             // Toda a bolha, incluindo a engrenagem branca, fica com 15% de opacidade.
             // A area de toque de 48 dp permanece 100% ativa e invisivel.
             bubble.setAlpha(BUBBLE_OPACITY);
             bubble.setElevation(0f);
-            ImageView gear=new ImageView(this);
-            gear.setImageResource(R.drawable.ic_floating_gear);
-            gear.setColorFilter(0xffffffff);gear.setPadding(dp(10),dp(10),dp(10),dp(10));
-            bubble.addView(gear,new FrameLayout.LayoutParams(dp(BUBBLE_DP),dp(BUBBLE_DP),Gravity.CENTER));
+            ImageView bell=new ImageView(this);
+            bell.setImageResource(R.drawable.ui_bell);
+            bell.setColorFilter(0xffffffff);bell.setPadding(dp(9),dp(9),dp(9),dp(9));
+            bubble.addView(bell,new FrameLayout.LayoutParams(dp(BUBBLE_DP),dp(BUBBLE_DP),Gravity.CENTER));
             touchTarget.addView(bubble,new FrameLayout.LayoutParams(dp(BUBBLE_DP),dp(BUBBLE_DP),Gravity.CENTER));
+            if(!activeNotes.isEmpty()){
+                TextView badge=label(String.valueOf(Math.min(activeNotes.size(),99)),11,true);
+                badge.setGravity(Gravity.CENTER);badge.setTextColor(0xffffffff);
+                badge.setBackground(bg(0xffdd304a,12));
+                FrameLayout.LayoutParams bp=new FrameLayout.LayoutParams(dp(22),dp(22),Gravity.TOP|Gravity.END);
+                touchTarget.addView(badge,bp);
+            }
             layout.addView(touchTarget,new LinearLayout.LayoutParams(dp(BUBBLE_TOUCH_DP),dp(BUBBLE_TOUCH_DP)));
             touchTarget.setOnTouchListener(new View.OnTouchListener(){
                 private float downX,downY;private int startX,startY;private boolean moved;
@@ -271,7 +330,10 @@ public final class FloatingToolsService extends Service {
                         if(moved)ScanAssistState.prefs(FloatingToolsService.this).edit()
                             .putInt("floating_gear_x",bubbleX)
                             .putInt("floating_gear_y",bubbleY).apply();
-                        else draw(true);
+                        else {
+                            draw(true);
+                            if(!activeOrder.isEmpty())OrderNotesClient.refresh(FloatingToolsService.this,activeOrder);
+                        }
                         return true;
                     }
                     return true;
@@ -281,13 +343,13 @@ public final class FloatingToolsService extends Service {
             LinearLayout header=new LinearLayout(this);header.setOrientation(LinearLayout.HORIZONTAL);
             header.setGravity(Gravity.CENTER_VERTICAL);
             ImageView headerIcon=new ImageView(this);
-            headerIcon.setImageResource(R.drawable.ui_sliders);
+            headerIcon.setImageResource(R.drawable.ui_bell);
             headerIcon.setColorFilter(accent);
             LinearLayout.LayoutParams hip=new LinearLayout.LayoutParams(dp(28),dp(28));
             hip.rightMargin=dp(9);header.addView(headerIcon,hip);
             LinearLayout heading=new LinearLayout(this);heading.setOrientation(LinearLayout.VERTICAL);
-            heading.addView(label("Ferramentas",18,true));
-            heading.addView(muted("MLOG Bridge",11));
+            heading.addView(label(activeNotes.isEmpty()?"Ferramentas":"Observações do pedido",18,true));
+            heading.addView(muted(activeNotes.isEmpty()?"MLOG Bridge":"Pedido "+activeOrder,11));
             header.addView(heading,new LinearLayout.LayoutParams(0,-2,1));
             TextView minimize=iconButton("",R.drawable.ui_minus,this::collapse);
             minimize.setContentDescription("Recolher ferramentas");
@@ -296,6 +358,46 @@ public final class FloatingToolsService extends Service {
             layout.addView(header);
             layout.addView(separator());
             SharedPreferences pref=ScanAssistState.prefs(this);
+            if(!activeNotes.isEmpty()){
+                TextView notice=muted(activeNotes.size()+
+                    (activeNotes.size()==1?" observação pendente":" observações pendentes"),12);
+                layout.addView(notice);
+                for(OrderNotesClient.Note note:activeNotes){
+                    TextView item=label(note.text,14,false);
+                    item.setPadding(dp(13),dp(12),dp(13),dp(12));
+                    item.setBackground(bg(buttonBackground,12));
+                    LinearLayout.LayoutParams np=new LinearLayout.LayoutParams(-1,-2);
+                    np.topMargin=dp(8);
+                    layout.addView(item,np);
+                }
+                TextView done=iconButton(confirmComplete?"Confirmar: pedido finalizado":"Marcar pedido como feito",
+                    R.drawable.ui_check_circle,()->{
+                        if(!confirmComplete){confirmComplete=true;draw(true);return;}
+                        confirmComplete=false;
+                        String order=activeOrder;
+                        ArrayList<OrderNotesClient.Note> records=new ArrayList<>(activeNotes);
+                        statusText="Enviando conclusão...";
+                        OrderNotesClient.complete(this,order,records,(ok,message)->{
+                            statusText=message;
+                            if(ok && order.equals(activeOrder)){
+                                clearCompleted(order);
+                                OrderNotesClient.refresh(this,order);
+                            }
+                            else {draw(true);android.widget.Toast.makeText(this,message,android.widget.Toast.LENGTH_LONG).show();}
+                        });
+                    });
+                done.setBackground(bg(confirmComplete?0xffb63747:actionBackground,12));
+                done.setTextColor(0xffffffff);
+                leadingIcon(done,R.drawable.ui_check_circle,0xffffffff,17);
+                LinearLayout.LayoutParams dl=new LinearLayout.LayoutParams(-1,-2);dl.topMargin=dp(10);
+                layout.addView(done,dl);
+                TextView confirmHint=muted(confirmComplete?
+                    "Confirme somente após encerrar a separação no MLOG.":
+                    "As observações continuam no painel até a confirmação.",11);
+                LinearLayout.LayoutParams hp=new LinearLayout.LayoutParams(-1,-2);hp.topMargin=dp(6);
+                layout.addView(confirmHint,hp);
+                layout.addView(separator());
+            }
             // Reaplica broadcast CMX e tenta recuperar a Conferencia de Venda
             // tocando no Volume e voltando imediatamente, quando homologado.
             TextView reset=iconButton("Resetar Bipe",R.drawable.ui_refresh,()->{
@@ -404,9 +506,25 @@ public final class FloatingToolsService extends Service {
             LinearLayout.LayoutParams sl=new LinearLayout.LayoutParams(-1,-2);
             sl.topMargin=dp(16);layout.addView(status,sl);
         }
+        if(open){
+            // Limitar o tamanho sem criar uma janela gigante em pedidos curtos.
+            ScrollView scroller=new ScrollView(this){
+                @Override protected void onMeasure(int widthSpec,int heightSpec){
+                    int available=getResources().getDisplayMetrics().heightPixels-dp(120);
+                    int cap=Math.min(dp(560),Math.max(dp(180),available));
+                    super.onMeasure(widthSpec,View.MeasureSpec.makeMeasureSpec(cap,View.MeasureSpec.AT_MOST));
+                }
+            };
+            scroller.setFillViewport(false);scroller.setVerticalScrollBarEnabled(true);
+            scroller.addView(layout);
+            view=scroller;
+            // A bolha continua na posicao original apos fechar o painel.
+            params.y=Math.max(0,Math.min(oldY,dp(60)));
+        }
         try{wm.addView(view,params);}catch(RuntimeException ex){view=null;stopSelf();}
     }
     @Override public void onDestroy(){
+        main.removeCallbacks(refreshNotes);
         if(visible==this)visible=null;
         if(wm!=null && view!=null)try{wm.removeView(view);}catch(RuntimeException ignored){}
         view=null;

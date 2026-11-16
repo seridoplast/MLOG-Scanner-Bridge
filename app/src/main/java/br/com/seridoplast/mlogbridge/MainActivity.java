@@ -793,6 +793,50 @@ public final class MainActivity extends Activity {
             toast("Botão flutuante desligado.");
         });
 
+        LinearLayout observations=card();
+        LinearLayout obsHead=row();
+        obsHead.addView(icon(R.drawable.ui_bell,primary,24));
+        TextView obsTitle=label("Observações de pedidos",17,ink,true);
+        LinearLayout.LayoutParams obsTitleLp=new LinearLayout.LayoutParams(-1,-2);obsTitleLp.leftMargin=dp(9);
+        obsHead.addView(obsTitle,obsTitleLp);observations.addView(obsHead);
+        subtitle(observations,"Conecte este coletor ao painel Windows na mesma rede Wi-Fi.");
+        EditText hostInput=new EditText(this);
+        hostInput.setSingleLine(true);hostInput.setTextSize(14);
+        hostInput.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_URI);
+        hostInput.setHint("http://192.168.1.100:8765");
+        hostInput.setText(prefs.getString(OrderNotesClient.PREF_HOST,""));
+        hostInput.setTextColor(ink);hostInput.setHintTextColor(muted);
+        LinearLayout.LayoutParams hostLp=new LinearLayout.LayoutParams(-1,-2);hostLp.topMargin=dp(12);
+        observations.addView(hostInput,hostLp);
+        EditText keyInput=new EditText(this);
+        keyInput.setSingleLine(true);keyInput.setTextSize(14);
+        keyInput.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        keyInput.setHint("Chave de acesso do painel");
+        keyInput.setText(prefs.getString(OrderNotesClient.PREF_KEY,""));
+        keyInput.setTextColor(ink);keyInput.setHintTextColor(muted);
+        LinearLayout.LayoutParams keyLp=new LinearLayout.LayoutParams(-1,-2);keyLp.topMargin=dp(8);
+        observations.addView(keyInput,keyLp);
+        EditText deviceInput=new EditText(this);
+        deviceInput.setSingleLine(true);deviceInput.setTextSize(14);
+        deviceInput.setInputType(InputType.TYPE_CLASS_TEXT);
+        deviceInput.setHint("Nome do coletor (ex.: Separação 01)");
+        deviceInput.setText(prefs.getString(OrderNotesClient.PREF_DEVICE_NAME,""));
+        deviceInput.setTextColor(ink);deviceInput.setHintTextColor(muted);
+        LinearLayout.LayoutParams deviceLp=new LinearLayout.LayoutParams(-1,-2);deviceLp.topMargin=dp(8);
+        observations.addView(deviceInput,deviceLp);
+        TextView noteConnection=label(OrderNotesClient.configured(this)?"Servidor configurado":"Aguardando configuração",12,muted,false);
+        observations.addView(noteConnection);
+        button(observations,"Salvar conexão",true,()->{
+            try{OrderNotesClient.saveConnection(this,hostInput.getText().toString(),keyInput.getText().toString(),deviceInput.getText().toString());
+                noteConnection.setText("Conexão salva. Teste a comunicação.");
+                toast("Configuração salva.");
+            }catch(IllegalArgumentException ex){noteConnection.setText(ex.getMessage());}
+        });
+        button(observations,"Testar conexão",false,()->{
+            noteConnection.setText("Conectando...");
+            OrderNotesClient.ping(this,(ok,message)->noteConnection.setText(message));
+        });
+
         LinearLayout appearance=card();appearance.addView(label("Aparência",17,ink,true));
         LinearLayout themes=row();
         for(String[] opt:new String[][]{{"auto","Sistema"},{"dark","Escuro"},{"light","Claro"}}){

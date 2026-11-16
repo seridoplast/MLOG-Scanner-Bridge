@@ -1,0 +1,49 @@
+SERIDÓPLAST | OBSERVAÇÕES DE PEDIDOS — PAINEL WINDOWS
+
+1) No Windows 10/11 64 bits, dê dois cliques em:
+   Seridoplast-Observacoes-Pedidos.exe
+
+2) O painel abre no navegador do próprio computador:
+   http://127.0.0.1:8765
+   Mantenha a janela do executável aberta enquanto os coletores trabalham.
+   Se o navegador não abrir sozinho, copie esse endereço.
+
+3) No painel, cadastre as observações informando o número do pedido
+   (sem remover os zeros à esquerda) e o texto de cada observação.
+   Você pode cadastrar mais de uma observação no mesmo pedido.
+
+4) Para conectar o coletor:
+   - Coloque o Windows e o coletor na mesma rede Wi-Fi corporativa.
+   - Confira o IP do computador na parte Conectar coletores.
+   - Em MLOG Bridge > Ajustes > Observações de pedidos:
+       Endereço: http://IP-DO-COMPUTADOR:8765
+       Chave: cole a chave de acesso exibida no painel.
+   - Informe o nome do coletor, por exemplo "Separação 01".
+   - Clique Salvar conexão > Testar conexão.
+   - Autorize acesso à rede privada na janela do Firewall do Windows.
+     Não autorize em redes públicas e não redirecione a porta no roteador.
+
+5) No MLOG, bipe o número do pedido na tela "Bipar pedido(s)".
+   O sino no botão flutuante mostra as observações do pedido.
+   O aviso abre automaticamente após encontrar uma observação.
+   A tela de produtos da separação NÃO gera notificações por código bipado.
+
+6) Depois de CONCLUIR A SEPARAÇÃO no MLOG, abra o sino e toque
+   "Marcar pedido como feito" e em seguida CONFIRME a conclusão.
+   O painel atualiza o status para Feito e deixa de enviar essas observações.
+   Se o PC estiver desligado, a conclusão não é considerada sincronizada.
+
+7) As observações ficam salvas em:
+   %APPDATA%\Seridoplast\ObservacoesPedidos\dados.json
+   Faça backup desse arquivo regularmente com o programa fechado.
+   A chave é gerada na primeira execução e também fica nesse arquivo.
+
+IMPORTANTE
+- Esta é uma pré-release: teste inicialmente em um único coletor.
+- É necessário manter o programa Windows aberto, acessível na rede interna.
+- A comunicação HTTP é exclusiva à rede local, mas NÃO é criptografada.
+  Use Wi-Fi corporativo confiável; não utilize redes de convidados/públicas.
+- O Bridge não consegue confirmar automaticamente a finalização de pedidos
+  no MLOG. Por segurança, a conclusão exige confirmação humana no coletor.
+- Se a tela de entrada do número do pedido aparecer com outra identificação
+  no MLOG, envie um diagnóstico dessa tela para ajustar o reconhecimento.
