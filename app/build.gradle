@@ -1,0 +1,61 @@
+plugins { id 'com.android.application' }
+
+// A mesma chave assina todas as builds de producao.
+// NUNCA gravar senhas ou keystore neste arquivo/repositório.
+// ALTERAR SOMENTE ESTA LINHA para a proxima versao (ex.: 3.2.4).
+def bridgeVersion = '3.6.10'
+def bridgeParts = bridgeVersion.tokenize('.').collect { it.toInteger() }
+if (bridgeParts.size() != 3 || bridgeParts.any { it < 0 || it > 99 }) {
+    throw new GradleException('bridgeVersion precisa estar em N.N.N, com cada parte entre 0 e 99')
+}
+def bridgeCode = 1000000 + bridgeParts[0] * 10000 + bridgeParts[1] * 100 + bridgeParts[2]
+android {
+    namespace 'br.com.seridoplast.mlogbridge'
+    compileSdk 35
+
+    buildFeatures { aidl true }
+
+    defaultConfig {
+        applicationId 'br.com.seridoplast.mlogbridge'
+        minSdk 26
+        targetSdk 35
+        // Versao semantica estavel: app local e release CI usam o mesmo codigo.
+        // Maior que o legado de 100000+numero da execucao (evita downgrade).
+        versionCode bridgeCode
+        versionName bridgeVersion
+    }
+
+    signingConfigs {
+        bridgeRelease {
+            // O workflow restaura a chave numa pasta temporaria do runner.
+            // As credenciais so existem como GitHub Actions Secrets.
+            def keystorePath = System.getenv('BRIDGE_SIGNING_STORE_FILE')
+            if (keystorePath) {
+                storeFile file(keystorePath)
+                storePassword System.getenv('BRIDGE_SIGNING_STORE_PASSWORD')
+                storeType 'pkcs12'
+                keyAlias 'seridoplast_bridge'
+                keyPassword System.getenv('BRIDGE_SIGNING_STORE_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.bridgeRelease
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+ dependencies {
+    implementation 'androidx.core:core:1.15.0'
+    implementation 'androidx.work:work-runtime:2.10.2'
+    implementation 'dev.rikka.shizuku:api:13.1.5'
+    implementation 'dev.rikka.shizuku:provider:13.1.5'
+}

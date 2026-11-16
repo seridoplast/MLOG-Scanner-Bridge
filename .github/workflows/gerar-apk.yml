@@ -1,0 +1,442 @@
+name: Gerar APK do MLOG Scanner Bridge
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: 'Aprovar e publicar Release estavel no GitHub?'
+        type: boolean
+        required: false
+        default: false
+      rollout_percent:
+        description: 'Percentual de distribuicao da Release aprovada.'
+        type: choice
+        options:
+          - '0'
+          - '10'
+          - '25'
+          - '50'
+          - '100'
+        default: '100'
+        required: false
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: write
+
+jobs:
+  compilar-apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Baixar codigo do projeto
+        uses: actions/checkout@v4
+
+      - name: Preparar Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Verificar Android SDK preinstalado
+        shell: bash
+        run: |
+          test -f "$ANDROID_HOME/platforms/android-35/android.jar" || {
+            echo '::error::Android SDK Platform 35 indisponivel no runner.'
+            exit 1
+          }
+          test -d "$ANDROID_HOME/build-tools/35.0.0" || {
+            echo '::error::Android Build Tools 35.0.0 indisponivel no runner.'
+            exit 1
+          }
+
+      - name: Restaurar chave corporativa de assinatura
+        shell: bash
+        env:
+          BRIDGE_KEYSTORE_BASE64: ${{ secrets.BRIDGE_KEYSTORE_BASE64 }}
+          BRIDGE_KEYSTORE_PASSWORD: ${{ secrets.BRIDGE_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$BRIDGE_KEYSTORE_BASE64" || -z "$BRIDGE_KEYSTORE_PASSWORD" ]]; then
+            echo '::error::Configure os GitHub Secrets BRIDGE_KEYSTORE_BASE64 e BRIDGE_KEYSTORE_PASSWORD. Consulte README.md.'
+            exit 1
+          fi
+          KEYSTORE_PATH="$RUNNER_TEMP/seridoplast-bridge-release.jks"
+          printf '%s' "$BRIDGE_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          chmod 600 "$KEYSTORE_PATH"
+          keytool -list -keystore "$KEYSTORE_PATH" -alias seridoplast_bridge -storepass:env BRIDGE_KEYSTORE_PASSWORD >/dev/null || {
+            echo '::error::Chave de assinatura invalida, senha errada ou alias ausente.'
+            exit 1
+          }
+          echo "BRIDGE_SIGNING_STORE_FILE=$KEYSTORE_PATH" >> "$GITHUB_ENV"
+
+      - name: Preparar Gradle 8.11.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Testar regra de Enter e mapeamento de conferencia
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bridge-test
+          javac -d /tmp/bridge-test \
+            app/src/main/java/br/com/seridoplast/mlogbridge/ConferenceScreenPolicy.java \
+            app/src/main/java/br/com/seridoplast/mlogbridge/BridgeEnterPolicy.java \
+            tests/ConferenceScreenPolicyTest.java \
+            tests/BridgeEnterPolicyTest.java \
+            app/src/main/java/br/com/seridoplast/mlogbridge/DirectScanPolicy.java \
+            tests/DirectScanPolicyTest.java
+          java -cp /tmp/bridge-test br.com.seridoplast.mlogbridge.ConferenceScreenPolicyTest
+          java -cp /tmp/bridge-test br.com.seridoplast.mlogbridge.BridgeEnterPolicyTest
+          java -cp /tmp/bridge-test br.com.seridoplast.mlogbridge.DirectScanPolicyTest
+          javac -d /tmp/bridge-test \
+            app/src/main/java/br/com/seridoplast/mlogbridge/SeparationVisualReceipt.java \
+            tests/SeparationVisualReceiptTest.java
+          java -cp /tmp/bridge-test br.com.seridoplast.mlogbridge.SeparationVisualReceiptTest
+          javac -d /tmp/bridge-test \
+            app/src/main/java/br/com/seridoplast/mlogbridge/BarcodePreEnterGuard.java \
+            tests/BarcodePreEnterGuardTest.java
+          java -cp /tmp/bridge-test br.com.seridoplast.mlogbridge.BarcodePreEnterGuardTest
+
+      - name: Testar numero exato do pedido para observacoes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bridge-order-test
+          javac -d /tmp/bridge-order-test \
+            app/src/main/java/br/com/seridoplast/mlogbridge/OrderNumberPolicy.java \
+            tests/OrderNumberPolicyTest.java
+          java -cp /tmp/bridge-order-test br.com.seridoplast.mlogbridge.OrderNumberPolicyTest
+
+      - name: Testar OK somente em erro de codigo de barras
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bridge-error-test
+          javac -d /tmp/bridge-error-test \
+            app/src/main/java/br/com/seridoplast/mlogbridge/BarcodeErrorDialogPolicy.java \
+            tests/BarcodeErrorDialogPolicyTest.java
+          java -cp /tmp/bridge-error-test br.com.seridoplast.mlogbridge.BarcodeErrorDialogPolicyTest
+
+      - name: Testar validação de GTIN, transição de produto e gatilho longo
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bridge-test-320
+          javac -d /tmp/bridge-test-320 \
+            app/src/main/java/br/com/seridoplast/mlogbridge/BarcodeIntegrityPolicy.java \
+            app/src/main/java/br/com/seridoplast/mlogbridge/SeparationProductGuard.java \
+            app/src/main/java/br/com/seridoplast/mlogbridge/LongHoldScanPolicy.java \
+            app/src/main/java/br/com/seridoplast/mlogbridge/SeparatedQuantityProbe.java \
+            tests/BarcodeIntegrityPolicyTest.java \
+            tests/SeparationProductGuardTest.java \
+            tests/LongHoldScanPolicyTest.java \
+            tests/SeparatedQuantityProbeTest.java
+          for test in BarcodeIntegrityPolicyTest SeparationProductGuardTest LongHoldScanPolicyTest SeparatedQuantityProbeTest; do
+            java -cp /tmp/bridge-test-320 br.com.seridoplast.mlogbridge.$test
+          done
+
+      - name: Testar reuso seguro do foco e temporizador
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bridge-test-321
+          javac -d /tmp/bridge-test-321 \
+            app/src/main/java/br/com/seridoplast/mlogbridge/NativeFocusReusePolicy.java \
+            app/src/main/java/br/com/seridoplast/mlogbridge/FixedEnterCadence.java \
+            tests/NativeFocusReusePolicyTest.java \
+            tests/FixedEnterCadenceTest.java
+          java -cp /tmp/bridge-test-321 br.com.seridoplast.mlogbridge.NativeFocusReusePolicyTest
+          java -cp /tmp/bridge-test-321 br.com.seridoplast.mlogbridge.FixedEnterCadenceTest
+
+      - name: Testar entrega do teclado estilo Zebra
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bridge-zebra
+          javac -d /tmp/bridge-zebra \
+            app/src/main/java/br/com/seridoplast/mlogbridge/BarcodeIntegrityPolicy.java \
+            app/src/main/java/br/com/seridoplast/mlogbridge/ZebraImeMode.java \
+            app/src/main/java/br/com/seridoplast/mlogbridge/ScanQueue.java \
+            tests/ZebraImeModeTest.java
+          java -cp /tmp/bridge-zebra br.com.seridoplast.mlogbridge.ZebraImeModeTest
+
+      - name: Testar contrato de saída nativa Profile0
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bridge-profile0
+          javac -d /tmp/bridge-profile0 \
+            app/src/main/java/br/com/seridoplast/mlogbridge/ZebraProfile0Mode.java \
+            tests/ZebraProfile0ModeTest.java
+          java -cp /tmp/bridge-profile0 br.com.seridoplast.mlogbridge.ZebraProfile0ModeTest
+
+      - name: Testar modo Shizuku (codigos, sufixos CMX e fidelidade)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bridge-shizuku-tests
+          javac -d /tmp/bridge-shizuku-tests \
+            app/src/main/java/br/com/seridoplast/mlogbridge/ShizukuScanMode.java \
+            app/src/main/java/br/com/seridoplast/mlogbridge/ShizukuBarcodePayload.java \
+            tests/ShizukuScanModeTest.java \
+            tests/ShizukuBarcodePayloadTest.java
+          java -cp /tmp/bridge-shizuku-tests br.com.seridoplast.mlogbridge.ShizukuScanModeTest
+          java -cp /tmp/bridge-shizuku-tests br.com.seridoplast.mlogbridge.ShizukuBarcodePayloadTest
+
+      - name: Testar bloqueio por senha do lote automático
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bridge-bips-tests
+          javac -d /tmp/bridge-bips-tests \
+            app/src/main/java/br/com/seridoplast/mlogbridge/AutoBipsAccess.java \
+            tests/AutoBipsAccessTest.java
+          java -cp /tmp/bridge-bips-tests br.com.seridoplast.mlogbridge.AutoBipsAccessTest
+
+      - name: Testar leitura de retorno do instalador Android
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bridge-pm-test
+          javac -d /tmp/bridge-pm-test \
+            app/src/main/java/br/com/seridoplast/mlogbridge/PmInstallOutput.java \
+            tests/PmInstallOutputTest.java
+          java -cp /tmp/bridge-pm-test br.com.seridoplast.mlogbridge.PmInstallOutputTest
+
+      - name: Testar gerador do catalogo publico
+        shell: bash
+        run: python3 tests/test_release_feed.py
+
+      - name: Testar espera segura do limite GitHub
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bridge-api-limit
+          javac -d /tmp/bridge-api-limit \
+            app/src/main/java/br/com/seridoplast/mlogbridge/GitHubRatePolicy.java \
+            tests/GitHubRatePolicyTest.java
+          java -cp /tmp/bridge-api-limit br.com.seridoplast.mlogbridge.GitHubRatePolicyTest
+
+      - name: Validar intervalos de atualizacao
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bridge-update-intervals
+          javac -d /tmp/bridge-update-intervals \
+            app/src/main/java/br/com/seridoplast/mlogbridge/BridgeUpdateIntervals.java \
+            tests/BridgeUpdateIntervalsTest.java
+          java -cp /tmp/bridge-update-intervals br.com.seridoplast.mlogbridge.BridgeUpdateIntervalsTest
+
+      - name: Testar canal Shizuku oficial e proteção contra downgrade
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bridge-shizuku-update-policy
+          javac -d /tmp/bridge-shizuku-update-policy \
+            app/src/main/java/br/com/seridoplast/mlogbridge/ShizukuUpdatePolicy.java \
+            tests/ShizukuUpdatePolicyTest.java
+          java -cp /tmp/bridge-shizuku-update-policy br.com.seridoplast.mlogbridge.ShizukuUpdatePolicyTest
+
+      - name: Compilar APK de producao com assinatura fixa
+        env:
+          BRIDGE_SIGNING_STORE_PASSWORD: ${{ secrets.BRIDGE_KEYSTORE_PASSWORD }}
+        run: gradle :app:assembleRelease --no-daemon --stacktrace
+
+      - name: Verificar APK e certificado de assinatura
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK='app/build/outputs/apk/release/app-release.apk'
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
+          CERT=$(
+            "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$APK" |
+            awk '/Signer #1 certificate SHA-256 digest:/ {print $NF; exit}'
+          )
+          EXPECTED='8151376de33abdee4c98cda4c88c102a8b9165a0db7edc18b1ad0403a7222fae'
+          if [[ "${CERT,,}" != "$EXPECTED" ]]; then
+            echo '::error::O APK nao foi assinado com a chave corporativa esperada.'
+            exit 1
+          fi
+          echo "Assinatura verificada. SHA-256 do certificado: $CERT"
+          sha256sum "$APK"
+
+      - name: Testar politica de distribuicao gradual
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bridge-rollout-test
+          javac -d /tmp/bridge-rollout-test \
+            app/src/main/java/br/com/seridoplast/mlogbridge/BridgeRolloutPolicy.java \
+            tests/BridgeRolloutPolicyTest.java
+          java -cp /tmp/bridge-rollout-test br.com.seridoplast.mlogbridge.BridgeRolloutPolicyTest
+
+      - name: Testar leitura de versao do GitHub Releases
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bridge-release-test
+          javac -d /tmp/bridge-release-test \
+            app/src/main/java/br/com/seridoplast/mlogbridge/GitHubReleaseVersion.java \
+            tests/GitHubReleaseVersionTest.java
+          java -cp /tmp/bridge-release-test br.com.seridoplast.mlogbridge.GitHubReleaseVersionTest
+
+      - name: Testar bloqueio de pre-releases no atualizador
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bridge-release-policy
+          javac -d /tmp/bridge-release-policy \
+            app/src/main/java/br/com/seridoplast/mlogbridge/BridgeUpdateChannel.java \
+            app/src/main/java/br/com/seridoplast/mlogbridge/ConfirmationReleasePolicy.java \
+            tests/BridgeUpdateChannelTest.java \
+            tests/ConfirmationReleasePolicyTest.java
+          java -cp /tmp/bridge-release-policy br.com.seridoplast.mlogbridge.BridgeUpdateChannelTest
+          java -cp /tmp/bridge-release-policy br.com.seridoplast.mlogbridge.ConfirmationReleasePolicyTest
+
+      - name: Testar senha de pre-release
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bridge-debug-auth
+          javac -d /tmp/bridge-debug-auth \
+            app/src/main/java/br/com/seridoplast/mlogbridge/DebugUpdateAccess.java \
+            tests/DebugUpdateAccessTest.java
+          java -cp /tmp/bridge-debug-auth br.com.seridoplast.mlogbridge.DebugUpdateAccessTest
+
+      - name: Testar alternancia Profile0 e eventos IME
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bridge-v330-tests
+          javac -d /tmp/bridge-v330-tests \
+            app/src/main/java/br/com/seridoplast/mlogbridge/ZebraProfile0Mode.java \
+            tests/ZebraModeSwitch330Test.java
+          java -cp /tmp/bridge-v330-tests br.com.seridoplast.mlogbridge.ZebraModeSwitch330Test
+
+      - name: Testar alvo de recuperacao rapida pelo Volume
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bridge-volume-test
+          javac -d /tmp/bridge-volume-test \
+            app/src/main/java/br/com/seridoplast/mlogbridge/VolumeRecoveryTarget.java \
+            app/src/main/java/br/com/seridoplast/mlogbridge/CameraRecoveryPolicy.java \
+            tests/VolumeRecoveryTargetTest.java \
+            tests/CameraRecoveryPolicyTest.java
+          java -cp /tmp/bridge-volume-test br.com.seridoplast.mlogbridge.VolumeRecoveryTargetTest
+          java -cp /tmp/bridge-volume-test br.com.seridoplast.mlogbridge.CameraRecoveryPolicyTest
+
+      - name: Nomear APK assinado no padrao vN.N.N
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(sed -n "s/^def bridgeVersion = '\([^']*\)'.*/\1/p" app/build.gradle | head -n1)
+          test -n "$VERSION"
+          cp app/build/outputs/apk/release/app-release.apk \
+             "app/build/outputs/apk/release/MLOG-Scanner-Bridge-v${VERSION}.apk"
+
+      - name: Publicar Release estavel 3.6.8 ou pre-release das demais
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APPROVE: ${{ inputs.publish_release || 'false' }}
+          ROLLOUT: ${{ inputs.rollout_percent || '100' }}
+        run: |
+          set -euo pipefail
+          VERSION=$(sed -n "s/^def bridgeVersion = '\([^']*\)'.*/\1/p" app/build.gradle | head -n1)
+          [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || exit 1
+          TAG="v${VERSION}"
+          ASSET="app/build/outputs/apk/release/MLOG-Scanner-Bridge-${TAG}.apk"
+          test -s "$ASSET"
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$APPROVE" == "true" ]]; then
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              # Promover a MESMA tag e o MESMO APK, sem substituicao.
+              gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" \
+                --prerelease=false --latest --title "MLOG Scanner Bridge ${TAG}" \
+                --notes "rollout=${ROLLOUT}"
+            else
+              gh release create "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" \
+                --target "$GITHUB_SHA" --title "MLOG Scanner Bridge ${TAG}" \
+                --notes "rollout=${ROLLOUT}" --latest
+            fi
+          elif [[ "$GITHUB_EVENT_NAME" == "push" && "$VERSION" == "3.6.8" ]]; then
+            # v3.6.8 aprovada para distribuicao direta; mesmo que a tag ja exista
+            # como pre-release, converter para release estavel/Latest/rollout=100.
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+                   --json assets --jq '.assets[].name' | grep -Fxq "$(basename "$ASSET")"; then
+                gh release upload "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY"
+              fi
+              gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" \
+                --prerelease=false --latest --title "MLOG Scanner Bridge ${TAG}" \
+                --notes 'rollout=100'
+            else
+              gh release create "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" \
+                --target "$GITHUB_SHA" --title "MLOG Scanner Bridge ${TAG}" \
+                --notes 'rollout=100' --latest
+            fi
+          elif [[ "$GITHUB_EVENT_NAME" == "push" && "$VERSION" == "3.6.6" ]] && \
+               ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # Somente a v3.6.6 foi aprovada para publicar estavel no primeiro push.
+            # Proximas versoes continuam em pre-release ate aprovacao manual.
+            gh release create "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" --title "MLOG Scanner Bridge ${TAG}" \
+              --notes 'rollout=100' --latest
+          elif ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # git push por padrao = testavel via USB, sem distribuicao automatica.
+            gh release create "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" --title "MLOG Scanner Bridge ${TAG}" \
+              --notes 'rollout=0' --prerelease
+          else
+            echo "::notice::Tag $TAG ja publicada; nao substituir APK."
+          fi
+
+      - name: Publicar APK assinado para download
+        uses: actions/upload-artifact@v4
+        with:
+          name: MLOG-Scanner-Bridge-APK-ASSINADO
+          path: app/build/outputs/apk/release/MLOG-Scanner-Bridge-v*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Limpar chave temporaria do runner
+        if: always()
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/seridoplast-bridge-release.jks"
+  # A Release e assinada/publicada acima. Este job adicional distribui apenas
+  # metadados publicos via Pages para TODOS os coletores sem gastar REST API.
+  # Ative Settings > Pages > Source: GitHub Actions uma unica vez.
+  publicar-catalogo:
+    needs: compilar-apk
+    if: success()
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    continue-on-error: true
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    concurrency:
+      group: bridge-pages-catalog
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Gerar catalogo de Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/build_release_feed.py
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - uses: actions/deploy-pages@v4
+        id: deployment

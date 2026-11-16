@@ -1,0 +1,41 @@
+SERIDÓPLAST | PAINEL DE OBSERVAÇÕES E AVISOS — v3.6.10
+
+USO RÁPIDO
+1. No Windows 10/11 64 bits, execute Seridoplast-Observacoes-Pedidos.exe.
+2. O painel abre em http://127.0.0.1:8765. Mantenha o programa aberto.
+3. Cadastre observações indicando número exato do pedido (zeros são preservados).
+4. Em "Enviar para todos", escreva a mensagem e confirme o envio.
+   A mensagem é direcionada apenas aos coletores que apareçam online no painel
+   naquele momento. O status informa destinatários, recebidos e vistos.
+5. Quando o separador bipar o número do pedido no MLOG, a observação aparecerá
+   no sino. Conclua o pedido no MLOG e depois confirme "Marcar pedido como feito".
+6. Avisos gerais aparecem no sino com botão "Entendi". A confirmação é enviada
+   ao painel automaticamente.
+
+SEM CADASTRO INDIVIDUAL
+- Após atualizar o Bridge para v3.6.10, os coletores buscam o painel por UDP
+  na rede privada e se conectam automaticamente, sem inserir IP ou chave.
+- Mantenha PC e coletores no MESMO SEGMENTO de LAN/Wi-Fi corporativa.
+- Habilite TCP 8765 (HTTP) e UDP 8766 (descoberta) no Firewall do Windows,
+  APENAS para redes PRIVADAS. Se necessário, execute o script opcional
+  CONFIGURAR-FIREWALL-PRIVADO.cmd com direitos de administrador.
+- Wi-Fi com isolamento entre clientes/VLANs separadas pode impedir a descoberta.
+- Se houver mais de um painel na mesma rede, desligue os extras durante o teste.
+- A bolha requer permissão de sobreposição já autorizada no Android; as
+  permissões de acessibilidade/Shizuku continuam exigindo autorização do sistema.
+- Se o Android restringir iniciar serviços em segundo plano após atualizar,
+  abra o Bridge uma vez; nas próximas aberturas a conexão será automática.
+
+CUIDADOS COM SEGURANÇA
+- Protocolo destinado a LAN CORPORATIVA CONFIÁVEL. A descoberta transmite uma
+  credencial de acesso na rede local para permitir provisionamento automático.
+- Os dados NÃO são criptografados no Wi-Fi/LAN. Não use redes públicas, de
+  visitantes ou compartilhadas com dispositivos não confiáveis.
+- Nunca exponha TCP 8765 nem UDP 8766 à internet.
+- A interface administrativa só atende 127.0.0.1 no próprio PC.
+- Os dados persistem em %APPDATA%\Seridoplast\ObservacoesPedidos\dados.json.
+  Faça backup regular com o programa fechado.
+
+LANÇAMENTO
+- Bridge v3.6.10: PRÉ-RELEASE para teste por cabo/ADB.
+- O GitHub Actions precisa compilar o APK. Teste no coletor real.
