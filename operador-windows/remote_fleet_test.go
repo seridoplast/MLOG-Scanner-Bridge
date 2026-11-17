@@ -119,3 +119,35 @@ func TestPersistOfflineObservationsAndLastActivity(t *testing.T) {
 		t.Fatal("deleted observation survives")
 	}
 }
+
+func TestMlogOperatorSavedInCollectorProfile(t *testing.T) {
+	filename := filepath.Join(t.TempDir(), "dados.json")
+	s, err := newServer(filename, 8765)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := "dddddddddddddddddddddddddddddddd"
+	w := testAPI(t, s, "POST", "/api/device/heartbeat", s.db.Token, map[string]interface{}{
+		"id": id, "name": "Coletor 04", "mlogOperator": "JARLENE", "lastMlogOperator": "JARLENE"})
+	if w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	if s.devices[id].MlogOperator != "JARLENE" {
+		t.Fatal("operator missing")
+	}
+	reopened, err := newServer(filename, 8765)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reopened.db.Devices[id].LastMlogOperator != "JARLENE" {
+		t.Fatal("last known operator not persisted")
+	}
+	w = testAPI(t, reopened, "POST", "/api/device/heartbeat", reopened.db.Token, map[string]interface{}{
+		"id": id, "name": "Coletor 04", "mlogOperator": "", "lastMlogOperator": "JARLENE"})
+	if w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	if reopened.devices[id].MlogOperator != "" || reopened.devices[id].LastMlogOperator != "JARLENE" {
+		t.Fatal("logout state incorrect")
+	}
+}

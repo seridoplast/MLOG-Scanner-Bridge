@@ -27,7 +27,7 @@ import (
 //go:embed web/*
 var webFiles embed.FS
 
-const centralVersion = "3.6.17"
+const centralVersion = "3.6.18"
 
 type Note struct {
 	ID            string `json:"id"`
@@ -72,6 +72,8 @@ type FleetAction struct {
 type Device struct {
 	ID               string              `json:"id"`
 	Name             string              `json:"name"`
+	MlogOperator     string              `json:"mlogOperator,omitempty"`
+	LastMlogOperator string              `json:"lastMlogOperator,omitempty"`
 	IP               string              `json:"ip"`
 	LastSeen         string              `json:"lastSeen"`
 	LastOrder        string              `json:"lastOrder,omitempty"`
@@ -669,6 +671,8 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		var in struct {
 			ID                string `json:"id"`
 			Name              string `json:"name"`
+			MlogOperator      string `json:"mlogOperator"`
+			LastMlogOperator  string `json:"lastMlogOperator"`
 			Order             string `json:"order"`
 			BridgeVersion     string `json:"bridgeVersion"`
 			AndroidVersion    string `json:"androidVersion"`
@@ -684,6 +688,9 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !validDeviceID(in.ID) || strings.TrimSpace(in.Name) == "" || utf8.RuneCountInString(in.Name) > 80 || strings.ContainsAny(in.Name, "\r\n\x00") || len(in.Order) > 72 ||
+			len(in.MlogOperator) > 60 || len(in.LastMlogOperator) > 60 ||
+			(in.MlogOperator != "" && !validMlogUsername(in.MlogOperator)) ||
+			(in.LastMlogOperator != "" && !validMlogUsername(in.LastMlogOperator)) ||
 			len(in.BridgeVersion) > 24 || len(in.Model) > 80 || len(in.AndroidVersion) > 24 || in.Battery < -1 || in.Battery > 100 {
 			fail(w, 400, "coletor invalido")
 			return
@@ -704,6 +711,10 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			}
 		} else {
 			d.Name = strings.TrimSpace(in.Name)
+		}
+		d.MlogOperator = in.MlogOperator
+		if in.LastMlogOperator != "" {
+			d.LastMlogOperator = in.LastMlogOperator
 		}
 		d.IP = peer
 		d.LastSeen = now
@@ -757,6 +768,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		// Save profiles periodically rather than writing the DB every 15 seconds.
 		persisted := s.db.Devices[in.ID]
 		if changed || d.NamePending != persisted.NamePending || d.Name != persisted.Name ||
+			d.MlogOperator != persisted.MlogOperator || d.LastMlogOperator != persisted.LastMlogOperator ||
 			(!d.LastSeenIsRecent(persisted.LastSeen, 2*time.Minute)) ||
 			(d.LastActivityAt != persisted.LastActivityAt) ||
 			len(d.LastObservations) != len(persisted.LastObservations) {
@@ -1115,6 +1127,18 @@ func contains(a []string, v string) bool {
 	}
 	return false
 }
+func validMlogUsername(v string) bool {
+	if len(v) < 2 || len(v) > 60 {
+		return false
+	}
+	for _, r := range v {
+		if r == ' ' || r == '\n' || r == '\r' || r == '\x00' {
+			return false
+		}
+	}
+	return true
+}
+
 func validDeviceName(name string) bool {
 	return strings.TrimSpace(name) != "" && utf8.RuneCountInString(name) <= 60 &&
 		!strings.ContainsAny(name, "\r\n\x00")

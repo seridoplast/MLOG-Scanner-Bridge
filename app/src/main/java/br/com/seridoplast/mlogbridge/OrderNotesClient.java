@@ -89,6 +89,29 @@ final class OrderNotesClient {
         String model=Build.MODEL==null?"Coletor":Build.MODEL;
         return (model.length()>55?model.substring(0,55):model)+" · "+deviceId(c).substring(28);
     }
+    private static final String PREF_MLOG_OPERATOR="mlog_operator_current_v3618";
+    private static final String PREF_LAST_MLOG_OPERATOR="mlog_operator_last_v3618";
+    static String mlogOperator(Context c){
+        return c.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE)
+            .getString(PREF_MLOG_OPERATOR,"");
+    }
+    static String lastMlogOperator(Context c){
+        return c.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE)
+            .getString(PREF_LAST_MLOG_OPERATOR,"");
+    }
+    static void mlogLoggedIn(Context c,String username){
+        String safe=MlogLoginIdentityPolicy.username(username);
+        if(safe==null)return;
+        c.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE)
+            .edit().putString(PREF_MLOG_OPERATOR,safe)
+            .putString(PREF_LAST_MLOG_OPERATOR,safe).apply();
+        heartbeat(c); // refletir novo operador no painel sem esperar ciclo seguinte
+    }
+    static void mlogLoggedOut(Context c){
+        c.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE)
+            .edit().remove(PREF_MLOG_OPERATOR).apply();
+        heartbeat(c);
+    }
     static boolean setDeviceName(Context c,String name){
         String clean=name==null?"":name.trim();
         if(clean.isEmpty() || clean.length()>60 || clean.contains("\n") || clean.contains("\r"))return false;
@@ -180,6 +203,8 @@ final class OrderNotesClient {
             try{
                 JSONObject body=new JSONObject();
                 body.put("id",deviceId(app));body.put("name",deviceName(app));body.put("order",LAST_ORDER);
+                body.put("mlogOperator",mlogOperator(app));
+                body.put("lastMlogOperator",lastMlogOperator(app));
                 try{
                     body.put("bridgeVersion",app.getPackageManager().getPackageInfo(app.getPackageName(),0).versionName);
                 }catch(Exception ignored){body.put("bridgeVersion","?");}

@@ -822,6 +822,11 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams obsTitleLp=new LinearLayout.LayoutParams(-1,-2);obsTitleLp.leftMargin=dp(9);
         obsHead.addView(obsTitle,obsTitleLp);observations.addView(obsHead);
         subtitle(observations,"Conexão automática com o painel do PC na mesma rede privada.");
+        String userNow=OrderNotesClient.mlogOperator(this);
+        String userLast=OrderNotesClient.lastMlogOperator(this);
+        subtitle(observations,!userNow.isEmpty()?"Operador MLOG: "+userNow:
+            !userLast.isEmpty()?"Último login MLOG: "+userLast:
+                "Operador MLOG: aguardando login identificado");
         button(observations,"Nome: "+OrderNotesClient.deviceName(this),false,()->{
             final EditText name=new EditText(this);
             name.setSingleLine(true);

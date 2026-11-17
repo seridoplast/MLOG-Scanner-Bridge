@@ -78,6 +78,12 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
+      - name: Testar identificacao do operador MLOG
+        run: |
+          mkdir -p /tmp/mlog-user-test
+          javac -d /tmp/mlog-user-test app/src/main/java/br/com/seridoplast/mlogbridge/MlogLoginIdentityPolicy.java tests/MlogLoginIdentityPolicyTest.java
+          java -cp /tmp/mlog-user-test br.com.seridoplast.mlogbridge.MlogLoginIdentityPolicyTest
+
       - name: Testar identificação segura do pedido na tela
         shell: bash
         run: |
@@ -405,8 +411,8 @@ jobs:
                 --target "$GITHUB_SHA" --title "MLOG Scanner Bridge ${TAG}" \
                 --notes "rollout=${ROLLOUT}" --latest
             fi
-          elif [[ "$GITHUB_EVENT_NAME" == "push" && "$VERSION" == "3.6.17" || "$VERSION" == "3.6.8" ]]; then
-            # v3.6.17 aprovada para distribuicao direta; mesmo que a tag ja exista
+          elif [[ "$GITHUB_EVENT_NAME" == "push" && "$VERSION" == "3.6.18" || "$VERSION" == "3.6.17" || "$VERSION" == "3.6.8" ]]; then
+            # Versoes explicitamente aprovadas para distribuicao direta; mesmo que a tag ja exista
             # como pre-release, converter para release estavel/Latest/rollout=100.
             if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
               if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \

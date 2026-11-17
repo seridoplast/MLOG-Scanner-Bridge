@@ -1039,6 +1039,83 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         return cx>.77f && cx<.97f && cy>.15f && cy<.42f;
     }
 
+    // O nome do operador so e confirmado depois que uma tela operacional
+    // substitui a tela de login. Nunca coletar nem armazenar senhas.
+    private String pendingMlogUsername="";
+    private long pendingMlogUsernameAt;
+    private String lastObservedLoginIdentity="";
+    private long loginProbeAt;
+    private final Runnable loginIdentityProbe=new Runnable(){
+        @Override public void run(){
+            AccessibilityNodeInfo root=mlogRoot();
+            if(root==null || root.getPackageName()==null ||
+                !ScanCoordinator.TARGET.contentEquals(root.getPackageName()))return;
+            List<AccessibilityNodeInfo> nodes=new ArrayList<>();
+            visit(root,nodes,0);
+            boolean passwordPresent=false,loginLabel=false;
+            String namedCandidate=null;
+            String unnamedCandidate=null;
+            int nonPasswordInputs=0;
+            for(AccessibilityNodeInfo node:nodes){
+                if(node==null || !node.isVisibleToUser())continue;
+                String hint="";
+                if(node.getHintText()!=null)hint+=" "+node.getHintText();
+                if(node.getViewIdResourceName()!=null)hint+=" "+node.getViewIdResourceName();
+                if(node.getContentDescription()!=null)hint+=" "+node.getContentDescription();
+                if(MlogLoginIdentityPolicy.passwordHint(hint) || node.isPassword())passwordPresent=true;
+                if(MlogLoginIdentityPolicy.userHint(hint))loginLabel=true;
+                if(!node.isEditable() || node.isPassword() ||
+                   MlogLoginIdentityPolicy.passwordHint(hint))continue;
+                nonPasswordInputs++;
+                String username=MlogLoginIdentityPolicy.username(node.getText()==null?null:node.getText().toString());
+                if(username==null)continue;
+                if(MlogLoginIdentityPolicy.userHint(hint))namedCandidate=username;
+                else unnamedCandidate=username;
+            }
+            // Senha e campo de usuario na mesma tela: evitamos capturar
+            // produto, quantidade, pedido, ou login ainda nao autenticado.
+            boolean loginScreen=passwordPresent && (loginLabel || nonPasswordInputs==1);
+            if(loginScreen){
+                String candidate=namedCandidate!=null?namedCandidate:
+                    nonPasswordInputs==1?unnamedCandidate:null;
+                if(candidate!=null){
+                    pendingMlogUsername=candidate;
+                    pendingMlogUsernameAt=SystemClock.elapsedRealtime();
+                }
+                // Logout: retirar indicador de sessao ativa, guardar ultimo login.
+                if(!lastObservedLoginIdentity.equals("LOGIN")){
+                    lastObservedLoginIdentity="LOGIN";
+                    OrderNotesClient.mlogLoggedOut(MlogFocusAccessibilityService.this);
+                }
+                return;
+            }
+            ScreenInfo screen=inspect(root);
+            if(!screen.login && MlogLoginIdentityPolicy.authenticatedScreen(screen.screen)){
+                if(!pendingMlogUsername.isEmpty() && pendingMlogUsernameAt>0 &&
+                   SystemClock.elapsedRealtime()-pendingMlogUsernameAt<120000L){
+                    OrderNotesClient.mlogLoggedIn(MlogFocusAccessibilityService.this,pendingMlogUsername);
+                    pendingMlogUsername="";
+                    pendingMlogUsernameAt=0L;
+                }
+                lastObservedLoginIdentity="AUTH";
+            }
+        }
+    };
+    private void observeMlogLoginIdentity(AccessibilityEvent event){
+        if(event==null || event.getPackageName()==null ||
+           !ScanCoordinator.TARGET.contentEquals(event.getPackageName()))return;
+        int type=event.getEventType();
+        if(type!=AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED &&
+           type!=AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+           type!=AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED &&
+           type!=AccessibilityEvent.TYPE_WINDOWS_CHANGED)return;
+        long now=SystemClock.elapsedRealtime();
+        if(now-loginProbeAt<240L)return;
+        loginProbeAt=now;
+        main.removeCallbacks(loginIdentityProbe);
+        main.postDelayed(loginIdentityProbe,220L);
+    }
+
     // Passive header observation: receives Flutter accessibility updates even when no barcode is scanned.
     private String visibleOrderCandidate="";
     private String visibleOrderConfirmed="";
@@ -1130,6 +1207,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 event.getEventType()==AccessibilityEvent.TYPE_VIEW_SCROLLED))
                 lastMlogInteractionAt=SystemClock.elapsedRealtime();
         }
+        observeMlogLoginIdentity(event);
         observeVisibleOrder(event);
         if(prefs().getBoolean(ShizukuScanMode.PREF,false)){
             observeAndroidKeyboard(event);
