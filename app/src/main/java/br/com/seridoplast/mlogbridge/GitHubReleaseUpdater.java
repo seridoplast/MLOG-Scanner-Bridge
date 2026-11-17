@@ -30,8 +30,8 @@ import java.util.List;
 public final class GitHubReleaseUpdater {
     private static final String REPOSITORY = "seridoplast/MLOG-Scanner-Bridge";
     private static final String API = "https://api.github.com/repos/" + REPOSITORY + "/releases/latest";
-    // Catalogo CDN: servido por GitHub Pages, sem consumir a cota REST por coletor.
-    private static final String FEED = "https://seridoplast.github.io/MLOG-Scanner-Bridge/releases.json";
+    // Catalogo estatico via raw.githubusercontent.com (sem GitHub Pages nem API REST nos coletores).
+    private static final String FEED = "https://raw.githubusercontent.com/seridoplast/MLOG-Scanner-Bridge/main/releases.json";
     private static final String RATE_UNTIL = "updater_github_api_blocked_until_v368";
     private static final String API_AUTO_ATTEMPT = "updater_fallback_auto_v368";
     private static final String API_MANUAL_ATTEMPT = "updater_fallback_manual_v368";
@@ -257,7 +257,7 @@ public final class GitHubReleaseUpdater {
         return Build.VERSION.SDK_INT >= 28 ? info.getLongVersionCode() : info.versionCode;
     }
 
-    /** GitHub Pages e servido por CDN; nenhum dispositivo precisa de token GitHub. */
+    /** Arquivo estatico servido pelo CDN raw do GitHub, sem token. */
     private static JSONObject readFeed() throws Exception {
         JSONObject feed=new JSONObject(new String(fetchJson(FEED,null),"UTF-8"));
         if(feed.optInt("schema",-1)!=1 || !REPOSITORY.equals(feed.optString("repository","")))
@@ -274,7 +274,7 @@ public final class GitHubReleaseUpdater {
             if(latest==null)throw new IOException("Catalogo sem Release estavel.");
             return latest;
         } catch(Exception feedError) {
-            // Se Pages ainda nao foi ativado, a consulta REST de contingencia e rara.
+            // Se o arquivo estatico estiver indisponivel, consulta REST rara.
             return new JSONObject(new String(fetchApiFallback(ctx,API,false),"UTF-8"));
         }
     }
@@ -294,12 +294,12 @@ public final class GitHubReleaseUpdater {
             long until=sp.getLong(RATE_UNTIL,0);
             if(GitHubRatePolicy.blocked(now,until))
                 throw new IOException("Limite temporario do GitHub. Nova tentativa apos " +
-                    android.text.format.DateFormat.format("HH:mm",until)+". Ative o GitHub Pages para eliminar esta dependencia.");
+                    android.text.format.DateFormat.format("HH:mm",until)+". Aguarde a publicacao do catalogo estatico.");
             String key=manual?API_MANUAL_ATTEMPT:API_AUTO_ATTEMPT;
             long last=sp.getLong(key,0);
             long interval=manual?API_MANUAL_INTERVAL_MS:API_AUTO_INTERVAL_MS;
             if(GitHubRatePolicy.waitForFallback(now,last,interval))
-                throw new IOException("Catalogo ainda indisponivel. Consulta reserva aguardando; ative o GitHub Pages.");
+                throw new IOException("Catalogo ainda indisponivel. Consulta reserva aguardando; verifique releases.json na branch main.");
             sp.edit().putLong(key,now).apply();
             return fetchJson(url,ctx);
         }

@@ -41,6 +41,13 @@ import java.util.Locale;
 public final class MlogFocusAccessibilityService extends AccessibilityService {
     private static volatile MlogFocusAccessibilityService instance;
     static MlogFocusAccessibilityService current(){return instance;}
+    // Telemetria informativa: evento recente do Flutter nao comprova uma separacao concluida.
+    private static volatile long lastMlogInteractionAt;
+    private static volatile boolean lastForegroundIsMlog;
+    static boolean mlogForeground(){return instance!=null && lastForegroundIsMlog;}
+    static boolean recentMlogActivity(){return instance!=null && lastMlogInteractionAt>0 &&
+        android.os.SystemClock.elapsedRealtime()-lastMlogInteractionAt<120000L;}
+
 
     private final Handler main=new Handler(Looper.getMainLooper());
     // Mensagens de Enter nao devem ficar atras de barreiras sincronas da UI.
@@ -496,6 +503,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     @Override protected void onServiceConnected(){
         super.onServiceConnected();
         instance=this;
+        lastForegroundIsMlog=false;
+        lastMlogInteractionAt=0L;
         shizukuScan=new ShizukuScanClient(this);
         shizukuScan.start();
         main.post(shizukuWatchdog);
@@ -1106,6 +1115,16 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     }
 
     @Override public void onAccessibilityEvent(AccessibilityEvent event){
+        if(event!=null){
+            CharSequence eventPackage=event.getPackageName();
+            boolean isMlog=eventPackage!=null && ScanCoordinator.TARGET.contentEquals(eventPackage);
+            if(event.getEventType()==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && eventPackage!=null)
+                lastForegroundIsMlog=isMlog;
+            if(isMlog && (event.getEventType()==AccessibilityEvent.TYPE_VIEW_CLICKED ||
+                event.getEventType()==AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED ||
+                event.getEventType()==AccessibilityEvent.TYPE_VIEW_SCROLLED))
+                lastMlogInteractionAt=SystemClock.elapsedRealtime();
+        }
         observeVisibleOrder(event);
         if(prefs().getBoolean(ShizukuScanMode.PREF,false)){
             observeAndroidKeyboard(event);
@@ -3393,7 +3412,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         enterTimer.removeCallbacksAndMessages(null);
         cancelPending();
         scanQueue.clear();
-        if(instance==this)instance=null;
+        if(instance==this){instance=null;lastForegroundIsMlog=false;lastMlogInteractionAt=0L;}
         super.onDestroy();
     }
 }

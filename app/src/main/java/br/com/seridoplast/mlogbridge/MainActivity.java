@@ -822,6 +822,24 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams obsTitleLp=new LinearLayout.LayoutParams(-1,-2);obsTitleLp.leftMargin=dp(9);
         obsHead.addView(obsTitle,obsTitleLp);observations.addView(obsHead);
         subtitle(observations,"Conexão automática com o painel do PC na mesma rede privada.");
+        button(observations,"Nome: "+OrderNotesClient.deviceName(this),false,()->{
+            final EditText name=new EditText(this);
+            name.setSingleLine(true);
+            name.setText(OrderNotesClient.deviceName(this));
+            name.setSelectAllOnFocus(true);
+            name.setPadding(dp(16),dp(12),dp(16),dp(12));
+            new AlertDialog.Builder(this)
+                .setTitle("Nome do separador / coletor")
+                .setMessage("Esse nome aparecerá no painel de acompanhamento.")
+                .setView(name)
+                .setPositiveButton("Salvar",(dialog,which)->{
+                    if(!OrderNotesClient.setDeviceName(this,name.getText().toString())){
+                        toast("Use um nome de 1 a 60 caracteres.");return;
+                    }
+                    OrderNotesClient.heartbeat(this);
+                    displayPage();
+                }).setNegativeButton("Cancelar",null).show();
+        });
         TextView noteConnection=label(OrderNotesClient.connectionStatus(this),12,muted,false);
         LinearLayout.LayoutParams noteLp=new LinearLayout.LayoutParams(-1,-2);
         noteLp.topMargin=dp(12);observations.addView(noteConnection,noteLp);

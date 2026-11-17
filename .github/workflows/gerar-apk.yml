@@ -270,6 +270,17 @@ jobs:
             tests/NotesDiscoveryRetryPolicyTest.java
           java -cp /tmp/bridge-notes-retry-test br.com.seridoplast.mlogbridge.NotesDiscoveryRetryPolicyTest
 
+      - name: Preparar Go para testes do painel Windows
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: operador-windows/go.mod
+          cache: false
+
+      - name: Testar cadastro de coletores e telemetria
+        run: |
+          cd operador-windows
+          go test ./...
+
       - name: Compilar APK de producao com assinatura fixa
         env:
           BRIDGE_SIGNING_STORE_PASSWORD: ${{ secrets.BRIDGE_KEYSTORE_PASSWORD }}
@@ -369,7 +380,7 @@ jobs:
           cp app/build/outputs/apk/release/app-release.apk \
              "app/build/outputs/apk/release/MLOG-Scanner-Bridge-v${VERSION}.apk"
 
-      - name: Publicar Release estavel 3.6.8 ou pre-release das demais
+      - name: Publicar Release (versoes novas como pre-release por padrao)
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
         shell: bash
         env:
@@ -426,6 +437,24 @@ jobs:
             echo "::notice::Tag $TAG ja publicada; nao substituir APK."
           fi
 
+      - name: Atualizar catalogo estatico depois da Release
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/build_release_feed.py
+          cp site/releases.json releases.json
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add releases.json
+          if ! git diff --cached --quiet; then
+            git commit -m 'chore: catalogo atualizado [skip ci]'
+            git push origin HEAD:main
+          fi
+
       - name: Publicar APK assinado para download
         uses: actions/upload-artifact@v4
         with:
@@ -438,33 +467,3 @@ jobs:
         if: always()
         shell: bash
         run: rm -f "$RUNNER_TEMP/seridoplast-bridge-release.jks"
-  # A Release e assinada/publicada acima. Este job adicional distribui apenas
-  # metadados publicos via Pages para TODOS os coletores sem gastar REST API.
-  # Ative Settings > Pages > Source: GitHub Actions uma unica vez.
-  publicar-catalogo:
-    needs: compilar-apk
-    if: success()
-    runs-on: ubuntu-24.04
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    continue-on-error: true
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
-    concurrency:
-      group: bridge-pages-catalog
-      cancel-in-progress: false
-    steps:
-      - uses: actions/checkout@v4
-      - name: Gerar catalogo de Releases
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/build_release_feed.py
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: site
-      - uses: actions/deploy-pages@v4
-        id: deployment

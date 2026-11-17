@@ -3,6 +3,9 @@ package br.com.seridoplast.mlogbridge;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.Build;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.os.BatteryManager;
 import android.os.Handler;
 import android.os.Looper;
 import android.net.wifi.WifiManager;
@@ -80,11 +83,18 @@ final class OrderNotesClient {
         id=UUID.randomUUID().toString().replace("-","");
         preferences.edit().putString(PREF_DEVICE_ID,id).apply();return id;
     }
-    private static String deviceName(Context c){
+    static String deviceName(Context c){
         String custom=c.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE).getString(PREF_DEVICE_NAME,"").trim();
         if(!custom.isEmpty())return custom;
         String model=Build.MODEL==null?"Coletor":Build.MODEL;
         return (model.length()>55?model.substring(0,55):model)+" · "+deviceId(c).substring(28);
+    }
+    static boolean setDeviceName(Context c,String name){
+        String clean=name==null?"":name.trim();
+        if(clean.isEmpty() || clean.length()>60 || clean.contains("\n") || clean.contains("\r"))return false;
+        c.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE).edit()
+            .putString(PREF_DEVICE_NAME,clean).apply();
+        return true;
     }
     static void reconnect(Context c){ reconnect(c,null); }
     /** Informa o resultado real, sem esperar um tempo fixo que pode terminar cedo. */
@@ -170,7 +180,37 @@ final class OrderNotesClient {
             try{
                 JSONObject body=new JSONObject();
                 body.put("id",deviceId(app));body.put("name",deviceName(app));body.put("order",LAST_ORDER);
-                JSONObject data=request(app,"POST","/api/device/heartbeat",body);
+                try{
+                    body.put("bridgeVersion",app.getPackageManager().getPackageInfo(app.getPackageName(),0).versionName);
+                }catch(Exception ignored){body.put("bridgeVersion","?");}
+                body.put("androidVersion",Build.VERSION.RELEASE);
+                body.put("model",Build.MODEL==null?"Coletor":Build.MODEL);
+                body.put("shizuku",ShizukuHealthMonitor.ready());
+                body.put("accessibility",MlogFocusAccessibilityService.current()!=null);
+                body.put("mlogForeground",MlogFocusAccessibilityService.mlogForeground());
+                body.put("recentActivity",MlogFocusAccessibilityService.recentMlogActivity());
+                int charge=-1;
+                try{
+                    Intent battery=app.registerReceiver(null,new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+                    if(battery!=null){
+                        int level=battery.getIntExtra(BatteryManager.EXTRA_LEVEL,-1);
+                        int scale=battery.getIntExtra(BatteryManager.EXTRA_SCALE,-1);
+                        if(level>=0 && scale>0)charge=(int)Math.round(100.0*level/scale);
+                    }
+                }catch(Exception ignored){}
+                body.put("battery",charge);
+                JSONObject data;
+                try {data=request(app,"POST","/api/device/heartbeat",body);}
+                catch(IOException compatibility){
+                    // Painel Windows antigo rejeita campos adicionais (HTTP 400).
+                    // Mantemos avisos e observacoes funcionando ate o PC ser atualizado.
+                    if(compatibility.getMessage()==null || !compatibility.getMessage().contains("HTTP 400"))throw compatibility;
+                    JSONObject legacy=new JSONObject();
+                    legacy.put("id",deviceId(app));legacy.put("name",deviceName(app));legacy.put("order",LAST_ORDER);
+                    data=request(app,"POST","/api/device/heartbeat",legacy);
+                }
+                String preferred=data.optString("preferredName","");
+                if(!preferred.isEmpty())setDeviceName(app,preferred);
                 lastGoodAt=SystemClock.elapsedRealtime();
                 lastProblem="";
                 ArrayList<Broadcast> messages=new ArrayList<>();
@@ -343,6 +383,7 @@ final class OrderNotesClient {
                 String device=deviceName(app);
                 if(device.length()>80)device=device.substring(0,80);
                 JSONObject body=new JSONObject();body.put("order",n);body.put("ids",ids);body.put("device",device);
+                body.put("deviceId",deviceId(app));
                 JSONObject reply=request(app,"POST","/api/complete",body);
                 ok=reply.optBoolean("ok",false);
                 result=ok?"Pedido concluído e sincronizado.":"Não foi possível confirmar a conclusão.";
