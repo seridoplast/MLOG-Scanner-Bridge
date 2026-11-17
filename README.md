@@ -1,6 +1,16 @@
 # MLOG Scanner Bridge — Seridóplast
 
-**Versão:** 3.6.15 | Pacote Android: `br.com.seridoplast.mlogbridge`
+**Versão:** 3.6.16 | Pacote Android: `br.com.seridoplast.mlogbridge`
+
+## Novidades da v3.6.16 — Central de Frota
+
+- **EXE único:** use `Seridoplast-Central-Operacoes-v3.6.16-UNICO.exe`. Não precisa instalar ou extrair arquivos auxiliares. É necessário Microsoft Edge ou Chrome instalado no Windows para desenhar a janela.
+- **Histórico offline:** nome, última versão, bateria, Shizuku, último pedido, atividade e até 12 últimas observações associadas ficam salvos no banco, mesmo quando o coletor está offline. A exclusão de uma observação também a remove dos históricos.
+- **Dashboard de inatividade:** "Sem atividade há 20 min" indica coletor **online** sem evento recente da acessibilidade do MLOG por pelo menos 20 minutos; não mede produtividade nem garante que esteja sem uso.
+- **Atualização da frota:** no painel, solicitar consulta à **Release estável oficial** de todos os coletores online ou de um coletor específico. O Bridge continua obedecendo a versão, o rollout, a assinatura, a inatividade e as condições de instalação. O painel não força instalação nem envia APKs arbitrários.
+- **Shizuku:** o painel pode solicitar uma **notificação de ajuda no coletor** quando ele estiver desligado. A ativação privilegiada ainda exige intervenção do operador, depuração sem fio autorizada, ADB ou root; não ocorre automaticamente no Windows.
+- **Acompanhamento:** a Central registra a solicitação por dispositivo, a entrega e a confirmação de agendamento/aviso, sem confundir essas etapas com instalação concluída.
+- **Compatibilidade:** atualizar o programa Windows primeiro e depois instalar a v3.6.16 do Bridge em coletor piloto. O Bridge antigo não entende os novos comandos de gestão.
 
 ## O que mudou
 
@@ -13,7 +23,7 @@
 
 ## Executar o painel no Windows
 
-Extraia `Seridoplast-Central-Operacoes-v3.6.15-Windows-PORTATIL.zip` numa pasta fixa e abra `Seridoplast-Central-Operacoes.exe`.
+Baixe o arquivo `Seridoplast-Central-Operacoes-v3.6.16-UNICO.exe` e dê dois cliques. Não há instalador nem pasta de dependências.
 
 - Requer Windows 10/11 64 bits com **Microsoft Edge** ou **Google Chrome** instalado: usa o motor existente para abrir uma janela sem barra de URL nem abas comuns, com a aparência do painel web.
 - O executável tem o servidor HTTP e todos os arquivos embutidos. Não precisa instalar Python, Go, serviços externos ou instalador.
@@ -28,11 +38,11 @@ Substitua os arquivos na raiz do repositório (não coloque uma pasta `MLOG-Scan
 
 ```shell
 git add .
-git commit -m "v3.6.15 - Central de operacoes e catalogo sem Pages"
+git commit -m "v3.6.16 - Dashboard de frota e acoes remotas seguras"
 git push origin main
 ```
 
-O workflow **Gerar APK do MLOG Scanner Bridge** compila e assina. A `v3.6.15` será **pré-release com `rollout=0`**, para teste em coletor piloto, não instalada automaticamente na frota. O APK só é confiável se passar na verificação da assinatura corporativa do Actions.
+O workflow **Gerar APK do MLOG Scanner Bridge** compila e assina. A `v3.6.16` será **pré-release com `rollout=0`**, para teste em coletor piloto, não instalada automaticamente na frota. O APK só é confiável se passar na verificação da assinatura corporativa do Actions.
 
 ## Solução para os erros repetidos do GitHub Actions
 
@@ -50,7 +60,7 @@ O workflow **Gerar APK do MLOG Scanner Bridge** compila e assina. A `v3.6.15` se
 - **MLOG em primeiro plano:** indicador baseado em eventos de janela acessíveis no Android; pode não ser conclusivo em todas as versões do Flutter.
 - O Bridge não recebe um evento oficial de pedido finalizado no ERP, portanto não estima pedidos efetivamente separados. A reconciliação exata depende de integração do Target MLOG/ERP.
 - O protocolo de observações continua usando HTTP local e chave compartilhada via descoberta de rede. Utilize **apenas em LAN corporativa isolada**. Não exponha TCP 8765 e UDP 8766/8767 à internet.
-- O painel nesta versão **não executa instalações remotas**: a telemetria é base para um gerenciador de atualizações da frota numa versão futura.
+- O painel agora solicita **buscas de Releases estáveis**; a instalação, quando elegível, é realizada pelo atualizador existente do Bridge e não é garantida no instante da solicitação.
 - A compilação Android e o teste de reconhecimento de pedido no TC60 devem ser feitos no GitHub Actions e no coletor real.
 
 ## Compilar o painel Windows manualmente

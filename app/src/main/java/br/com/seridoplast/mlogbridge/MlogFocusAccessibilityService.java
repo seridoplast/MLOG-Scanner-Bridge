@@ -47,6 +47,11 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     static boolean mlogForeground(){return instance!=null && lastForegroundIsMlog;}
     static boolean recentMlogActivity(){return instance!=null && lastMlogInteractionAt>0 &&
         android.os.SystemClock.elapsedRealtime()-lastMlogInteractionAt<120000L;}
+    /** Elapsed time since MLOG accessibility interaction. -1 means unknown. */
+    static long lastMlogActivityAgeMs(){
+        if(instance==null || lastMlogInteractionAt<=0L)return -1L;
+        return Math.max(0L,SystemClock.elapsedRealtime()-lastMlogInteractionAt);
+    }
 
 
     private final Handler main=new Handler(Looper.getMainLooper());

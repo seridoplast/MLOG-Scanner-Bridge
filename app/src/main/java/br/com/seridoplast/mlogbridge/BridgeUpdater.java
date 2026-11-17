@@ -100,6 +100,24 @@ public final class BridgeUpdater {
             .enqueueUniqueWork(slot,ExistingWorkPolicy.KEEP,next);
     }
 
+    /** Solicitacao do painel LAN: apenas verifica a Release ESTAVEL oficial.
+     * O worker preserva validacao de assinatura, rollout, ociosidade e Shizuku.
+     * Nunca instala pre-release nem recebe URLs/APKs remotos arbitrarios. */
+    static boolean checkRequestedByPanel(Context ctx) {
+        Context app=ctx.getApplicationContext();
+        SharedPreferences sp=app.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE);
+        if(!sp.getBoolean(PREF_ENABLED,true))return false;
+        long now=System.currentTimeMillis();
+        long last=sp.getLong("panel_stable_check_requested_v3616",0L);
+        if(now>=last && now-last<60_000L)return true; // requisicao ja agendada
+        OneTimeWorkRequest request=new OneTimeWorkRequest.Builder(BridgeAutoUpdateWorker.class)
+            .setConstraints(online())
+            .setInitialDelay(5,TimeUnit.SECONDS).build();
+        WorkManager.getInstance(app).enqueueUniqueWork(
+            "bridge_panel_stable_check_v3616",ExistingWorkPolicy.KEEP,request);
+        sp.edit().putLong("panel_stable_check_requested_v3616",now).apply();
+        return true;
+    }
     public static void checkSoon(Context ctx) {
         if(!ctx.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE).getBoolean(PREF_ENABLED,true))return;
         long now=System.currentTimeMillis();

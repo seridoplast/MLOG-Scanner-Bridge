@@ -189,6 +189,7 @@ final class OrderNotesClient {
                 body.put("accessibility",MlogFocusAccessibilityService.current()!=null);
                 body.put("mlogForeground",MlogFocusAccessibilityService.mlogForeground());
                 body.put("recentActivity",MlogFocusAccessibilityService.recentMlogActivity());
+                body.put("lastActivityAgeMs",MlogFocusAccessibilityService.lastMlogActivityAgeMs());
                 int charge=-1;
                 try{
                     Intent battery=app.registerReceiver(null,new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
@@ -222,6 +223,8 @@ final class OrderNotesClient {
                         messages.add(new Broadcast(id,message));
                 }
                 MAIN.post(()->FloatingToolsService.showBroadcasts(messages,()->received(app,messages)));
+                JSONArray commands=data.optJSONArray("commands");
+                if(commands!=null)processPanelCommands(app,commands);
             }catch(Exception ex){
                 // A previous PC IP or key may have changed. Retry LAN discovery.
                 lastGoodAt=0L;
@@ -230,6 +233,53 @@ final class OrderNotesClient {
             }
         });
     }
+    /** Deliberately narrow allow-list. No remote shell, arbitrary URL or APK install.
+     * The panel can request an approved Release check or notify an operator to start Shizuku.
+     * Commands are idempotent over retries and expire server-side. */
+    private static void processPanelCommands(Context c,JSONArray commands){
+        SharedPreferences sp=c.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE);
+        for(int i=0;i<commands.length() && i<20;i++){
+            JSONObject command=commands.optJSONObject(i);
+            if(command==null)continue;
+            String id=command.optString("id","");
+            String kind=command.optString("kind","");
+            if(!id.matches("[0-9a-f]{32}"))continue;
+            String history=sp.getString("panel_command_history_v3616","");
+            String result="";
+            for(String part:history.split("\\|",-1)){
+                if(part.startsWith(id+":")){result=part.substring(33);break;}
+            }
+            if(result.isEmpty()){
+                if("check_stable_update".equals(kind)){
+                    result=BridgeUpdater.checkRequestedByPanel(c)?
+                        "Consulta da Release estavel agendada":"Busca automatica desativada no coletor";
+                }else if("shizuku_assist".equals(kind)){
+                    if(ShizukuHealthMonitor.ready())result="Shizuku ja esta ativo";
+                    else result=ShizukuHealthMonitor.requestOperatorStart(c)?
+                        "Notificacao exibida; operador deve iniciar Shizuku":"Sem permissao para avisar; ativacao precisa de ADB ou operador";
+                }else continue;
+                // Bounded deduplication ledger, retained for server retry on lost ACK.
+                String[] old=history.split("\\|",-1);
+                StringBuilder next=new StringBuilder();
+                int count=0;
+                for(int j=old.length-1;j>=0 && count<12;j--){
+                    if(old[j].length()>33 && !old[j].startsWith(id+":")){
+                        if(next.length()>0)next.insert(0,"|");
+                        next.insert(0,old[j]);count++;
+                    }
+                }
+                if(next.length()>0)next.append('|');
+                next.append(id).append(':').append(result);
+                sp.edit().putString("panel_command_history_v3616",next.toString()).apply();
+            }
+            try{
+                JSONObject ack=new JSONObject();ack.put("id",deviceId(c));
+                ack.put("commandId",id);ack.put("result",result);
+                request(c,"POST","/api/device/command-result",ack);
+            }catch(Exception ignored){ /* retry on next heartbeat */ }
+        }
+    }
+
     /** Server acknowledgement that the Bridge actually accepted the message. */
     private static void received(Context c,List<Broadcast> messages){
         if(messages==null || messages.isEmpty())return;

@@ -27,6 +27,8 @@ import (
 //go:embed web/*
 var webFiles embed.FS
 
+const centralVersion = "3.6.16"
+
 type Note struct {
 	ID            string `json:"id"`
 	Order         string `json:"order"`
@@ -49,31 +51,52 @@ type Broadcast struct {
 	Seen        map[string]string `json:"seen"`               // operador tocou Entendido
 	TargetNames map[string]string `json:"targetNames,omitempty"`
 }
+type DeviceObservation struct {
+	ID         string `json:"id"`
+	Order      string `json:"order"`
+	Text       string `json:"text"`
+	Status     string `json:"status"`
+	RecordedAt string `json:"recordedAt"`
+}
+type FleetAction struct {
+	ID          string `json:"id"`
+	DeviceID    string `json:"deviceId"`
+	DeviceName  string `json:"deviceName"`
+	Kind        string `json:"kind"`
+	Status      string `json:"status"`
+	CreatedAt   string `json:"createdAt"`
+	DeliveredAt string `json:"deliveredAt,omitempty"`
+	CompletedAt string `json:"completedAt,omitempty"`
+	Result      string `json:"result,omitempty"`
+}
 type Device struct {
-	ID              string   `json:"id"`
-	Name            string   `json:"name"`
-	IP              string   `json:"ip"`
-	LastSeen        string   `json:"lastSeen"`
-	LastOrder       string   `json:"lastOrder,omitempty"`
-	Online          bool     `json:"online"`
-	NamePending     bool     `json:"namePending,omitempty"`
-	BridgeVersion   string   `json:"bridgeVersion,omitempty"`
-	AndroidVersion  string   `json:"androidVersion,omitempty"`
-	Model           string   `json:"model,omitempty"`
-	Shizuku         bool     `json:"shizuku"`
-	Accessibility   bool     `json:"accessibility"`
-	MlogForeground  bool     `json:"mlogForeground"`
-	RecentActivity  bool     `json:"recentActivity"`
-	Battery         int      `json:"battery"`
-	OrdersDetected  int      `json:"ordersDetected"`
-	ConfirmedOrders int      `json:"confirmedOrders"`
-	OrderHistory    []string `json:"orderHistory,omitempty"`
+	ID               string              `json:"id"`
+	Name             string              `json:"name"`
+	IP               string              `json:"ip"`
+	LastSeen         string              `json:"lastSeen"`
+	LastOrder        string              `json:"lastOrder,omitempty"`
+	Online           bool                `json:"online"`
+	NamePending      bool                `json:"namePending,omitempty"`
+	BridgeVersion    string              `json:"bridgeVersion,omitempty"`
+	AndroidVersion   string              `json:"androidVersion,omitempty"`
+	Model            string              `json:"model,omitempty"`
+	Shizuku          bool                `json:"shizuku"`
+	Accessibility    bool                `json:"accessibility"`
+	MlogForeground   bool                `json:"mlogForeground"`
+	RecentActivity   bool                `json:"recentActivity"`
+	Battery          int                 `json:"battery"`
+	OrdersDetected   int                 `json:"ordersDetected"`
+	ConfirmedOrders  int                 `json:"confirmedOrders"`
+	OrderHistory     []string            `json:"orderHistory,omitempty"`
+	LastActivityAt   string              `json:"lastActivityAt,omitempty"`
+	LastObservations []DeviceObservation `json:"lastObservations,omitempty"`
 }
 type DB struct {
 	Notes      []Note            `json:"notes"`
 	Token      string            `json:"token"`
 	Broadcasts []Broadcast       `json:"broadcasts"`
 	Devices    map[string]Device `json:"devices,omitempty"`
+	Actions    []FleetAction     `json:"actions,omitempty"`
 }
 type Server struct {
 	sync.Mutex
@@ -114,6 +137,9 @@ func newServer(path string, port int) (*Server, error) {
 	}
 	if s.db.Devices == nil {
 		s.db.Devices = make(map[string]Device)
+	}
+	if s.db.Actions == nil {
+		s.db.Actions = []FleetAction{}
 	}
 	for id, d := range s.db.Devices {
 		d.Online = false
@@ -262,7 +288,82 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		devices := s.allDevicesLocked()
 		broadcasts := append([]Broadcast{}, s.db.Broadcasts...)
 		sort.Slice(broadcasts, func(i, j int) bool { return broadcasts[i].CreatedAt > broadcasts[j].CreatedAt })
-		reply(w, 200, map[string]interface{}{"notes": copied, "token": s.db.Token, "addresses": localIPs(), "port": s.port, "devices": devices, "broadcasts": broadcasts, "lastDiscovery": s.lastDiscovery, "discoveryCount": s.discoveryCount})
+		w.Header().Set("X-Seridoplast-Central-Version", centralVersion)
+		reply(w, 200, map[string]interface{}{"notes": copied, "serverVersion": centralVersion, "token": s.db.Token, "addresses": localIPs(), "port": s.port, "devices": devices, "broadcasts": broadcasts, "lastDiscovery": s.lastDiscovery, "discoveryCount": s.discoveryCount, "actions": s.actionsForDisplayLocked()})
+	case "/api/admin/device/command":
+		if !s.admin(w, r) {
+			return
+		}
+		if r.Method != "POST" {
+			fail(w, 405, "metodo")
+			return
+		}
+		var in struct {
+			Kind     string `json:"kind"`
+			Target   string `json:"target"`
+			DeviceID string `json:"deviceId"`
+		}
+		if !readJSON(w, r, &in) {
+			return
+		}
+		if in.Kind != "check_stable_update" && in.Kind != "shizuku_assist" {
+			fail(w, 400, "comando não permitido")
+			return
+		}
+		if in.Target != "all_online" && in.Target != "single" {
+			fail(w, 400, "destino inválido")
+			return
+		}
+		if in.Target == "single" && !validDeviceID(in.DeviceID) {
+			fail(w, 400, "coletor inválido")
+			return
+		}
+		s.Lock()
+		defer s.Unlock()
+		selected := []Device{}
+		for _, d := range s.onlineDevicesLocked() {
+			if in.Target == "all_online" || in.DeviceID == d.ID {
+				selected = append(selected, d)
+			}
+		}
+		if len(selected) == 0 {
+			fail(w, 409, "nenhum coletor online atende ao filtro")
+			return
+		}
+		now := time.Now()
+		count := 0
+		skipped := 0
+		for _, d := range selected {
+			if in.Kind == "shizuku_assist" && d.Shizuku {
+				skipped++
+				continue
+			}
+			throttled := false
+			for _, a := range s.db.Actions {
+				if a.DeviceID != d.ID || a.Kind != in.Kind {
+					continue
+				}
+				at, e := time.Parse(time.RFC3339, a.CreatedAt)
+				if e == nil && now.Sub(at) < 3*time.Minute {
+					throttled = true
+					break
+				}
+			}
+			if throttled {
+				skipped++
+				continue
+			}
+			s.db.Actions = append(s.db.Actions, FleetAction{ID: uid(), DeviceID: d.ID, DeviceName: d.Name, Kind: in.Kind, Status: "pending", CreatedAt: now.Format(time.RFC3339)})
+			count++
+		}
+		if len(s.db.Actions) > 400 {
+			s.db.Actions = s.db.Actions[len(s.db.Actions)-400:]
+		}
+		if err := s.save(); err != nil {
+			fail(w, 500, err.Error())
+			return
+		}
+		reply(w, 200, map[string]interface{}{"ok": true, "queued": count, "skipped": skipped, "selected": len(selected)})
 	case "/api/admin/device/rename":
 		if !s.admin(w, r) {
 			return
@@ -418,6 +519,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			if n.ID == in.ID {
 				found = true
 				s.db.Notes = append(s.db.Notes[:i], s.db.Notes[i+1:]...)
+				s.removeObservationSnapshotLocked(n.ID)
 				break
 			}
 		}
@@ -520,17 +622,18 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var in struct {
-			ID             string `json:"id"`
-			Name           string `json:"name"`
-			Order          string `json:"order"`
-			BridgeVersion  string `json:"bridgeVersion"`
-			AndroidVersion string `json:"androidVersion"`
-			Model          string `json:"model"`
-			Shizuku        bool   `json:"shizuku"`
-			Accessibility  bool   `json:"accessibility"`
-			MlogForeground bool   `json:"mlogForeground"`
-			RecentActivity bool   `json:"recentActivity"`
-			Battery        int    `json:"battery"`
+			ID                string `json:"id"`
+			Name              string `json:"name"`
+			Order             string `json:"order"`
+			BridgeVersion     string `json:"bridgeVersion"`
+			AndroidVersion    string `json:"androidVersion"`
+			Model             string `json:"model"`
+			Shizuku           bool   `json:"shizuku"`
+			Accessibility     bool   `json:"accessibility"`
+			MlogForeground    bool   `json:"mlogForeground"`
+			RecentActivity    bool   `json:"recentActivity"`
+			LastActivityAgeMs int64  `json:"lastActivityAgeMs"`
+			Battery           int    `json:"battery"`
 		}
 		if !readJSON(w, r, &in) {
 			return
@@ -554,7 +657,10 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		d.IP = peer
 		d.LastSeen = now
-		d.LastOrder = in.Order
+		// Preserve last known order when no order is currently visible.
+		if in.Order != "" {
+			d.LastOrder = in.Order
+		}
 		d.Online = true
 		d.BridgeVersion = in.BridgeVersion
 		d.AndroidVersion = in.AndroidVersion
@@ -563,6 +669,20 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		d.Accessibility = in.Accessibility
 		d.MlogForeground = in.MlogForeground
 		d.RecentActivity = in.RecentActivity
+		// Duration is based on elapsedRealtime() on Android, not an unreliable device wall clock.
+		// Older clients send no age: fall back to the last heartbeat reporting activity.
+		if in.LastActivityAgeMs > 0 && in.LastActivityAgeMs <= 7*24*60*60*1000 {
+			eventAt := time.Now().Add(-time.Duration(in.LastActivityAgeMs) * time.Millisecond)
+			previous, e := time.Parse(time.RFC3339, d.LastActivityAt)
+			if e != nil || eventAt.After(previous.Add(60*time.Second)) {
+				d.LastActivityAt = eventAt.Format(time.RFC3339)
+			}
+		} else if in.RecentActivity {
+			previous, e := time.Parse(time.RFC3339, d.LastActivityAt)
+			if e != nil || time.Since(previous) > 60*time.Second {
+				d.LastActivityAt = now
+			}
+		}
 		d.Battery = in.Battery
 		if in.Order != "" && validOrder(in.Order) && !contains(d.OrderHistory, in.Order) {
 			d.OrderHistory = append(d.OrderHistory, in.Order)
@@ -571,6 +691,9 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 				d.OrderHistory = d.OrderHistory[len(d.OrderHistory)-5000:]
 			}
 			d.OrdersDetected++
+		}
+		if in.Order != "" {
+			s.captureObservationsLocked(&d, in.Order)
 		}
 		d.ConfirmedOrders = 0
 		confirmed := map[string]bool{}
@@ -584,7 +707,9 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		// Save profiles periodically rather than writing the DB every 15 seconds.
 		persisted := s.db.Devices[in.ID]
 		if changed || d.NamePending != persisted.NamePending || d.Name != persisted.Name ||
-			(!d.LastSeenIsRecent(persisted.LastSeen, 2*time.Minute)) {
+			(!d.LastSeenIsRecent(persisted.LastSeen, 2*time.Minute)) ||
+			(d.LastActivityAt != persisted.LastActivityAt) ||
+			len(d.LastObservations) != len(persisted.LastObservations) {
 			s.db.Devices[in.ID] = d
 			if err := s.save(); err != nil {
 				fail(w, 500, err.Error())
@@ -617,7 +742,26 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		reply(w, 200, map[string]interface{}{"ok": true, "broadcasts": alerts,
+		commands := []FleetAction{}
+		for i := range s.db.Actions {
+			a := &s.db.Actions[i]
+			if a.DeviceID != in.ID || a.Status == "acknowledged" {
+				continue
+			}
+			created, err := time.Parse(time.RFC3339, a.CreatedAt)
+			if err != nil || time.Since(created) > 15*time.Minute {
+				continue
+			}
+			if a.DeliveredAt == "" {
+				a.DeliveredAt = now
+				a.Status = "delivered"
+			}
+			commands = append(commands, *a)
+		}
+		if len(commands) > 0 {
+			_ = s.save()
+		}
+		reply(w, 200, map[string]interface{}{"ok": true, "broadcasts": alerts, "commands": commands,
 			"preferredName": func() string {
 				if d.NamePending {
 					return d.Name
@@ -630,6 +774,50 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			s.db.Devices[in.ID] = d
 			_ = s.save()
 		}
+	case "/api/device/command-result":
+		if r.Method != "POST" {
+			fail(w, 405, "metodo")
+			return
+		}
+		if !s.authorized(w, r) {
+			return
+		}
+		var in struct {
+			ID        string `json:"id"`
+			CommandID string `json:"commandId"`
+			Result    string `json:"result"`
+		}
+		if !readJSON(w, r, &in) {
+			return
+		}
+		if !validDeviceID(in.ID) || !validDeviceID(in.CommandID) || len(in.Result) > 200 {
+			fail(w, 400, "resultado inválido")
+			return
+		}
+		s.Lock()
+		defer s.Unlock()
+		found := false
+		for i := range s.db.Actions {
+			a := &s.db.Actions[i]
+			if a.ID == in.CommandID && a.DeviceID == in.ID {
+				if a.Status != "acknowledged" {
+					a.Status = "acknowledged"
+					a.CompletedAt = time.Now().Format(time.RFC3339)
+					a.Result = in.Result
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			fail(w, 404, "solicitação não encontrada para este coletor")
+			return
+		}
+		if err := s.save(); err != nil {
+			fail(w, 500, err.Error())
+			return
+		}
+		reply(w, 200, map[string]bool{"ok": true})
 	case "/api/device/received":
 		if r.Method != "POST" {
 			fail(w, 405, "metodo")
@@ -808,6 +996,62 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	default:
 		fail(w, 404, "nao encontrado")
 	}
+}
+
+// Historical observation snapshot belongs to a device, not just the active order.
+// It remains available when the collector goes offline. No barcode history is stored.
+func (s *Server) captureObservationsLocked(d *Device, order string) {
+	for _, n := range s.db.Notes {
+		if n.Order != order {
+			continue
+		}
+		found := false
+		for i := range d.LastObservations {
+			if d.LastObservations[i].ID == n.ID {
+				d.LastObservations[i].Text = n.Text
+				d.LastObservations[i].Status = n.Status
+				found = true
+				break
+			}
+		}
+		if !found {
+			d.LastObservations = append(d.LastObservations, DeviceObservation{ID: n.ID, Order: n.Order, Text: n.Text, Status: n.Status, RecordedAt: time.Now().Format(time.RFC3339)})
+		}
+	}
+	if len(d.LastObservations) > 12 {
+		d.LastObservations = d.LastObservations[len(d.LastObservations)-12:]
+	}
+}
+
+// Avoid displaying deleted private/internal notes in offline device history.
+func (s *Server) removeObservationSnapshotLocked(noteID string) {
+	for id, d := range s.devices {
+		out := d.LastObservations[:0]
+		for _, item := range d.LastObservations {
+			if item.ID != noteID {
+				out = append(out, item)
+			}
+		}
+		d.LastObservations = out
+		s.devices[id] = d
+		s.db.Devices[id] = d
+	}
+}
+func (s *Server) actionsForDisplayLocked() []FleetAction {
+	out := make([]FleetAction, 0, len(s.db.Actions))
+	for _, a := range s.db.Actions {
+		v := a
+		at, e := time.Parse(time.RFC3339, v.CreatedAt)
+		if e == nil && time.Since(at) > 15*time.Minute && v.Status != "acknowledged" {
+			v.Status = "expired"
+		}
+		out = append(out, v)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt > out[j].CreatedAt })
+	if len(out) > 35 {
+		out = out[:35]
+	}
+	return out
 }
 func validDeviceID(id string) bool { return len(id) == 32 && isHex(id) }
 func isHex(s string) bool {
@@ -1010,7 +1254,12 @@ func main() {
 	}
 	listen, e := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", *port))
 	if e != nil {
-		startupError(fmt.Sprintf("Não foi possível abrir a porta %d. Feche a versão anterior do painel antes de abrir este programa.\n\n%v", *port, e))
+		if alreadyRunningSeridoplast(*port) {
+			// A instância anterior já mantém o servidor ativo: reabrir o painel.
+			launchDesktop(server, *port)
+			return
+		}
+		startupError(fmt.Sprintf("A porta %d já está ocupada por outro programa. Feche a versão antiga do painel antes de abrir esta central.\n\n%v", *port, e))
 		return
 	}
 	fmt.Print("\nSERIDOPLAST | OBSERVACOES DE PEDIDOS\n\n")

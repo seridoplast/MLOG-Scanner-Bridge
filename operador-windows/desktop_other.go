@@ -18,3 +18,6 @@ func launchDesktop(_ *Server, port int) {
 }
 
 func startupError(message string) { fmt.Fprintln(os.Stderr, message) }
+
+// Versão não Windows existe apenas para executar os testes do servidor.
+func alreadyRunningSeridoplast(_ int) bool { return false }

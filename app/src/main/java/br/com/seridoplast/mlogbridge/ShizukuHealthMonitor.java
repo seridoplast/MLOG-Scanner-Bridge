@@ -41,6 +41,16 @@ final class ShizukuHealthMonitor {
         }catch(RuntimeException ex){Log.w("MLOGBridge","Could not open Shizuku",ex);return false;}
     }
 
+    /** Remote panel can request an operator notification, never elevate privileges.
+     * Starting Shizuku still requires root, ADB or on-device Wireless Debugging. */
+    static boolean requestOperatorStart(Context context){
+        if(ready())return true;
+        if(context.getPackageManager().getLaunchIntentForPackage(SHIZUKU_PACKAGE)==null)return false;
+        boolean posted=notifyUnavailable(context);
+        if(posted)warningPosted=true;
+        return posted;
+    }
+
     /** Invoked by the active accessibility watchdog, Shizuku binder and app screen. */
     static synchronized void refresh(Context context){
         boolean shizukuSelected=context.getSharedPreferences(ScanCoordinator.PREFS,
