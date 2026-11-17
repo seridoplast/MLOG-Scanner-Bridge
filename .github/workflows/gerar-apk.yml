@@ -405,8 +405,8 @@ jobs:
                 --target "$GITHUB_SHA" --title "MLOG Scanner Bridge ${TAG}" \
                 --notes "rollout=${ROLLOUT}" --latest
             fi
-          elif [[ "$GITHUB_EVENT_NAME" == "push" && "$VERSION" == "3.6.8" ]]; then
-            # v3.6.8 aprovada para distribuicao direta; mesmo que a tag ja exista
+          elif [[ "$GITHUB_EVENT_NAME" == "push" && "$VERSION" == "3.6.17" || "$VERSION" == "3.6.8" ]]; then
+            # v3.6.17 aprovada para distribuicao direta; mesmo que a tag ja exista
             # como pre-release, converter para release estavel/Latest/rollout=100.
             if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
               if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \

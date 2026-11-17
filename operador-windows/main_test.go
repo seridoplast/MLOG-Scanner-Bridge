@@ -295,3 +295,44 @@ func TestDeleteBroadcastAndNote(t *testing.T) {
 		t.Fatal("exclusao nao foi persistida", e)
 	}
 }
+
+func TestTargetedBroadcastOnlySelectedOnline(t *testing.T) {
+	s, err := newServer(filepath.Join(t.TempDir(), "selective.json"), 8765)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := []string{"00000000000000000000000000000001", "00000000000000000000000000000002"}
+	for _, id := range ids {
+		w := testAPI(t, s, "POST", "/api/device/heartbeat", s.db.Token, map[string]interface{}{"id": id, "name": "TC60"})
+		if w.Code != 200 {
+			t.Fatal(w.Body.String())
+		}
+	}
+	w := testAPI(t, s, "POST", "/api/admin/broadcast", "", map[string]interface{}{"action": "send", "text": "Somente para um", "targetMode": "selected", "targetIds": []string{ids[1]}})
+	if w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	if len(s.db.Broadcasts) != 1 || len(s.db.Broadcasts[0].Targets) != 1 || s.db.Broadcasts[0].Targets[0] != ids[1] {
+		t.Fatal("selected target mismatch")
+	}
+	for i, id := range ids {
+		w = testAPI(t, s, "POST", "/api/device/heartbeat", s.db.Token, map[string]interface{}{"id": id, "name": "TC60"})
+		var resp struct {
+			Broadcasts []Broadcast `json:"broadcasts"`
+		}
+		if e := json.Unmarshal(w.Body.Bytes(), &resp); e != nil {
+			t.Fatal(e)
+		}
+		if len(resp.Broadcasts) != i {
+			t.Fatalf("device %d received %d notices", i, len(resp.Broadcasts))
+		}
+	}
+	w = testAPI(t, s, "POST", "/api/admin/broadcast", "", map[string]interface{}{"action": "send", "text": "Bad", "targetMode": "selected", "targetIds": []string{ids[0], "ffffffffffffffffffffffffffffffff"}})
+	if w.Code != 409 {
+		t.Fatalf("unknown device should be rejected, got %d", w.Code)
+	}
+	w = testAPI(t, s, "POST", "/api/admin/broadcast", "", map[string]interface{}{"action": "send", "text": "Bad", "targetMode": "selected"})
+	if w.Code != 400 {
+		t.Fatalf("empty selected audience must not become broadcast-all, got %d", w.Code)
+	}
+}

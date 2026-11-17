@@ -59,8 +59,14 @@ func TestTelemetryRenameOfflineAndPersist(t *testing.T) {
 	if reply["preferredName"] != "Ismael - Coletor 01" {
 		t.Fatalf("unexpected rename sync: %v", reply)
 	}
+	if !s.devices[id].NamePending {
+		t.Fatal("rename should stay pending until device confirms local save")
+	}
+	// Next heartbeat proves that the collector saved the name locally.
+	confirmed := strings.Replace(body, "TC60 · 0001", "Ismael - Coletor 01", 1)
+	sendFleet(t, s, "/api/device/heartbeat", confirmed)
 	if s.devices[id].NamePending {
-		t.Fatal("rename pending after sync")
+		t.Fatal("rename still pending after device confirmation")
 	}
 	// A fresh process should remember offline devices, even before any new heartbeat.
 	newer, e := newServer(db, 8765)

@@ -27,7 +27,7 @@ import (
 //go:embed web/*
 var webFiles embed.FS
 
-const centralVersion = "3.6.16"
+const centralVersion = "3.6.17"
 
 type Note struct {
 	ID            string `json:"id"`
@@ -249,6 +249,18 @@ func validOrder(s string) bool {
 func validText(s string) bool { return strings.TrimSpace(s) != "" && len([]rune(s)) <= 1500 }
 func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
+	case "/assets/app-icon.png":
+		if !s.admin(w, r) {
+			return
+		}
+		blob, e := webFiles.ReadFile("web/favicon.png")
+		if e != nil {
+			http.Error(w, "icone indisponivel", 500)
+			return
+		}
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Cache-Control", "public,max-age=86400")
+		_, _ = w.Write(blob)
 	case "/assets/seridoplast.svg":
 		if !s.admin(w, r) {
 			return
@@ -541,9 +553,11 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var in struct {
-			Text   string `json:"text"`
-			ID     string `json:"id"`
-			Action string `json:"action"`
+			Text       string   `json:"text"`
+			ID         string   `json:"id"`
+			Action     string   `json:"action"`
+			TargetIDs  []string `json:"targetIds"`
+			TargetMode string   `json:"targetMode"`
 		}
 		if !readJSON(w, r, &in) {
 			return
@@ -599,11 +613,42 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			fail(w, 409, "nenhum coletor conectado; mantenha-os ligados na mesma rede")
 			return
 		}
+		// If no target IDs were provided, preserve the existing broadcast-to-all behavior.
+		// Explicit IDs can only address currently online collectors; reject stale/unknown IDs.
+		if in.TargetMode != "" && in.TargetMode != "all" && in.TargetMode != "selected" {
+			fail(w, 400, "modo de destinatarios invalido")
+			return
+		}
+		if in.TargetMode == "selected" && len(in.TargetIDs) == 0 {
+			fail(w, 400, "selecione ao menos um coletor")
+			return
+		}
+		requested := map[string]bool{}
+		if len(in.TargetIDs) > 0 {
+			if len(in.TargetIDs) > 500 {
+				fail(w, 400, "destinatarios demais")
+				return
+			}
+			for _, id := range in.TargetIDs {
+				if !validDeviceID(id) || requested[id] {
+					fail(w, 400, "lista de destinatarios invalida")
+					return
+				}
+				requested[id] = true
+			}
+		}
 		targets := make([]string, 0, len(connected))
 		targetNames := make(map[string]string, len(connected))
 		for _, d := range connected {
+			if len(requested) > 0 && !requested[d.ID] {
+				continue
+			}
 			targets = append(targets, d.ID)
 			targetNames[d.ID] = d.Name
+		}
+		if len(requested) > 0 && len(targets) != len(requested) {
+			fail(w, 409, "um ou mais coletores selecionados estao offline; atualize a lista")
+			return
 		}
 		s.db.Broadcasts = append(s.db.Broadcasts, Broadcast{
 			ID: uid(), Text: strings.TrimSpace(in.Text), CreatedAt: time.Now().Format(time.RFC3339), Status: "active", Targets: targets, Delivered: map[string]string{}, Received: map[string]string{}, Seen: map[string]string{}, TargetNames: targetNames,
@@ -652,7 +697,12 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			d = Device{ID: in.ID, Name: in.Name, Battery: -1}
 		}
 		changed := !known || (in.Order != "" && in.Order != d.LastOrder)
-		if !d.NamePending {
+		if d.NamePending {
+			if strings.TrimSpace(in.Name) == d.Name {
+				// Android persisted our requested name and is reporting it back.
+				d.NamePending = false
+			}
+		} else {
 			d.Name = strings.TrimSpace(in.Name)
 		}
 		d.IP = peer
@@ -768,12 +818,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 				}
 				return ""
 			}()})
-		if d.NamePending {
-			d.NamePending = false
-			s.devices[in.ID] = d
-			s.db.Devices[in.ID] = d
-			_ = s.save()
-		}
+
 	case "/api/device/command-result":
 		if r.Method != "POST" {
 			fail(w, 405, "metodo")

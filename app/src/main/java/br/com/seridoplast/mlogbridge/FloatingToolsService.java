@@ -6,6 +6,8 @@ import android.content.res.Configuration;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.PixelFormat;
+import android.media.AudioManager;
+import android.media.ToneGenerator;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
@@ -130,6 +132,7 @@ public final class FloatingToolsService extends Service {
             if(orderChanged)instance.confirmComplete=false;
             if(newObservation&&!instance.activeNotes.isEmpty()){
                 instance.selectedMessagePage=FloatingMessageViewPolicy.OBSERVATION;
+                instance.playNoticeTone();
                 instance.draw(true);
             }else instance.draw(instance.expanded);
         });
@@ -154,13 +157,29 @@ public final class FloatingToolsService extends Service {
             if(changed){
                 instance.activeBroadcasts.clear();
                 if(messages!=null)instance.activeBroadcasts.addAll(messages);
-                if(newMessage)instance.selectedMessagePage=FloatingMessageViewPolicy.GENERAL_NOTICE;
+                if(newMessage){
+                    instance.selectedMessagePage=FloatingMessageViewPolicy.GENERAL_NOTICE;
+                    instance.playNoticeTone();
+                }
                 instance.draw(newMessage || instance.expanded);
             }
             // Ack only once the overlay accepted the broadcast payload.
             if(confirmedByApp!=null)confirmedByApp.run();
         });
     }
+    private void playNoticeTone(){
+        // Short notification only for a genuinely new notice (not every heartbeat).
+        // STREAM_NOTIFICATION obeys Android notification volume/silent settings.
+        try{
+            AudioManager audio=(AudioManager)getSystemService(Context.AUDIO_SERVICE);
+            if(audio==null || audio.getRingerMode()!=AudioManager.RINGER_MODE_NORMAL ||
+                audio.getStreamVolume(AudioManager.STREAM_NOTIFICATION)<=0)return;
+            final ToneGenerator tone=new ToneGenerator(AudioManager.STREAM_NOTIFICATION,55);
+            tone.startTone(ToneGenerator.TONE_PROP_BEEP2,110);
+            main.postDelayed(tone::release,230L);
+        }catch(RuntimeException ignored){}
+    }
+
     static void clearCompleted(String order){
         FloatingToolsService instance=visible;
         if(instance==null)return;
@@ -272,7 +291,7 @@ public final class FloatingToolsService extends Service {
         // Anima a janela inteira, sem atrasar a proxima leitura do scanner.
         final View closing=view;
         closing.animate().cancel();
-        closing.animate().alpha(0f).translationY(-dp(8)).setDuration(140L)
+        closing.animate().alpha(0f).translationY(-dp(8)).setDuration(125L)
             .withEndAction(()->{if(view==closing && expanded)draw(false);}).start();
     }
     private TextView muted(String value,int sp){
@@ -320,9 +339,9 @@ public final class FloatingToolsService extends Service {
         return row;
     }
     private TextView messageBody(String message){
-        TextView body=label(message,18,false);
+        TextView body=label(message,16,false);
         body.setTextColor(0xfff7fbff);
-        body.setLineSpacing(dp(4),1.04f);
+        body.setLineSpacing(dp(3),1.02f);
         body.setBreakStrategy(android.text.Layout.BREAK_STRATEGY_HIGH_QUALITY);
         return body;
     }
@@ -374,7 +393,7 @@ public final class FloatingToolsService extends Service {
             panel.setCornerRadius(dp(25));
             layout.setBackground(panel);
             layout.setElevation(dp(12));
-            layout.setPadding(dp(21),dp(19),dp(21),dp(22));
+            layout.setPadding(dp(17),dp(15),dp(17),dp(17));
         }
         view=layout;
         // A janela expandida antiga roubava o foco do Flutter ate para
@@ -383,8 +402,8 @@ public final class FloatingToolsService extends Service {
         boolean needsTextInput=open && batchDrawerOpen && ScanAssistState.isBatch(this);
         int overlayFlags=WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL;
         if(!needsTextInput)overlayFlags|=WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE;
-        int panelWidth=Math.min(dp(350),Math.max(dp(260),
-            getResources().getDisplayMetrics().widthPixels-dp(22)));
+        int panelWidth=Math.min(dp(306),Math.max(dp(240),
+            getResources().getDisplayMetrics().widthPixels-dp(24)));
         params=new WindowManager.LayoutParams(
             open?panelWidth:dp(BUBBLE_TOUCH_DP),WindowManager.LayoutParams.WRAP_CONTENT,
             Build.VERSION.SDK_INT>=26?WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY:
@@ -462,7 +481,7 @@ public final class FloatingToolsService extends Service {
             LinearLayout header=new LinearLayout(this);
             header.setOrientation(LinearLayout.HORIZONTAL);
             header.setGravity(Gravity.CENTER_VERTICAL);
-            TextView heading=label(headingText,23,true);
+            TextView heading=label(headingText,20,true);
             header.addView(heading,new LinearLayout.LayoutParams(0,-2,1));
             ImageView minimize=new ImageView(this);
             minimize.setImageResource(R.drawable.ui_minus);
@@ -649,7 +668,7 @@ public final class FloatingToolsService extends Service {
             ScrollView scroller=new ScrollView(this){
                 @Override protected void onMeasure(int widthSpec,int heightSpec){
                     int available=getResources().getDisplayMetrics().heightPixels-dp(120);
-                    int cap=Math.min(dp(560),Math.max(dp(180),available));
+                    int cap=Math.min(dp(390),Math.max(dp(180),available));
                     super.onMeasure(widthSpec,View.MeasureSpec.makeMeasureSpec(cap,View.MeasureSpec.AT_MOST));
                 }
             };
@@ -660,11 +679,11 @@ public final class FloatingToolsService extends Service {
             params.y=Math.max(0,Math.min(oldY,dp(60)));
         }
         final View incoming=view;
-        if(animateOpening){incoming.setAlpha(0f);incoming.setTranslationY(dp(12));}
+        if(animateOpening){incoming.setAlpha(0f);incoming.setTranslationY(dp(6));incoming.setScaleX(.96f);incoming.setScaleY(.96f);}
         try{
             wm.addView(incoming,params);
-            if(animateOpening)incoming.animate().alpha(1f).translationY(0f)
-                .setDuration(170L).start();
+            if(animateOpening)incoming.animate().alpha(1f).translationY(0f).scaleX(1f).scaleY(1f)
+                .setDuration(145L).start();
         }catch(RuntimeException ex){view=null;stopSelf();}
     }
     @Override public void onDestroy(){
