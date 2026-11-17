@@ -39,6 +39,7 @@ function renderBroadcasts(){
    }
    item.append(details);
    if(b.status==='active'){const stop=document.createElement('button');stop.textContent='Encerrar comunicado';stop.style.marginTop='10px';stop.onclick=async()=>{if(!confirm('Encerrar este comunicado para os coletores?'))return;try{await api('/api/admin/broadcast',{action:'close',id:b.id});await refresh()}catch(e){notice(e.message)}};item.append(stop)}
+   const del=document.createElement('button');del.className='danger';del.style.margin='10px 0 0 8px';del.textContent='Excluir aviso';del.onclick=async()=>{if(!confirm('Excluir definitivamente este aviso e seu histórico de confirmações?'))return;try{await api('/api/admin/broadcast',{action:'delete',id:b.id});await refresh()}catch(e){notice(e.message)}};item.append(del);
    area.append(item);
  }
  if(!state.broadcasts.length){let p=document.createElement('p');p.className='muted small';p.textContent='Nenhum comunicado enviado.';area.append(p)}

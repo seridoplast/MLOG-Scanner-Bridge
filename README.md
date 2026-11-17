@@ -201,3 +201,15 @@ por configuração do aplicativo, e permissões Android permanecem necessárias.
 
 **Segurança:** o protocolo original V1 entrega a credencial de acesso em resposta
 à descoberta dentro da sub-rede; use apenas rede corporativa confiável.
+
+## v3.6.14 — Painel Windows instalado, notificações e reconexão (pré-release)
+
+- **Painel instalado no Windows:** `Instalar-Seridoplast-Observacoes-v3.6.14.exe` instala um programa de interface nativa Win32 (`Seridoplast-Observacoes.exe`), sem abrir navegador. O painel continua atendendo os coletores pelas mesmas portas TCP 8765 e UDP 8766, com anúncio UDP 8767.
+- O instalador usa `%LOCALAPPDATA%\Programs\Seridoplast\Observacoes`, cria atalhos no Menu Iniciar, registra a desinstalação e habilita a inicialização automática ao entrar no Windows. A aplicação precisa ficar rodando para atender os coletores.
+- **Dados preservados:** o banco continua em `%APPDATA%\Seridoplast\ObservacoesPedidos\dados.json`. Feche o painel antigo antes de instalar; faça backup do JSON antes de migrar.
+- **Gerenciamento:** cadastro, edição, conclusão/reabertura e exclusão de observações; envio, encerramento e exclusão de Avisos gerais, com relatório de recebimento por coletor. Excluir um aviso remove também seu histórico no painel.
+- **Animação Android:** abertura de observações e avisos com fade e deslocamento de 170 ms; recolhimento em 140 ms. Animações não afetam o conteúdo lido nem o scanner.
+- **Reconexão:** a descoberta da rede tenta imediatamente ao iniciar; quando o painel está indisponível, busca novamente a cada 5 minutos enquanto o serviço flutuante estiver ativo; o anúncio de um IP novo permite retomar antes do intervalo. Não garante descoberta em Wi-Fi isolado nem com o serviço parado pelo Android.
+- **Aparência:** os botões Sistema, Escuro e Claro permanecem em uma linha, com fonte adaptativa.
+- **Publicação:** GitHub Actions gera `v3.6.14` como *pré-release* com `rollout=0`. Testar por ADB antes de aprovar a frota. Não incluir instaladores do Windows no repositório do Android caso não deseje versioná-los: o ZIP Windows inclui a aplicação e o instalador prontos.
+- **Validação:** 23 etapas de testes Java/Python do workflow e testes Go do servidor passaram; executáveis Windows foram compilados cruzadamente para `windows/amd64`. Não foram executados em Windows real neste ambiente. Compilação Android e validação TC60 ainda dependem de Actions e coletor.

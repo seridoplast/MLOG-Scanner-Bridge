@@ -14,7 +14,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -378,6 +377,26 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		s.Lock()
 		defer s.Unlock()
+		if in.Action == "delete" {
+			found := false
+			for i, notice := range s.db.Broadcasts {
+				if notice.ID == in.ID {
+					s.db.Broadcasts = append(s.db.Broadcasts[:i], s.db.Broadcasts[i+1:]...)
+					found = true
+					break
+				}
+			}
+			if !found {
+				fail(w, 404, "aviso nao encontrado")
+				return
+			}
+			if err := s.save(); err != nil {
+				fail(w, 500, err.Error())
+				return
+			}
+			reply(w, 200, map[string]bool{"ok": true})
+			return
+		}
 		if in.Action == "close" {
 			found := false
 			for i := range s.db.Broadcasts {
@@ -803,31 +822,28 @@ func localIPs() []string {
 	sort.Strings(out)
 	return out
 }
-func openBrowser(url string) {
-	if runtime.GOOS == "windows" {
-		_ = exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
-	} else {
-		_ = exec.Command("xdg-open", url).Start()
-	}
-}
 func main() {
 	port := flag.Int("port", 8765, "porta do servidor local")
 	flag.Parse()
 	if *port < 1024 || *port > 65535 {
-		log.Fatal("porta invalida")
+		startupError("Porta inválida.")
+		return
 	}
 	home, e := os.UserConfigDir()
 	if e != nil {
-		log.Fatal(e)
+		startupError("Não foi possível acessar a pasta de dados: " + e.Error())
+		return
 	}
 	path := filepath.Join(home, "Seridoplast", "ObservacoesPedidos", "dados.json")
 	server, e := newServer(path, *port)
 	if e != nil {
-		log.Fatal(e)
+		startupError("Não foi possível abrir o banco de observações: " + e.Error())
+		return
 	}
 	listen, e := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", *port))
 	if e != nil {
-		log.Fatal("Nao foi possivel abrir porta ", *port, ": ", e)
+		startupError(fmt.Sprintf("Não foi possível abrir a porta %d. Feche a versão anterior do painel antes de abrir este programa.\n\n%v", *port, e))
+		return
 	}
 	fmt.Print("\nSERIDOPLAST | OBSERVACOES DE PEDIDOS\n\n")
 	fmt.Println("Painel no PC: http://127.0.0.1:" + strconv.Itoa(*port))
@@ -840,6 +856,10 @@ func main() {
 	fmt.Println("Os coletores descobrem o painel sem cadastrar IP/chave. Use apenas LAN corporativa confiavel.")
 	go server.serveDiscovery()
 	go announceLAN()
-	go func() { time.Sleep(600 * time.Millisecond); openBrowser(fmt.Sprintf("http://127.0.0.1:%d", *port)) }()
-	log.Fatal(http.Serve(listen, http.HandlerFunc(server.handle)))
+	go func() {
+		if err := http.Serve(listen, http.HandlerFunc(server.handle)); err != nil {
+			log.Printf("Servidor encerrado: %v", err)
+		}
+	}()
+	launchDesktop(server, *port)
 }

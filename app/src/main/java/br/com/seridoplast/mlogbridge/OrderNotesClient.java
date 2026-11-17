@@ -51,6 +51,10 @@ final class OrderNotesClient {
     private static volatile MulticastSocket beaconSocket;
     private static volatile long lastGoodAt=0L;
     private static volatile long lastDiscoveryAt=0L;
+    // Five-minute backoff when the PC is unavailable. First attempt stays immediate.
+    private static boolean canDiscoverAgain(){
+        return NotesDiscoveryRetryPolicy.ready(SystemClock.elapsedRealtime(),lastDiscoveryAt);
+    }
     private static volatile String lastProblem="Aguardando descoberta da rede.";
 
     private static volatile String LAST_ORDER="";
@@ -127,7 +131,11 @@ final class OrderNotesClient {
                         if(!validHost("http://"+sender+":8765"))continue;
                         long now=SystemClock.elapsedRealtime();
                         if(lastGoodAt>0 && now-lastGoodAt<45000L)continue;
-                        if(now-lastDiscoveryAt<10000L)continue;
+                        String expected="http://"+sender+":8765";
+                        // New PC IP is handled immediately; same-IP retry stays at 5 min.
+                        boolean newIP=!expected.equals(base(app));
+                        if(!newIP && !canDiscoverAgain())continue;
+                        if(newIP && now-lastDiscoveryAt<10000L)continue;
                         IO.execute(()->discover(app,true,sender));
                     }
                     udp.leaveGroup(group);
@@ -152,8 +160,13 @@ final class OrderNotesClient {
     static void heartbeat(Context c){
         final Context app=c.getApplicationContext();
         IO.execute(()->{
-            if(!configured(app))discover(app,false,null);
-            if(!configured(app))return;
+            if(!configured(app)){
+                if(canDiscoverAgain())discover(app,true,null);
+                if(!configured(app))return;
+            }
+            // A previously unreachable server must not trigger a heavy scan
+            // on every 15-second heartbeat. Retry automatically every 5 minutes.
+            if(lastGoodAt==0L && lastDiscoveryAt>0L && !canDiscoverAgain())return;
             try{
                 JSONObject body=new JSONObject();
                 body.put("id",deviceId(app));body.put("name",deviceName(app));body.put("order",LAST_ORDER);
@@ -172,8 +185,8 @@ final class OrderNotesClient {
             }catch(Exception ex){
                 // A previous PC IP or key may have changed. Retry LAN discovery.
                 lastGoodAt=0L;
-                lastProblem="Servidor anterior não responde; procurando novo IP.";
-                discover(app,true,null);
+                lastProblem="Servidor não responde; nova busca automática em até 5 minutos.";
+                if(canDiscoverAgain())discover(app,true,null);
             }
         });
     }

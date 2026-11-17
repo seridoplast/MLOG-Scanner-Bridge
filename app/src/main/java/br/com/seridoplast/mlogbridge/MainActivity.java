@@ -835,8 +835,15 @@ public final class MainActivity extends Activity {
         LinearLayout themes=row();
         for(String[] opt:new String[][]{{"auto","Sistema"},{"dark","Escuro"},{"light","Claro"}}){
             TextView choice=action(opt[1],opt[0].equals(themeChoice),()->chooseTheme(opt[0]));
+            // A largura no coletor e pequena: reduzir padding e ajustar fonte,
+            // mantendo os três nomes sempre em uma única linha.
+            choice.setSingleLine(true);
+            choice.setMaxLines(1);
+            choice.setPadding(dp(4),dp(12),dp(4),dp(12));
+            choice.setAutoSizeTextTypeUniformWithConfiguration(11,14,1,
+                android.util.TypedValue.COMPLEX_UNIT_SP);
             LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,-2,1);
-            if(themes.getChildCount()>0)lp.leftMargin=dp(7);
+            if(themes.getChildCount()>0)lp.leftMargin=dp(4);
             themes.addView(choice,lp);
         }
         space(appearance,12);appearance.addView(themes);

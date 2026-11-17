@@ -261,6 +261,15 @@ jobs:
             tests/ShizukuUpdatePolicyTest.java
           java -cp /tmp/bridge-shizuku-update-policy br.com.seridoplast.mlogbridge.ShizukuUpdatePolicyTest
 
+      - name: Testar reconexao automatica do painel (5 minutos)
+        shell: bash
+        run: |
+          mkdir -p /tmp/bridge-notes-retry-test
+          javac -d /tmp/bridge-notes-retry-test \
+            app/src/main/java/br/com/seridoplast/mlogbridge/NotesDiscoveryRetryPolicy.java \
+            tests/NotesDiscoveryRetryPolicyTest.java
+          java -cp /tmp/bridge-notes-retry-test br.com.seridoplast.mlogbridge.NotesDiscoveryRetryPolicyTest
+
       - name: Compilar APK de producao com assinatura fixa
         env:
           BRIDGE_SIGNING_STORE_PASSWORD: ${{ secrets.BRIDGE_KEYSTORE_PASSWORD }}

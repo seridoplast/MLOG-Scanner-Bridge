@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func testAPI(t *testing.T, s *Server, method, path, token string, body interface{}) *httptest.ResponseRecorder {
@@ -255,5 +256,42 @@ func TestDiscoveryHostUsesCurrentLANInterface(t *testing.T) {
 	}
 	if strings.Contains(notesBeacon, "token") {
 		t.Fatal("anuncio nao pode transmitir chave")
+	}
+}
+
+func TestDeleteBroadcastAndNote(t *testing.T) {
+	s, e := newServer(filepath.Join(t.TempDir(), "db.json"), 8765)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if w := testAPI(t, s, "POST", "/api/admin/save", "", map[string]string{"order": "0012", "text": "Entregar no portao"}); w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	n := s.db.Notes[0].ID
+	if w := testAPI(t, s, "POST", "/api/admin/delete", "", map[string]string{"id": n}); w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	if len(s.db.Notes) != 0 {
+		t.Fatal("observacao nao excluida")
+	}
+	s.Lock()
+	s.devices["0123456789abcdef0123456789abcdef"] = Device{ID: "0123456789abcdef0123456789abcdef", Name: "TC60", LastSeen: time.Now().Format(time.RFC3339)}
+	s.Unlock()
+	if w := testAPI(t, s, "POST", "/api/admin/broadcast", "", map[string]string{"action": "send", "text": "Aviso para todos"}); w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	if len(s.db.Broadcasts) != 1 {
+		t.Fatal("envio falhou")
+	}
+	id := s.db.Broadcasts[0].ID
+	if w := testAPI(t, s, "POST", "/api/admin/broadcast", "", map[string]string{"action": "delete", "id": id}); w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	if len(s.db.Broadcasts) != 0 {
+		t.Fatal("aviso nao excluido")
+	}
+	reopened, e := newServer(s.path, 8765)
+	if e != nil || len(reopened.db.Broadcasts) != 0 || len(reopened.db.Notes) != 0 {
+		t.Fatal("exclusao nao foi persistida", e)
 	}
 }

@@ -268,7 +268,12 @@ public final class FloatingToolsService extends Service {
             InputMethodManager imm=(InputMethodManager)getSystemService(Context.INPUT_METHOD_SERVICE);
             if(imm!=null && view!=null)imm.hideSoftInputFromWindow(view.getWindowToken(),0);
         }catch(RuntimeException ignored){}
-        draw(false);
+        if(!expanded || view==null){draw(false);return;}
+        // Anima a janela inteira, sem atrasar a proxima leitura do scanner.
+        final View closing=view;
+        closing.animate().cancel();
+        closing.animate().alpha(0f).translationY(-dp(8)).setDuration(140L)
+            .withEndAction(()->{if(view==closing && expanded)draw(false);}).start();
     }
     private TextView muted(String value,int sp){
         TextView t=label(value,sp,false);
@@ -337,6 +342,8 @@ public final class FloatingToolsService extends Service {
     }
     private void draw(boolean open){
         if(wm==null)return;
+        // Animate only a real transition from bubble to popup, never a refresh.
+        final boolean animateOpening=open && !expanded;
         applyTheme();
         if(open){
             // Sempre usar a mesma identidade da referência para observações e avisos.
@@ -355,7 +362,10 @@ public final class FloatingToolsService extends Service {
         // Abrir painel pode deslocá-lo para caber na tela; não deslocar a engrenagem.
         int oldX=bubbleX;
         int oldY=bubbleY;
-        if(view!=null){try{wm.removeView(view);}catch(RuntimeException ignored){} view=null;}
+        if(view!=null){
+            view.animate().cancel();
+            try{wm.removeView(view);}catch(RuntimeException ignored){} view=null;
+        }
         expanded=open;
         LinearLayout layout=new LinearLayout(this);layout.setOrientation(LinearLayout.VERTICAL);
         if(open){
@@ -649,7 +659,13 @@ public final class FloatingToolsService extends Service {
             // A bolha continua na posicao original apos fechar o painel.
             params.y=Math.max(0,Math.min(oldY,dp(60)));
         }
-        try{wm.addView(view,params);}catch(RuntimeException ex){view=null;stopSelf();}
+        final View incoming=view;
+        if(animateOpening){incoming.setAlpha(0f);incoming.setTranslationY(dp(12));}
+        try{
+            wm.addView(incoming,params);
+            if(animateOpening)incoming.animate().alpha(1f).translationY(0f)
+                .setDuration(170L).start();
+        }catch(RuntimeException ex){view=null;stopSelf();}
     }
     @Override public void onDestroy(){
         OrderNotesClient.stopBeaconListener();
