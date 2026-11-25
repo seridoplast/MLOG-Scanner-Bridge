@@ -42,6 +42,8 @@ final class LocalAdbBridge {
     private static final AtomicBoolean checking=new AtomicBoolean();
     private static volatile Manager manager;
     private static volatile boolean connected;
+    private static final AdbConnectionHealth HEALTH=new AdbConnectionHealth();
+    private static volatile boolean validateRequested;
     private static volatile long lastCheck;
     private static volatile String status="Não pareado";
     private LocalAdbBridge(){}
@@ -54,10 +56,10 @@ final class LocalAdbBridge {
         if(!enabled(c) || pairing!=null)return;
         AdbNetworkWatch.start(c);
         long now=SystemClock.elapsedRealtime();
-        if(lastCheck!=0 && now-lastCheck<(connected?30_000L:5_000L))return;
+        if(lastCheck!=0 && now-lastCheck<(connected?30_000L:HEALTH.retryDelay()))return;
         if(!checking.compareAndSet(false,true))return;
         lastCheck=now;
-        IO.execute(()->{try{ensure(c);}catch(Exception | LinkageError ex){if(pairing==null)connectionFailure(ex);}finally{checking.set(false);}});
+        IO.execute(()->{try{ensure(c);}catch(Exception | LinkageError ex){if(pairing==null)connectionFailure(ex);}finally{try{if(enabled(c) && pairing==null){if(!connected){HEALTH.retryFailed();lastCheck=SystemClock.elapsedRealtime();}AdbConnectionNotice.update(c,HEALTH,connected);}}finally{checking.set(false);}}});
     }
     static void retry(Context c){lastCheck=0;tick(c);}
     static boolean checking(){return checking.get() || pairing!=null;}
@@ -76,6 +78,7 @@ final class LocalAdbBridge {
             PairAttempt current=pairing;
             if(current!=null)finishPair(current,false,"Pareamento cancelado");
             prefs(context).edit().putBoolean(PREF,false).apply();connected=false;status="Desativado";
+            HEALTH.reset();validateRequested=false;AdbConnectionNotice.clear(context);
         }
         IO.execute(()->{try{if(manager!=null)manager.disconnect();}catch(Exception ignored){}});
     }
@@ -104,6 +107,7 @@ final class LocalAdbBridge {
         synchronized(PAIR_LOCK){
             if(pairing!=null){cb.done(false,"Já existe uma tentativa de pareamento.");return;}
             pairing=attempt;connected=false;status="Pareando ADB (até 25 segundos)";
+            HEALTH.reset();validateRequested=false;AdbConnectionNotice.clear(c);
             attempt.watchdog=WATCH.schedule(()->finishPair(attempt,false,"Tempo de pareamento esgotado. Gere um novo código."),25,TimeUnit.SECONDS);
         }
         IO.execute(()->{
@@ -128,7 +132,7 @@ final class LocalAdbBridge {
                     android.util.Log.i(TAG,"Pareamento concluído; iniciando descoberta de conexão");
                     lastCheck=0;finishPair(attempt,true,"Pareado; procurando porta de conexão");
                 }
-                try{ensure(c);}catch(Exception | LinkageError ex){connectionFailure(ex);}
+                try{ensure(c);}catch(Exception | LinkageError ex){connectionFailure(ex);}finally{if(enabled(c) && pairing==null)AdbConnectionNotice.update(c,HEALTH,connected);}
             }catch(Exception | LinkageError ex){
                 // Never log the pairing code, credentials or arbitrary exception messages.
                 android.util.Log.w(TAG,"Pareamento falhou: "+ex.getClass().getSimpleName()+"; causa="+(ex.getCause()==null?"-":ex.getCause().getClass().getSimpleName()));
@@ -147,26 +151,44 @@ final class LocalAdbBridge {
         android.util.Log.w(TAG,"Conexão falhou: "+ex.getClass().getSimpleName());
         failed("Pareado; conexão indisponível ("+ex.getClass().getSimpleName()+"). Informe a porta de conexão.");
     }
+    private static boolean verifiedShell(Manager m)throws Exception{
+        // Short non-interactive shell, no PTY prompt or echoed command.
+        AdbStream stream=m.openStream("shell:/system/bin/id -u");
+        try{return readUntil(stream,"(?:^|\\n)2000\\n",5_000).contains("\n2000\n");}
+        finally{try{stream.close();}catch(IOException ignored){}}
+    }
+    private static void markConnected(Context c,Manager m){
+        connected=enabled(c)&&pairing==null;
+        if(connected){validateRequested=false;HEALTH.healthy();status="Conectado";provisionRecovery(c,m);}
+    }
     private static void ensure(Context c)throws Exception{
         if(!enabled(c) || pairing!=null){connected=false;return;}
-        AdbWifiRecovery.migrateLegacy(c);
+        try{AdbWifiRecovery.migrateLegacy(c);}catch(RuntimeException ex){android.util.Log.w(TAG,"Cadastro Wi-Fi indisponível");}
+        Manager m=manager;
+        // Preserve the already authenticated transport. A network callback or a
+        // periodic tick is not a reason to open a shell or reconnect it.
+        if(m!=null && m.isConnected() && connected){
+            if(!validateRequested){status="Conectado";provisionRecovery(c,m);return;}
+            // An actual failed operation requests validation, not a replay.
+            boolean ok=false;
+            try{ok=verifiedShell(m);}catch(Exception ex){android.util.Log.w(TAG,"Validação ADB: "+ex.getClass().getSimpleName());}
+            if(ok){markConnected(c,m);return;}
+            if(m.isConnected() && !HEALTH.probeFailed()){
+                status="Conectado · verificando resposta do ADB";
+                // A second independent validation is scheduled on the next tick.
+                lastCheck=0;return;
+            }
+        }
+        if(connected){HEALTH.lost(SystemClock.elapsedRealtime());connected=false;}
+        validateRequested=false;
+        if(m!=null){try{m.disconnect();}catch(Exception ignored){}}
         if(!AdbWifiRecovery.wifiDebugOn(c)){
-            connected=false;
             AdbWifiRecovery.recoverIfNeeded(c);
-            status="Depuração Wi-Fi desligada · "+AdbWifiRecovery.status(c);
-            try{if(manager!=null)manager.disconnect();}catch(Exception ignored){}
-            return;
+            status="Depuração Wi-Fi desligada · "+AdbWifiRecovery.status(c);return;
         }
-        Manager m=get(c);
-        if(m.isConnected()){
-            try{
-                if(command(m,"/system/bin/id -u",3_000).contains("\n2000\n")){
-                    connected=enabled(c)&&pairing==null;if(connected){status="Conectado";provisionRecovery(c,m);}return;
-                }
-            }catch(Exception ignored){connected=false;}
-            m.disconnect();
-        }
-        connected=false;status="Procurando ADB sem fio";
+        if(!wifiAvailable(c)){status="Aguardando conexão Wi-Fi";return;}
+        m=get(c);
+        status="Procurando ADB sem fio";
         int old=prefs(c).getInt(PORT,0);
         if(old>0){try{String host=prefs(c).getString(HOST,"127.0.0.1");LocalAdbPairTransport.localAddress(host);m.connect(host,old);}catch(Exception ignored){m.disconnect();}}
         if(!m.isConnected()){
@@ -176,9 +198,19 @@ final class LocalAdbBridge {
             m.disconnect();m.connect(host,discovered.getPort());
             if(m.isConnected())prefs(c).edit().putInt(PORT,discovered.getPort()).putString(HOST,host).apply();
         }
-        if(!m.isConnected() || !command(m,"/system/bin/id -u",3_000).contains("\n2000\n"))throw new IOException("ADB não autorizado");
-        connected=enabled(c)&&pairing==null;if(pairing==null)status=connected?"Conectado":"Desativado";
-        if(connected)provisionRecovery(c,m);
+        if(!m.isConnected() || !verifiedShell(m))throw new IOException("ADB não autorizado");
+        markConnected(c,m);
+    }
+    private static boolean wifiAvailable(Context c){
+        try{
+            android.net.ConnectivityManager cm=c.getSystemService(android.net.ConnectivityManager.class);
+            if(cm==null)return true;
+            for(android.net.Network n:cm.getAllNetworks()){
+                android.net.NetworkCapabilities cap=cm.getNetworkCapabilities(n);
+                if(cap!=null && cap.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI))return true;
+            }
+            return false;
+        }catch(RuntimeException ex){return true;}
     }
     private static java.net.InetSocketAddress discover(Context c)throws Exception{
         CountDownLatch latch=new CountDownLatch(1);java.util.concurrent.atomic.AtomicReference<java.net.InetSocketAddress> endpoint=new java.util.concurrent.atomic.AtomicReference<>();
@@ -187,11 +219,19 @@ final class LocalAdbBridge {
         });
         try{mdns.start();latch.await(8,TimeUnit.SECONDS);return endpoint.get();}finally{mdns.stop();}
     }
-    private static void failed(String message){connected=false;if(pairing==null)status=message;try{if(manager!=null)manager.disconnect();}catch(Exception ignored){}}
+    private static void failed(String message){if(connected)HEALTH.lost(SystemClock.elapsedRealtime());connected=false;validateRequested=false;if(pairing==null)status=message;try{if(manager!=null)manager.disconnect();}catch(Exception ignored){}}
     private static Manager get(Context c)throws Exception{if(manager==null)manager=new Manager(c);return manager;}
     private static <T> T submit(Callable<T> task,long ms)throws Exception{
-        Future<T> f=IO.submit(task);
-        try{return f.get(ms,TimeUnit.MILLISECONDS);}catch(Exception ex){f.cancel(true);connected=false;status="Conexão ADB interrompida; reconectando";lastCheck=0;throw ex;}
+        AtomicBoolean began=new AtomicBoolean();
+        Future<T> f=IO.submit(()->{began.set(true);return task.call();});
+        try{return f.get(ms,TimeUnit.MILLISECONDS);}
+        catch(TimeoutException | InterruptedException ex){f.cancel(true);if(began.get())requestValidation();if(ex instanceof InterruptedException)Thread.currentThread().interrupt();throw ex;}
+    }
+    private static void requestValidation(){if(connected){validateRequested=true;lastCheck=0;}}
+    private static void operationFailure(String message){
+        Manager m=manager;
+        if(m==null || !m.isConnected())failed(message);
+        else {status="Conectado · operação sem confirmação";requestValidation();}
     }
     /** One atomic choice of backend for text+Enter; never replay uncertain operations. */
     static boolean scan(String code)throws Exception{
@@ -204,18 +244,19 @@ final class LocalAdbBridge {
     }
     private static boolean execute(String fixed,long ms)throws Exception{
         if(!ready())return false;
-        return submit(()->{if(!ready())return false;try{return command(manager,fixed,ms).contains("\n__BRIDGE_RC_0\n");}catch(Exception ex){failed("ADB desconectado");throw ex;}},ms+1500);
+        return submit(()->{if(!ready())return false;try{return command(manager,fixed,ms).contains("\n__BRIDGE_RC_0\n");}catch(Exception ex){operationFailure("ADB desconectado");throw ex;}},ms+1500);
     }
     // Legacy shell streams can throw IOException at normal EOF. Only accept explicit exit marker.
     private static String command(Manager m,String fixed,long ms)throws Exception{
         if(m==null)throw new IOException("ADB ausente");
         // Send the command over the stream instead of putting it in the OPEN destination.
-        try(AdbStream s=m.openStream("shell:")){
+        AdbStream s=m.openStream("shell:");
+        try{
             OutputStream out=s.openOutputStream();
             out.write((fixed+"; printf '\\n__BRIDGE_RC_%s\\n' $?; exit\n").getBytes(StandardCharsets.UTF_8));
             out.flush();
             return readUntil(s,"(?:^|\\n)__BRIDGE_RC_[0-9]+\\n",ms);
-        }
+        }finally{try{s.close();}catch(IOException ignored){/* A confirmed exit marker remains valid. */}}
     }
     private static String readUntil(AdbStream s,String marker,long ms)throws Exception{
         java.util.regex.Pattern pattern=java.util.regex.Pattern.compile(marker);
@@ -242,7 +283,7 @@ final class LocalAdbBridge {
                 OutputStream out=stream.openOutputStream();byte[] buf=new byte[4096];int n;
                 while((n=in.read(buf))!=-1){if(Thread.currentThread().isInterrupted())throw new InterruptedException();out.write(buf,0,n);}
                 out.flush();return readUntil(stream,"(?:^|\\n)Success\\n",120_000L).contains("\nSuccess\n");
-            }catch(Exception ex){failed("Instalação ADB sem confirmação");throw ex;}
+            }catch(Exception ex){operationFailure("Instalação ADB sem confirmação");throw ex;}
         },180_000L);
     }
     /** A software RSA identity is required by TLS; encrypted at rest using AndroidKeyStore AES. */

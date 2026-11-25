@@ -113,14 +113,14 @@ public final class LocalAdbPairService extends Service {
         return b.build();
     }
     private void showInput(String text) {
-        nm.notify(INPUT_ID,base(INPUT_CHANNEL,"MLOG Bridge · Digitar código",text).setCategory(Notification.CATEGORY_STATUS).setPriority(Notification.PRIORITY_HIGH).setOngoing(true).setAutoCancel(false).addAction(inputAction(false)).addAction(new Notification.Action.Builder(R.drawable.ui_terminal,"Cancelar",action(CANCEL,4,false)).build()).build());
+        nm.notify(INPUT_ID,base(INPUT_CHANNEL,"MLOG Bridge · Digitar código",text).setCategory(Notification.CATEGORY_STATUS).setPriority(Notification.PRIORITY_HIGH).setOngoing(true).setAutoCancel(false).setOnlyAlertOnce(true).addAction(inputAction(false)).addAction(new Notification.Action.Builder(R.drawable.ui_terminal,"Cancelar",action(CANCEL,4,false)).build()).build());
     }
     private void submit(LocalAdbPairInput input) {
         submitting=true; main.removeCallbacks(expiry); stopDiscovery(); nm.cancel(INPUT_ID);
         nm.notify(SEARCH_ID,searchNotification("Autenticando com o Android (até 25 segundos).",false));
         final String current=session;
         main.postDelayed(expiry,Math.max(1000L,TOTAL_MS-(SystemClock.elapsedRealtime()-started)));
-        LocalAdbBridge.pair(this,input.host,input.port,input.code,(ok,message)->main.post(()->{if(current.equals(session))finish(message);}));
+        LocalAdbBridge.pair(this,input.host,input.port,input.code,(ok,message)->main.post(()->{if(current.equals(session))finish(ok?null:message);}));
     }
     private void stopDiscovery() { if(mdns!=null){try{mdns.stop();}catch(RuntimeException ignored){}mdns=null;} }
     private void finish(String message) {

@@ -92,6 +92,15 @@ jobs:
           javac -d /tmp/adb-pair-input-test app/src/main/java/br/com/seridoplast/mlogbridge/LocalAdbPairTransport.java app/src/main/java/br/com/seridoplast/mlogbridge/LocalAdbPairInput.java tests/LocalAdbPairInputTest.java
           java -cp /tmp/adb-pair-input-test br.com.seridoplast.mlogbridge.LocalAdbPairInputTest
 
+      - name: Testar estabilidade e avisos de desconexão ADB
+        run: |
+          mkdir -p /tmp/adb-health-test
+          javac -d /tmp/adb-health-test app/src/main/java/br/com/seridoplast/mlogbridge/AdbConnectionHealth.java tests/AdbConnectionHealthTest.java
+          java -cp /tmp/adb-health-test br.com.seridoplast.mlogbridge.AdbConnectionHealthTest
+
+      - name: Testar recuperação de publicação GitHub
+        run: python3 tests/test_publish_apk_release.py
+
       - name: Testar identificacao do operador MLOG
         run: |
           mkdir -p /tmp/mlog-user-test
@@ -398,6 +407,14 @@ jobs:
           cp app/build/outputs/apk/release/app-release.apk \
              "app/build/outputs/apk/release/MLOG-Scanner-Bridge-v${VERSION}.apk"
 
+      - name: Publicar APK assinado para download
+        uses: actions/upload-artifact@v4
+        with:
+          name: MLOG-Scanner-Bridge-APK-ASSINADO
+          path: app/build/outputs/apk/release/MLOG-Scanner-Bridge-v*.apk
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Publicar Release (versoes novas como pre-release por padrao)
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
         shell: bash
@@ -405,60 +422,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           APPROVE: ${{ inputs.publish_release || 'false' }}
           ROLLOUT: ${{ inputs.rollout_percent || '100' }}
-        run: |
-          set -euo pipefail
-          VERSION=$(sed -n "s/^def bridgeVersion = '\([^']*\)'.*/\1/p" app/build.gradle | head -n1)
-          [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || exit 1
-          TAG="v${VERSION}"
-          ASSET="app/build/outputs/apk/release/MLOG-Scanner-Bridge-${TAG}.apk"
-          test -s "$ASSET"
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$APPROVE" == "true" ]]; then
-            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-              # Promover a MESMA tag e o MESMO APK, sem substituicao.
-              if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
-                   --json assets --jq '.assets[].name' | grep -Fxq "$(basename "$ASSET")"; then
-                gh release upload "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY"
-              fi
-              gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" \
-                --prerelease=false --latest --title "MLOG Scanner Bridge ${TAG}" \
-                --notes "rollout=${ROLLOUT}"
-            else
-              gh release create "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" \
-                --target "$GITHUB_SHA" --title "MLOG Scanner Bridge ${TAG}" \
-                --notes "rollout=${ROLLOUT}" --latest
-            fi
-          elif [[ "$GITHUB_EVENT_NAME" == "push" && ( "$VERSION" == "3.6.18" || "$VERSION" == "3.6.17" || "$VERSION" == "3.6.8" ) ]]; then
-            # Versoes explicitamente aprovadas para distribuicao direta; mesmo que a tag ja exista
-            # como pre-release, converter para release estavel/Latest/rollout=100.
-            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-              if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
-                   --json assets --jq '.assets[].name' | grep -Fxq "$(basename "$ASSET")"; then
-                gh release upload "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY"
-              fi
-              gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" \
-                --prerelease=false --latest --title "MLOG Scanner Bridge ${TAG}" \
-                --notes 'rollout=100'
-            else
-              gh release create "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" \
-                --target "$GITHUB_SHA" --title "MLOG Scanner Bridge ${TAG}" \
-                --notes 'rollout=100' --latest
-            fi
-          elif [[ "$GITHUB_EVENT_NAME" == "push" && "$VERSION" == "3.6.6" ]] && \
-               ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            # Somente a v3.6.6 foi aprovada para publicar estavel no primeiro push.
-            # Proximas versoes continuam em pre-release ate aprovacao manual.
-            gh release create "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" --title "MLOG Scanner Bridge ${TAG}" \
-              --notes 'rollout=100' --latest
-          elif ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            # Pre-release nunca entra no canal automatico. rollout=100 so passa a valer
-            # quando o administrador promover a tag a Release estavel/Latest.
-            gh release create "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" --title "MLOG Scanner Bridge ${TAG}" \
-              --notes 'rollout=100' --prerelease
-          else
-            echo "::notice::Tag $TAG ja publicada; nao substituir APK."
-          fi
+        run: python3 scripts/publish_apk_release.py
 
       - name: Atualizar catalogo estatico depois da Release
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
@@ -467,14 +431,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/publish_release_feed.py
-
-      - name: Publicar APK assinado para download
-        uses: actions/upload-artifact@v4
-        with:
-          name: MLOG-Scanner-Bridge-APK-ASSINADO
-          path: app/build/outputs/apk/release/MLOG-Scanner-Bridge-v*.apk
-          if-no-files-found: error
-          retention-days: 14
 
       - name: Limpar chave temporaria do runner
         if: always()
