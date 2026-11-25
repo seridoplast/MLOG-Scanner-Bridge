@@ -86,6 +86,12 @@ jobs:
           javac -d /tmp/adb-pair-test app/src/main/java/br/com/seridoplast/mlogbridge/LocalAdbPairTransport.java tests/LocalAdbPairTransportTest.java
           java -cp /tmp/adb-pair-test br.com.seridoplast.mlogbridge.LocalAdbPairTransportTest
 
+      - name: Testar entrada do codigo e endpoint local ADB
+        run: |
+          mkdir -p /tmp/adb-pair-input-test
+          javac -d /tmp/adb-pair-input-test app/src/main/java/br/com/seridoplast/mlogbridge/LocalAdbPairTransport.java app/src/main/java/br/com/seridoplast/mlogbridge/LocalAdbPairInput.java tests/LocalAdbPairInputTest.java
+          java -cp /tmp/adb-pair-input-test br.com.seridoplast.mlogbridge.LocalAdbPairInputTest
+
       - name: Testar identificacao do operador MLOG
         run: |
           mkdir -p /tmp/mlog-user-test

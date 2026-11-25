@@ -7,6 +7,7 @@
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <queries>
         <package android:name="com.targetsistemas.target_mlog2" />
         <package android:name="com.hikrobotics.pdaservice" />
@@ -29,7 +30,7 @@
             android:grantUriPermissions="true">
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/update_paths" />
         </provider>
-        <receiver android:name=".LocalAdbPairReceiver" android:exported="false" />
+        <service android:name=".LocalAdbPairService" android:exported="false" android:foregroundServiceType="shortService" />
         <receiver android:name=".BridgeBootReceiver" android:enabled="true" android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
