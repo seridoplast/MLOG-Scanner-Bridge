@@ -6,6 +6,10 @@ public final class BridgeUpdateChannelTest {
         if(BridgeUpdateChannel.mayAutoInstall(true,false,100)) throw new AssertionError("draft proibido");
         if(BridgeUpdateChannel.mayAutoInstall(false,false,0)) throw new AssertionError("sem aprovacao rollout");
         if(!BridgeUpdateChannel.mayAutoInstall(false,false,100)) throw new AssertionError("estavel aprovada");
+        if(!BridgeUpdateChannel.isVisibleManual(false,false,false))throw new AssertionError("stable visible");
+        if(BridgeUpdateChannel.isVisibleManual(false,true,false))throw new AssertionError("test hidden");
+        if(!BridgeUpdateChannel.isVisibleManual(false,true,true))throw new AssertionError("authorized test visible");
+        if(BridgeUpdateChannel.isVisibleManual(true,false,true))throw new AssertionError("draft hidden");
         System.out.println("BridgeUpdateChannelTest OK");
     }
 }

@@ -1,34 +1,10 @@
 package br.com.seridoplast.mlogbridge;
-
 import android.content.Context;
-import android.content.SharedPreferences;
 import androidx.annotation.NonNull;
 import androidx.work.Worker;
 import androidx.work.WorkerParameters;
-
-/** HTTPS + hash + signing certificate validation; no installation while downloading. */
+/** Tombstone for persisted work from previous versions. Never contacts GitHub. */
 public final class BridgeAutoUpdateWorker extends Worker {
-    private static final java.util.concurrent.atomic.AtomicBoolean CHECKING=new java.util.concurrent.atomic.AtomicBoolean();
-    public BridgeAutoUpdateWorker(@NonNull Context context,@NonNull WorkerParameters params) {super(context,params);}
-    @NonNull @Override public Result doWork() {
-        Context ctx=getApplicationContext();
-        // Agenda a proxima verificacao antes de qualquer operacao de rede.
-        BridgeUpdater.queueNextCheck(ctx,getInputData().getString("check_slot"));
-        SharedPreferences sp=ctx.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE);
-        if(!sp.getBoolean(BridgeUpdater.PREF_ENABLED,true))return Result.success();
-        if(!CHECKING.compareAndSet(false,true))return Result.success();
-        try {
-            GitHubReleaseUpdater.Update update=GitHubReleaseUpdater.downloadLatest(ctx);
-            if(update==null){BridgeUpdater.status(ctx,"Nenhuma nova versao aprovada.");return Result.success();}
-            if(update.debug){BridgeUpdater.status(ctx,"APK de teste ignorado.");return Result.success();}
-            BridgeUpdater.status(ctx,"APK "+update.tag+" verificado e pronto (rollout "+
-                sp.getInt(GitHubReleaseUpdater.PREF_ROLLOUT,0)+"%).");
-            BridgeUpdater.queueInstallRetry(ctx,null);
-            BridgeIdleInstallWorker.maybeInstall(ctx);
-            return Result.success();
-        } catch(Exception ex) {
-            BridgeUpdater.status(ctx,"Falha ao consultar atualizacao: "+ex.getMessage());
-            return Result.success(); // Aguarda proximo periodo, evita flood na API.
-        } finally {CHECKING.set(false);}
-    }
+    public BridgeAutoUpdateWorker(@NonNull Context c,@NonNull WorkerParameters p){super(c,p);}
+    @NonNull @Override public Result doWork(){return Result.success();}
 }

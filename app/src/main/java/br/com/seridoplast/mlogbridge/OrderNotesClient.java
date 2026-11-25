@@ -73,10 +73,10 @@ final class OrderNotesClient {
     private static final ExecutorService IO=Executors.newFixedThreadPool(2);
     private static final Handler MAIN=new Handler(Looper.getMainLooper());
     private static final AtomicInteger GENERATION=new AtomicInteger();
-    private static String base(Context c){return c.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE).getString(PREF_HOST,"").trim();}
-    private static String token(Context c){return c.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE).getString(PREF_KEY,"").trim();}
+    static String base(Context c){return c.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE).getString(PREF_HOST,"").trim();}
+    static String token(Context c){return c.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE).getString(PREF_KEY,"").trim();}
     static boolean configured(Context c){return validHost(base(c)) && token(c).matches("[a-fA-F0-9]{64}");}
-    private static String deviceId(Context c){
+    static String deviceId(Context c){
         SharedPreferences preferences=c.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE);
         String id=preferences.getString(PREF_DEVICE_ID,"");
         if(id.matches("[0-9a-f]{32}"))return id;
@@ -261,6 +261,8 @@ final class OrderNotesClient {
                 // messages.add(new Broadcast(id,message));
                 // }
                 // MAIN.post(()->FloatingToolsService.showBroadcasts(messages,()->received(app,messages)));
+                JSONObject job=data.optJSONObject("deployment");
+                if(job!=null)FleetUpdateWorker.offer(app,job);
                 JSONArray commands=data.optJSONArray("commands");
                 if(commands!=null)processPanelCommands(app,commands);
             }catch(Exception ex){
@@ -290,7 +292,7 @@ final class OrderNotesClient {
             if(result.isEmpty()){
                 if("check_stable_update".equals(kind)){
                     result=BridgeUpdater.checkRequestedByPanel(c)?
-                        "Consulta da Release estavel agendada":"Busca automatica desativada no coletor";
+                        "Consulta da Release estavel agendada":"Atualizações somente pela Central ou busca manual";
                 }else continue;
                 // Bounded deduplication ledger, retained for server retry on lost ACK.
                 String[] old=history.split("\\|",-1);
@@ -478,7 +480,7 @@ final class OrderNotesClient {
             MAIN.post(()->callback.done(success,msg));
         });
     }
-    private static JSONObject request(Context c,String method,String path,JSONObject body)throws Exception{
+    static JSONObject request(Context c,String method,String path,JSONObject body)throws Exception{
         if(!configured(c))throw new IOException("Configuração ausente");
         String host=base(c);if(!validHost(host))throw new IOException("Endereço não autorizado");
         return requestAt(host,token(c),method,path,body);

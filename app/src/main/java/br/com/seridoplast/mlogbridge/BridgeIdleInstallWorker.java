@@ -12,51 +12,8 @@ import androidx.work.WorkerParameters;
 /** Install only when screen off or an unrelated foreground activity is visible and scans are idle. */
 public final class BridgeIdleInstallWorker extends Worker {
     public BridgeIdleInstallWorker(@NonNull Context context,@NonNull WorkerParameters params) {super(context,params);}
-    @NonNull @Override public Result doWork() {
-        Context ctx=getApplicationContext();
-        // Agenda a tentativa seguinte ANTES de tentar instalar (o processo pode reiniciar).
-        String current=getInputData().getString("retry_slot");
-        BridgeUpdater.queueInstallRetry(ctx,current);
-        maybeInstall(ctx);
-        return Result.success();
-    }
-    static void maybeInstall(Context ctx) {
-        SharedPreferences sp=ctx.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE);
-        if(!sp.getBoolean(BridgeUpdater.PREF_ENABLED,true) ||
-            !sp.getBoolean(BridgeUpdater.PREF_INSTALL,true))return;
-        GitHubReleaseUpdater.Update update;
-        try {update=GitHubReleaseUpdater.cachedVerified(ctx);}
-        catch(Exception ex) {BridgeUpdater.status(ctx,"APK em cache invalido: "+ex.getMessage());return;}
-        if(update==null)return;
-        if(update.debug) {
-            BridgeUpdater.status(ctx,"APK de teste nao entra no canal automatico.");
-            return;
-        }
-        if(!GitHubReleaseUpdater.approvalCurrent(ctx,update)){
-            BridgeUpdater.status(ctx,"APK aguardando nova confirmação do catálogo estável.");
-            return;
-        }
-        int rollout=sp.getInt(GitHubReleaseUpdater.PREF_ROLLOUT,0);
-        String androidId=Settings.Secure.getString(ctx.getContentResolver(), Settings.Secure.ANDROID_ID);
-        if(!BridgeRolloutPolicy.eligible(androidId,rollout)) {
-            BridgeUpdater.status(ctx,"Versao "+update.tag+" aguardando liberacao gradual ("+rollout+"%).");
-            return;
-        }
-        if(!LocalAdbApkInstaller.ready()) {
-            LocalAdbBridge.tick(ctx);
-            BridgeUpdater.status(ctx,"Atualização pronta; aguardando ADB local autorizado.");
-            return;
-        }
-        if(!isCollectorIdle(ctx)){
-            BridgeUpdater.status(ctx,"Atualização pronta; aguardando coletor ocioso e MLOG fora de uso.");
-            return;
-        }
-        try {
-            LocalAdbApkInstaller.installVerified(ctx,update);
-        } catch(Exception ex) {
-            BridgeUpdater.status(ctx,"Instalacao adiada/falhou: "+ex.getMessage());
-        }
-    }
+    // Old automatic GitHub installations are disabled; fleet jobs use the idle guard below.
+    @NonNull @Override public Result doWork(){return Result.success();}
     /** Conservative idle guard for corporate updates. */
     static boolean isCollectorIdle(Context ctx){
         SharedPreferences sp=ctx.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE);

@@ -99,12 +99,16 @@ def generate():
                  if re.fullmatch(r"v\d+\.\d+\.\d+", r.get("tag_name", "")) else (-1,), reverse=True)
     # Four newest releases including tests. Preserve latest approved independently.
     newest = []
+    stable = []
     for rel in ordered:
+        if len(newest)>=4 and (len(stable)>=4 or rel.get('prerelease',False)):
+            continue
         rec = to_record(rel)
         if rec:
-            newest.append(rec)
-        if len(newest) >= 4:
-            break
+            if len(newest)<4:
+                newest.append(rec)
+            if not rec['prerelease'] and len(stable)<4:
+                stable.append(rec)
     approved = to_record(latest) if latest else None
     if approved and approved['prerelease']:
         raise ValueError('GitHub /latest returned a prerelease, refusing feed')
@@ -116,6 +120,7 @@ def generate():
         'generated_at': int(time.time()),
         'latest': approved,
         'releases': newest,
+        'stable_releases': stable,
     }
     folder = Path('site')
     folder.mkdir(exist_ok=True)

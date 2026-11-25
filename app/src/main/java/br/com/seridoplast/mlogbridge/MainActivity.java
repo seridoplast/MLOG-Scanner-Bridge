@@ -297,7 +297,7 @@ public final class MainActivity extends Activity {
         TextView b=label(name,14,filled?0xffffffff:primary,true);
         b.setGravity(Gravity.CENTER_VERTICAL);b.setMinHeight(dp(48));b.setPadding(dp(14),dp(12),dp(14),dp(12));
         b.setBackground(filled?shape(primary,0,12):shape(primarySoft,0,12));
-        leadingIcon(b,actionIcon(name),filled?0xffffffff:primary,18);
+        b.setGravity(Gravity.CENTER);
         b.setFocusable(false);b.setFocusableInTouchMode(false);
         b.setOnClickListener(w->callback.run());b.setClickable(true);
         return b;
@@ -350,7 +350,7 @@ public final class MainActivity extends Activity {
         root.addView(sc,new LinearLayout.LayoutParams(-1,0,1));
         footer=row();footer.setPadding(dp(12),dp(9),dp(12),dp(12));
         footer.setBackground(shape(card,0,22));footer.setElevation(dp(10));
-        String[] names={"Início","Ajustes","Diagnóstico","Sobre"};
+        String[] names={"Início","Ajustes","Diagnóstico","Atualizar"};
         int[] icons={R.drawable.ui_scan,R.drawable.ui_sliders,R.drawable.ui_pulse,R.drawable.ui_info};
         for(int i=0;i<names.length;i++){
             final int target=i;
@@ -381,8 +381,7 @@ public final class MainActivity extends Activity {
     }
     private void show(int p){page=p;displayPage();}
     private void title(String s,String explanation){
-        TextView eyebrow=label("MLOG  /  "+(page==0?"SCANNER":page==1?"PREFERÊNCIAS":page==2?"SUPORTE":"SISTEMA"),10,primary,true);
-        eyebrow.setLetterSpacing(0.1f);content.addView(eyebrow);
+        
         TextView t=label(s,27,ink,true);
         LinearLayout.LayoutParams tlp=new LinearLayout.LayoutParams(-1,-2);tlp.topMargin=dp(6);
         content.addView(t,tlp);
@@ -487,7 +486,7 @@ public final class MainActivity extends Activity {
         circle.setBackground(shape(0xff294c85,0,18));
         circle.addView(icon(R.drawable.ui_scan,0xffcfe2ff,31));
         iconBar.addView(circle,new LinearLayout.LayoutParams(dp(66),dp(66)));
-        testCard.addView(iconBar);
+        // Ícone de leitura mantido somente na navegação.
         TextView heroTitle=label("Testar leitura",21,0xffffffff,true);
         heroTitle.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams htp=new LinearLayout.LayoutParams(-1,-2);htp.topMargin=dp(12);
@@ -511,14 +510,14 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams alp=new LinearLayout.LayoutParams(-1,-2);alp.topMargin=dp(17);
         testCard.addView(actions,alp);
         TextView open=action("Abrir MLOG",true,this::openMlog);
-        open.setBackground(shape(0xffffffff,0,14));open.setTextColor(0xff1a4692);leadingIcon(open,R.drawable.ui_scan,0xff1a4692,18);
+        open.setBackground(shape(0xffffffff,0,14));open.setTextColor(0xff1a4692);
         actions.addView(open,new LinearLayout.LayoutParams(-1,-2));
 
         LinearLayout recentCard=card();
         LinearLayout recentHead=row();
-        recentHead.addView(icon(R.drawable.ui_history,primary,20));
+        
         TextView recentTitle=label("Últimas leituras",17,ink,true);
-        LinearLayout.LayoutParams rtp=new LinearLayout.LayoutParams(0,-2,1);rtp.leftMargin=dp(9);
+        LinearLayout.LayoutParams rtp=new LinearLayout.LayoutParams(0,-2,1);rtp.leftMargin=0;
         recentHead.addView(recentTitle,rtp);
         historyCount=capsule("0/4",primary,primarySoft);
         recentHead.addView(historyCount);
@@ -634,11 +633,11 @@ public final class MainActivity extends Activity {
         title("Ajustes","Personalize e mantenha o coletor pronto.");
         LinearLayout mode=card();
         LinearLayout lineHead=row();
-        lineHead.addView(icon(R.drawable.ui_scan,primary,24));
+        
         LinearLayout modeName=column();
         modeName.addView(label("Leitura privilegiada",18,ink,true));
         modeName.addView(label("ADB local",12,muted,false));
-        LinearLayout.LayoutParams mn=new LinearLayout.LayoutParams(0,-2,1);mn.leftMargin=dp(10);
+        LinearLayout.LayoutParams mn=new LinearLayout.LayoutParams(0,-2,1);mn.leftMargin=0;
         lineHead.addView(modeName,mn);mode.addView(lineHead);
         adbSettingsStatus=label("Verificando...",13,muted,true);
         LinearLayout.LayoutParams st=new LinearLayout.LayoutParams(-1,-2);st.topMargin=dp(10);
@@ -653,29 +652,35 @@ public final class MainActivity extends Activity {
         LinearLayout adb=card();
         sectionHeader(adb,R.drawable.ui_terminal,"Conexão ADB");
         adbStatus=label(LocalAdbBridge.status(),13,muted,false);space(adb,10);adb.addView(adbStatus);
-        subtitle(adb,"Pareie uma vez e reconecte automaticamente.");
+        
         button(adb,"Parear ADB",true,()->LocalAdbPairReceiver.showPairing(this));
         button(adb,"Procurar / reconectar",false,()->{LocalAdbBridge.retry(this);toast("Buscando ADB local...");});
-        button(adb,"Informar porta de conexão",false,()->{
+        LinearLayout advancedAdb=column();advancedAdb.setVisibility(View.GONE);
+        button(adb,"Opções avançadas",false,()->advancedAdb.setVisibility(advancedAdb.getVisibility()==View.GONE?View.VISIBLE:View.GONE));
+        adb.addView(advancedAdb);
+        button(advancedAdb,"Informar porta de conexão",false,()->{
             EditText field=new EditText(this);field.setInputType(InputType.TYPE_CLASS_TEXT);field.setHint("IP:porta ou apenas porta");field.setPadding(dp(18),dp(14),dp(18),dp(14));
             new AlertDialog.Builder(this).setTitle("Porta de conexão (não de pareamento)").setMessage("Use o endereço IP e a porta da tela principal de Depuração sem fio.").setView(field)
                 .setPositiveButton("Conectar",(d,w)->{try{String[] ep=field.getText().toString().trim().split(":");if(ep.length>2)throw new IllegalArgumentException();LocalAdbBridge.setConnectionPort(this,ep.length==2?ep[0]:"127.0.0.1",Integer.parseInt(ep[ep.length-1]));}catch(Exception ex){toast("Verifique o endereço local, a porta e o pareamento.");}}).setNegativeButton("Cancelar",null).show();
         });
-        button(adb,"Desconectar ADB",false,()->{LocalAdbBridge.disable(this);AdbWifiRecovery.clear(this);displayPage();});
+        button(advancedAdb,"Desconectar ADB",false,()->{LocalAdbBridge.disable(this);AdbWifiRecovery.clear(this);displayPage();});
         LinearLayout recovery=card();
         sectionHeader(recovery,R.drawable.ui_wifi,"Recuperação automática");
         recoveryStatus=label(AdbWifiRecovery.status(this),13,muted,false);space(recovery,10);recovery.addView(recoveryStatus);
-        subtitle(recovery,"Autorize a rede corporativa uma vez. O Bridge usa o ADB já pareado para obter as permissões, sem cabo.");
+        subtitle(recovery,"Autorize a rede corporativa uma vez.");
         button(recovery,"Autorizar Wi-Fi atual",true,this::authorizeRecoveryNetwork);
-        button(recovery,"Remover redes e desativar",false,()->{AdbWifiRecovery.clear(this);displayPage();});
-        button(recovery,"Permissões do Android",false,()->startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName()))));
-        button(recovery,"Testar recuperação",false,()->{LocalAdbBridge.retry(this);toast("Verificando recuperação ADB...");});
+        LinearLayout advancedRecovery=column();advancedRecovery.setVisibility(View.GONE);
+        button(recovery,"Opções avançadas",false,()->advancedRecovery.setVisibility(advancedRecovery.getVisibility()==View.GONE?View.VISIBLE:View.GONE));
+        recovery.addView(advancedRecovery);
+        button(advancedRecovery,"Remover redes e desativar",false,()->{AdbWifiRecovery.clear(this);displayPage();});
+        button(advancedRecovery,"Permissões do Android",false,()->startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName()))));
+        button(advancedRecovery,"Testar recuperação",false,()->{LocalAdbBridge.retry(this);toast("Verificando recuperação ADB...");});
 
         LinearLayout observations=card();
         LinearLayout obsHead=row();
-        obsHead.addView(icon(R.drawable.ui_monitor,primary,24));
+        
         TextView obsTitle=label("Central de operações",17,ink,true);
-        LinearLayout.LayoutParams obsTitleLp=new LinearLayout.LayoutParams(-1,-2);obsTitleLp.leftMargin=dp(9);
+        LinearLayout.LayoutParams obsTitleLp=new LinearLayout.LayoutParams(-1,-2);obsTitleLp.leftMargin=0;
         obsHead.addView(obsTitle,obsTitleLp);observations.addView(obsHead);
         subtitle(observations,"Conexão automática com o painel do PC na mesma rede privada.");
         String userNow=OrderNotesClient.mlogOperator(this);
@@ -728,8 +733,8 @@ public final class MainActivity extends Activity {
         space(appearance,12);appearance.addView(themes);
     }
     private void sectionHeader(LinearLayout dest,int drawable,String text){
-        LinearLayout h=row();h.addView(icon(drawable,primary,23));TextView title=label(text,17,ink,true);
-        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,-2,1);lp.leftMargin=dp(10);h.addView(title,lp);dest.addView(h);
+        LinearLayout h=row();TextView title=label(text,17,ink,true);
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,-2,1);lp.leftMargin=0;h.addView(title,lp);dest.addView(h);
     }
     private void authorizeRecoveryNetwork(){
         if(!LocalAdbBridge.enabled(this)){toast("Pareie o ADB primeiro.");return;}
@@ -769,12 +774,11 @@ public final class MainActivity extends Activity {
     private void about(){
         title("Versão "+installedVersionName(),"Atualizações e permissões do Bridge.");
         LinearLayout updates=card();updates.addView(label("Atualizações",17,ink,true));
-        subtitle(updates,"Busca a cada ~10 min, quando o Android permitir.");
-        check(updates,"Buscar automaticamente",BridgeUpdater.PREF_ENABLED,true);
-        check(updates,"Instalar quando inativo",BridgeUpdater.PREF_INSTALL,true);
+        subtitle(updates,"Distribuição pela Central de Operações. Busca no GitHub somente ao tocar abaixo.");
         githubUpdateStatus=label(prefs.getString(BridgeUpdater.LAST_STATUS,"Aguardando verificação."),13,muted,false);
         space(updates,9);updates.addView(githubUpdateStatus);
-        button(updates,"Buscar versões",true,this::checkGitHubUpdate);
+        button(updates,"Verificar atualizações",true,()->{DebugUpdateAccess.lock();checkGitHubUpdate(false);});
+        button(updates,"Versões de teste",false,()->{DebugUpdateAccess.lock();requireDebugPassword(()->checkGitHubUpdate(true));});
         button(updates,"Instalar APK baixado",false,this::installCachedAdb);
 
         LinearLayout control=card();control.addView(label("Permissões",17,ink,true));
@@ -850,9 +854,9 @@ public final class MainActivity extends Activity {
         ScrollView scroll=new ScrollView(this);scroll.setFillViewport(false);
         LinearLayout panel=column();panel.setPadding(dp(20),dp(22),dp(20),dp(18));
         panel.setBackground(shape(card,line,23));scroll.addView(panel);
-        LinearLayout heading=row();heading.addView(icon(R.drawable.ui_refresh,primary,25));
+        LinearLayout heading=row();
         TextView header=label("Versões disponíveis",19,ink,true);
-        LinearLayout.LayoutParams hp=new LinearLayout.LayoutParams(0,-2,1);hp.leftMargin=dp(9);
+        LinearLayout.LayoutParams hp=new LinearLayout.LayoutParams(0,-2,1);hp.leftMargin=0;
         heading.addView(header,hp);panel.addView(heading);
         subtitle(panel,"Escolha uma versão para instalar.");
         space(panel,15);
@@ -864,10 +868,9 @@ public final class MainActivity extends Activity {
             LinearLayout box=column();box.setPadding(dp(15),dp(14),dp(15),dp(14));
             box.setBackground(shape(surfaceAlt,line,16));
             LinearLayout upper=row();
-            upper.addView(icon(item.prerelease?R.drawable.ui_lock:R.drawable.ui_check_circle,
-                item.prerelease?amber:success,21));
+            
             TextView ver=label(item.tag,17,ink,true);
-            LinearLayout.LayoutParams v=new LinearLayout.LayoutParams(0,-2,1);v.leftMargin=dp(10);
+            LinearLayout.LayoutParams v=new LinearLayout.LayoutParams(0,-2,1);v.leftMargin=0;
             upper.addView(ver,v);
             TextView badge=label(item.prerelease?"TESTE":"ESTÁVEL",11,
                 item.prerelease?amber:success,true);
@@ -917,17 +920,18 @@ public final class MainActivity extends Activity {
         if(dlg.getWindow()!=null){dlg.getWindow().setBackgroundDrawableResource(android.R.color.transparent);
             dlg.getWindow().setLayout((int)(getResources().getDisplayMetrics().widthPixels*.92f),-2);}
     }
-    private void checkGitHubUpdate(){
+    private void checkGitHubUpdate(boolean includeTests){
         if(githubChecking){toast("Busca em andamento.");return;}
         githubChecking=true;
         setUpdateStatus("Consultando versoes...");
-        GitHubReleaseUpdater.listForManualSelection(getApplicationContext(),new GitHubReleaseUpdater.ReleasesCallback(){
+        GitHubReleaseUpdater.listForManualSelection(getApplicationContext(),includeTests,new GitHubReleaseUpdater.ReleasesCallback(){
             @Override public void error(String message){
                 githubChecking=false;setUpdateStatus("Falha: "+message);
             }
             @Override public void loaded(java.util.List<GitHubReleaseUpdater.ReleaseInfo> items){
                 githubChecking=false;
-                if(items.isEmpty()){setUpdateStatus("Nenhuma Release publicada.");return;}
+                if(includeTests && !DebugUpdateAccess.allowed()){setUpdateStatus("Autorização expirada. Tente novamente.");return;}
+                if(items.isEmpty()){setUpdateStatus("Nenhuma versão disponível.");return;}
                 long current=0L;
                 try {
                     android.content.pm.PackageInfo pkg=getPackageManager().getPackageInfo(getPackageName(),0);

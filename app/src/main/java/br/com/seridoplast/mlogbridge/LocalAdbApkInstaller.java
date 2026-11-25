@@ -87,6 +87,18 @@ final class LocalAdbApkInstaller {
         } finally {INSTALLING.set(false);}
     }
 
+    /** Separate LAN APK cache; no dependency on the manual GitHub selection. */
+    static void installFleet(Context context, File apk, String tag) throws Exception {
+        if(!INSTALLING.compareAndSet(false,true))throw new IllegalStateException("Outra instalação em andamento");
+        try{
+            long code=GitHubReleaseVersion.versionCode(tag);
+            if(code<=GitHubReleaseUpdater.code(context.getPackageManager().getPackageInfo(context.getPackageName(),0)))throw new SecurityException("Versão não é superior à instalada");
+            GitHubReleaseUpdater.verifyApk(context.getPackageManager(),context.getPackageName(),apk,code,tag.substring(1));
+            if(!ready() || !BridgeIdleInstallWorker.isCollectorIdle(context))throw new IllegalStateException("Aguardando ADB e coletor livre");
+            if(!LocalAdbBridge.installBridge(apk))throw new IOException("Instalação sem confirmação");
+        }finally{INSTALLING.set(false);}
+    }
+
     private static String safeMessage(Throwable ex){
         String message=ex.getMessage();return PmInstallOutput.brief(message==null?ex.getClass().getSimpleName():message);
     }

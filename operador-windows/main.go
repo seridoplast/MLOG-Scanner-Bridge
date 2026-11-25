@@ -27,7 +27,7 @@ import (
 //go:embed web/*
 var webFiles embed.FS
 
-const centralVersion = "3.6.21"
+const centralVersion = "3.6.25"
 
 type Note struct {
 	ID            string `json:"id"`
@@ -96,11 +96,13 @@ type Device struct {
 	LastObservations []DeviceObservation `json:"lastObservations,omitempty"`
 }
 type DB struct {
-	Notes      []Note            `json:"notes"`
-	Token      string            `json:"token"`
-	Broadcasts []Broadcast       `json:"broadcasts"`
-	Devices    map[string]Device `json:"devices,omitempty"`
-	Actions    []FleetAction     `json:"actions,omitempty"`
+	Packages    []APKPackage      `json:"packages,omitempty"`
+	Deployments []Deployment      `json:"deployments,omitempty"`
+	Notes       []Note            `json:"notes"`
+	Token       string            `json:"token"`
+	Broadcasts  []Broadcast       `json:"broadcasts"`
+	Devices     map[string]Device `json:"devices,omitempty"`
+	Actions     []FleetAction     `json:"actions,omitempty"`
 }
 type Server struct {
 	sync.Mutex
@@ -253,6 +255,8 @@ func validOrder(s string) bool {
 func validText(s string) bool { return strings.TrimSpace(s) != "" && len([]rune(s)) <= 1500 }
 func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
+	case "/api/admin/apk/upload", "/api/admin/apk/deploy", "/api/admin/apk/cancel", "/api/device/apk", "/api/device/apk/status":
+		s.deployHandle(w, r)
 	case "/assets/app-icon.png":
 		if !s.admin(w, r) {
 			return
@@ -305,7 +309,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		broadcasts := append([]Broadcast{}, s.db.Broadcasts...)
 		sort.Slice(broadcasts, func(i, j int) bool { return broadcasts[i].CreatedAt > broadcasts[j].CreatedAt })
 		w.Header().Set("X-Seridoplast-Central-Version", centralVersion)
-		reply(w, 200, map[string]interface{}{"notes": copied, "serverVersion": centralVersion, "token": s.db.Token, "addresses": localIPs(), "port": s.port, "devices": devices, "broadcasts": broadcasts, "lastDiscovery": s.lastDiscovery, "discoveryCount": s.discoveryCount, "actions": s.actionsForDisplayLocked()})
+		reply(w, 200, map[string]interface{}{"notes": copied, "serverVersion": centralVersion, "token": s.db.Token, "addresses": localIPs(), "port": s.port, "devices": devices, "broadcasts": broadcasts, "lastDiscovery": s.lastDiscovery, "discoveryCount": s.discoveryCount, "actions": s.actionsForDisplayLocked(), "packages": s.db.Packages, "deployments": s.db.Deployments})
 	case "/api/admin/device/command":
 		if !s.admin(w, r) {
 			return
@@ -810,7 +814,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		commands := []FleetAction{}
 		for i := range s.db.Actions {
 			a := &s.db.Actions[i]
-			if a.Kind != "check_stable_update" || a.DeviceID != in.ID || a.Status == "acknowledged" {
+			if versionNumber(d.BridgeVersion) >= 30625 || a.Kind != "check_stable_update" || a.DeviceID != in.ID || a.Status == "acknowledged" {
 				continue
 			}
 			created, err := time.Parse(time.RFC3339, a.CreatedAt)
@@ -826,7 +830,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		if len(commands) > 0 {
 			_ = s.save()
 		}
-		reply(w, 200, map[string]interface{}{"ok": true, "broadcasts": alerts, "commands": commands,
+		reply(w, 200, map[string]interface{}{"ok": true, "broadcasts": alerts, "commands": commands, "deployment": s.deploymentForLocked(d),
 			"preferredName": func() string {
 				if d.NamePending {
 					return d.Name

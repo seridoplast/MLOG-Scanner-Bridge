@@ -44,7 +44,7 @@ public final class GitHubReleaseUpdater {
     private static final Object FEED_LOCK = new Object();
     private static final int MAX_MANUAL_RELEASES = 4;
     // API fornece somente as quatro Releases mais recentes (estaveis ou testes).
-    private static final String LIST_API = "https://api.github.com/repos/" + REPOSITORY + "/releases?per_page=" + MAX_MANUAL_RELEASES;
+    private static final String LIST_API = "https://api.github.com/repos/" + REPOSITORY + "/releases?per_page=25";
     private static final String RELEASE_ASSET_PREFIX = "https://github.com/" + REPOSITORY + "/releases/download/";
     private static final String LEGACY_APK_NAME = "app-release.apk";
     // Matches the verified corporate release certificate in .github/workflows/gerar-apk.yml.
@@ -90,17 +90,17 @@ public final class GitHubReleaseUpdater {
         void error(String message);
     }
 
-    /** Manual picker sees stable releases AND prereleases; automatic worker never calls this. */
-    static void listForManualSelection(Context context, ReleasesCallback callback) {
+    /** Stable-only by default; test versions are listed only during password authorization. */
+    static void listForManualSelection(Context context, boolean includeTests, ReleasesCallback callback) {
         new Thread(() -> {
             try {
-                JSONArray items=manualReleases(context.getApplicationContext());
+                JSONArray items=manualReleases(context.getApplicationContext(),includeTests);
                 ArrayList<ReleaseInfo> releases=new ArrayList<>();
                 for(int i=0;i<items.length();i++) {
                     JSONObject source=items.optJSONObject(i);
                     if(source==null || source.optBoolean("draft",false))continue;
                     ReleaseInfo info=new ReleaseInfo(source);
-                    if(info.versionCode<0)continue;
+                    if(info.versionCode<0 || !BridgeUpdateChannel.isVisibleManual(source.optBoolean("draft",false),info.prerelease,includeTests && DebugUpdateAccess.allowed()))continue;
                     releases.add(info);
                 }
                 Collections.sort(releases,(a,b)->Long.compare(b.versionCode,a.versionCode));
@@ -239,7 +239,7 @@ public final class GitHubReleaseUpdater {
         }
     }
 
-    private static String sha256(File file) throws Exception {
+    static String sha256(File file) throws Exception {
         MessageDigest digest=MessageDigest.getInstance("SHA-256");
         try(InputStream in=new java.io.FileInputStream(file)) {
             byte[] buffer=new byte[16384]; int n;
@@ -275,7 +275,7 @@ public final class GitHubReleaseUpdater {
         },"bridge-github-update").start();
     }
 
-    private static long code(PackageInfo info) {
+    static long code(PackageInfo info) {
         return Build.VERSION.SDK_INT >= 28 ? info.getLongVersionCode() : info.versionCode;
     }
 
@@ -309,8 +309,14 @@ public final class GitHubReleaseUpdater {
         }
     }
 
-    private static JSONArray manualReleases(Context ctx) throws Exception {
-        try {return readFeed().getJSONArray("releases");}
+    private static JSONArray manualReleases(Context ctx,boolean includeTests) throws Exception {
+        try {
+            JSONObject feed=readFeed();JSONArray items=feed.getJSONArray("releases");
+            if(!includeTests && feed.optJSONArray("stable_releases")!=null)items=feed.getJSONArray("stable_releases");
+            JSONObject latest=feed.optJSONObject("latest");
+            if(latest!=null){boolean found=false;for(int i=0;i<items.length();i++){JSONObject r=items.optJSONObject(i);if(r!=null&&r.optString("tag_name").equals(latest.optString("tag_name")))found=true;}if(!found)items.put(latest);}
+            return items;
+        }
         catch(Exception feedError) {
             return new JSONArray(new String(fetchApiFallback(ctx,LIST_API,true),"UTF-8"));
         }
@@ -420,7 +426,7 @@ public final class GitHubReleaseUpdater {
                 || h.endsWith(".githubusercontent.com");
     }
 
-    private static void verifyApk(PackageManager pm, String packageName, File file,
+    static void verifyApk(PackageManager pm, String packageName, File file,
                                   long expectedVersion, String expectedVersionName) throws Exception {
         final int flags = Build.VERSION.SDK_INT >= 28 ? PackageManager.GET_SIGNING_CERTIFICATES : PackageManager.GET_SIGNATURES;
         PackageInfo info = pm.getPackageArchiveInfo(file.getAbsolutePath(), flags);

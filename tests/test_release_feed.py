@@ -62,3 +62,18 @@ with tempfile.TemporaryDirectory() as d:
     finally:
         os.chdir(prior)
 print('Promotion and intentional rollout pause OK')
+
+with tempfile.TemporaryDirectory() as d:
+    prior=os.getcwd()
+    try:
+        os.chdir(d)
+        stable=sample('v3.6.18')
+        tests=[sample('v3.6.'+str(n),True) for n in range(19,26)]
+        with patch.object(feed,'api',side_effect=lambda path: stable if path=='/releases/latest' else tests+[stable]):
+            feed.generate()
+        data=json.loads(Path('site/releases.json').read_text())
+        assert len(data['releases'])==4 and all(x['prerelease'] for x in data['releases'])
+        assert [x['tag_name'] for x in data['stable_releases']]==['v3.6.18']
+    finally:
+        os.chdir(prior)
+print('Stable-only list survives multiple prereleases OK')
