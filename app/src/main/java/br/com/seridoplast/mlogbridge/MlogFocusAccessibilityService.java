@@ -502,6 +502,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         @Override public void run(){
             LocalAdbBridge.tick(MlogFocusAccessibilityService.this);
             FleetTelemetry.tick(MlogFocusAccessibilityService.this);
+            ProductivityLog.tick(MlogFocusAccessibilityService.this);
             main.postDelayed(this,5000);
         }
     };
@@ -579,7 +580,18 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                         stopAdbBatch("Novo bipe físico recebido: lote automático interrompido.");
                     }
                     if(ScanAssistState.isArmed(MlogFocusAccessibilityService.this))startAdbBatch(raw);
-                    if(adbScan!=null)adbScan.scan(raw);
+                    if(adbScan!=null){
+                        ProductivityLog.Event event=null;
+                        try{
+                            ScreenInfo productivityScreen=inspect(active);
+                            String kind=ProductivityPolicy.kind(productivityScreen.screen,productivityScreen.login||productivityScreen.dialog);
+                            String clean=AdbBarcodePayload.prepare(raw);
+                            // Only the physical scan; synthetic batch repeats do not enter the ranking.
+                            event=ProductivityLog.capture(MlogFocusAccessibilityService.this,kind,clean,
+                                "product".equals(kind)?productivityOrderOnScreen(active):"");
+                        }catch(RuntimeException ex){Log.w("BridgeProductivity","Não foi possível classificar a leitura",ex);}
+                        adbScan.scan(raw,event);
+                    }
                     if(!LocalAdbBridge.ready())
                         LocalAdbBridge.tick(MlogFocusAccessibilityService.this);
                     return;
@@ -1166,7 +1178,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 }
             }
             if(candidate==null){visibleOrderCandidate="";return;}
-            if(candidate.equals(visibleOrderConfirmed))return;
+            if(candidate.equals(visibleOrderConfirmed)){
+                captureProductivityOrder(candidate);return;
+            }
             if(!candidate.equals(visibleOrderCandidate)){
                 visibleOrderCandidate=candidate;
                 final String expected=candidate;
@@ -1182,8 +1196,36 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             visibleOrderConfirmed=candidate;
 
             OrderNotesClient.observedOrder(MlogFocusAccessibilityService.this,candidate);
+            captureProductivityOrder(candidate);
         }
     };
+    private String productivityOrderOnScreen(AccessibilityNodeInfo root){
+        if(visibleOrderConfirmed.isEmpty())return "";
+        List<AccessibilityNodeInfo> nodes=new ArrayList<>();visit(root,nodes,0);
+        int width=getResources().getDisplayMetrics().widthPixels,height=getResources().getDisplayMetrics().heightPixels;
+        boolean title=false;String candidate=null;
+        for(AccessibilityNodeInfo node:nodes){
+            if(node==null||!node.isVisibleToUser()||node.isPassword())continue;
+            Rect box=new Rect();node.getBoundsInScreen(box);
+            String text=node.getText()==null?null:node.getText().toString();
+            String desc=node.getContentDescription()==null?null:node.getContentDescription().toString();
+            if(VisibleOrderHeaderPolicy.isCombinedHeaderPosition(box.top,box.bottom,height)&&
+                (VisibleOrderHeaderPolicy.isRelevantTitle(text)||VisibleOrderHeaderPolicy.isRelevantTitle(desc)))title=true;
+            String code=VisibleOrderHeaderPolicy.parse(text);if(code==null)code=VisibleOrderHeaderPolicy.parse(desc);if(code==null)continue;
+            boolean combined=VisibleOrderHeaderPolicy.hasExplicitHeaderNumber(text)||VisibleOrderHeaderPolicy.hasExplicitHeaderNumber(desc);
+            if(!(combined?VisibleOrderHeaderPolicy.isCombinedHeaderPosition(box.top,box.bottom,height):
+                VisibleOrderHeaderPolicy.isHeaderPosition(box.left,box.top,box.right,box.bottom,width,height)))continue;
+            if(candidate!=null&&!candidate.equals(code))return "";candidate=code;
+        }
+        return title&&visibleOrderConfirmed.equals(candidate)?candidate:"";
+    }
+    private String lastProductivityOrderKey="";
+    private void captureProductivityOrder(String candidate){
+        String key=OrderNotesClient.mlogOperator(this)+"|"+candidate;
+        if(key.equals(lastProductivityOrderKey))return;
+        lastProductivityOrderKey=key;
+        ProductivityLog.recordOrder(this,candidate);
+    }
     private void observeVisibleOrder(AccessibilityEvent event){
         if(event==null || event.getPackageName()==null ||
            !ScanCoordinator.TARGET.contentEquals(event.getPackageName()))return;

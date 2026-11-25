@@ -155,6 +155,7 @@ public final class MainActivity extends Activity {
             if(recoveryStatus!=null)recoveryStatus.setText(AdbWifiRecovery.status(MainActivity.this));
             updateAdbUiStatus();
             FleetTelemetry.tick(MainActivity.this);
+            ProductivityLog.tick(MainActivity.this);
             refreshSetupWarning();
             refreshScannerStatus();
             if(page==2 && lastStatus!=null){
@@ -682,7 +683,7 @@ public final class MainActivity extends Activity {
         TextView obsTitle=label("Central de operações",17,ink,true);
         LinearLayout.LayoutParams obsTitleLp=new LinearLayout.LayoutParams(-1,-2);obsTitleLp.leftMargin=0;
         obsHead.addView(obsTitle,obsTitleLp);observations.addView(obsHead);
-        subtitle(observations,"Conexão automática com o painel do PC na mesma rede privada.");
+        subtitle(observations,"Conexão automática com o painel do PC na mesma rede privada. As leituras de produtividade são guardadas mesmo sem conexão.");
         String userNow=OrderNotesClient.mlogOperator(this);
         String userLast=OrderNotesClient.lastMlogOperator(this);
         subtitle(observations,!userNow.isEmpty()?"Operador MLOG: "+userNow:

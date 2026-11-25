@@ -118,6 +118,14 @@ jobs:
             tests/VisibleOrderHeaderPolicyTest.java
           java -cp /tmp/order-header-test br.com.seridoplast.mlogbridge.VisibleOrderHeaderPolicyTest
 
+      - name: Testar classificação dos bipes de produtividade
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/productivity-test
+          javac -d /tmp/productivity-test app/src/main/java/br/com/seridoplast/mlogbridge/ProductivityPolicy.java tests/ProductivityPolicyTest.java
+          java -cp /tmp/productivity-test br.com.seridoplast.mlogbridge.ProductivityPolicyTest
+
       - name: Testar regra de Enter e mapeamento de conferencia
         shell: bash
         run: |

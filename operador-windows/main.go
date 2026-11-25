@@ -27,7 +27,7 @@ import (
 //go:embed web/*
 var webFiles embed.FS
 
-const centralVersion = "3.6.25"
+const centralVersion = "3.6.26"
 
 type Note struct {
 	ID            string `json:"id"`
@@ -102,16 +102,19 @@ type DB struct {
 	Token       string            `json:"token"`
 	Broadcasts  []Broadcast       `json:"broadcasts"`
 	Devices     map[string]Device `json:"devices,omitempty"`
+	DeviceOrder []string          `json:"deviceOrder,omitempty"`
 	Actions     []FleetAction     `json:"actions,omitempty"`
 }
 type Server struct {
 	sync.Mutex
-	db             DB
-	devices        map[string]Device
-	path           string
-	port           int
-	lastDiscovery  string
-	discoveryCount uint64
+	db              DB
+	devices         map[string]Device
+	path            string
+	port            int
+	lastDiscovery   string
+	discoveryCount  uint64
+	productivity    []ProductivityEvent
+	productivityIDs map[string]bool
 }
 
 func uid() string {
@@ -151,11 +154,18 @@ func newServer(path string, port int) (*Server, error) {
 		d.Online = false
 		s.devices[id] = d
 	}
-	if s.db.Token == "" {
+	orderChanged := s.ensureDeviceOrderLocked()
+	newToken := s.db.Token == ""
+	if newToken {
 		s.db.Token = uid() + uid()
+	}
+	if orderChanged || newToken {
 		if err := s.save(); err != nil {
 			return nil, err
 		}
+	}
+	if err := s.loadProductivity(); err != nil {
+		return nil, err
 	}
 	return s, nil
 }
@@ -255,6 +265,10 @@ func validOrder(s string) bool {
 func validText(s string) bool { return strings.TrimSpace(s) != "" && len([]rune(s)) <= 1500 }
 func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
+	case "/api/device/productivity":
+		s.productivityIngest(w, r)
+	case "/api/admin/productivity":
+		s.productivityAdmin(w, r)
 	case "/api/admin/apk/upload", "/api/admin/apk/deploy", "/api/admin/apk/cancel", "/api/device/apk", "/api/device/apk/status":
 		s.deployHandle(w, r)
 	case "/assets/app-icon.png":
@@ -772,6 +786,9 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		d.ConfirmedOrders = len(confirmed)
 		s.devices[in.ID] = d
+		if !known {
+			s.db.DeviceOrder = append(s.db.DeviceOrder, in.ID)
+		}
 		// Save profiles periodically rather than writing the DB every 15 seconds.
 		persisted := s.db.Devices[in.ID]
 		if changed || d.NamePending != persisted.NamePending || d.Name != persisted.Name ||
@@ -1157,32 +1174,70 @@ func (d Device) LastSeenIsRecent(previous string, threshold time.Duration) bool 
 	t, err := time.Parse(time.RFC3339, previous)
 	return err == nil && time.Since(t) < threshold
 }
+
+// Migrate existing profiles once, preserving the previous visible order at migration.
+// Afterwards the persisted registration sequence is independent of telemetry and names.
+func (s *Server) ensureDeviceOrderLocked() bool {
+	seen := make(map[string]bool, len(s.devices))
+	order := make([]string, 0, len(s.devices))
+	for _, id := range s.db.DeviceOrder {
+		if _, ok := s.devices[id]; ok && !seen[id] {
+			order = append(order, id)
+			seen[id] = true
+		}
+	}
+	missing := make([]Device, 0)
+	cutoff := time.Now().Add(-75 * time.Second)
+	for id, d := range s.devices {
+		if !seen[id] {
+			t, e := time.Parse(time.RFC3339, d.LastSeen)
+			d.Online = e == nil && t.After(cutoff)
+			missing = append(missing, d)
+		}
+	}
+	sort.Slice(missing, func(i, j int) bool {
+		if missing[i].Online != missing[j].Online {
+			return missing[i].Online
+		}
+		if missing[i].Name != missing[j].Name {
+			return missing[i].Name < missing[j].Name
+		}
+		return missing[i].ID < missing[j].ID
+	})
+	for _, d := range missing {
+		order = append(order, d.ID)
+	}
+	changed := len(order) != len(s.db.DeviceOrder)
+	if !changed {
+		for i, id := range order {
+			if id != s.db.DeviceOrder[i] {
+				changed = true
+				break
+			}
+		}
+	}
+	s.db.DeviceOrder = order
+	return changed
+}
 func (s *Server) allDevicesLocked() []Device {
+	s.ensureDeviceOrderLocked()
 	out := make([]Device, 0, len(s.devices))
 	cutoff := time.Now().Add(-75 * time.Second)
-	for _, d := range s.devices {
+	for _, id := range s.db.DeviceOrder {
+		d := s.devices[id]
 		t, err := time.Parse(time.RFC3339, d.LastSeen)
 		d.Online = err == nil && t.After(cutoff)
 		out = append(out, d)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Online != out[j].Online {
-			return out[i].Online
-		}
-		return out[i].Name < out[j].Name
-	})
 	return out
 }
 func (s *Server) onlineDevicesLocked() []Device {
 	devices := []Device{}
-	cutoff := time.Now().Add(-75 * time.Second)
-	for _, d := range s.devices {
-		t, e := time.Parse(time.RFC3339, d.LastSeen)
-		if e == nil && t.After(cutoff) {
+	for _, d := range s.allDevicesLocked() {
+		if d.Online {
 			devices = append(devices, d)
 		}
 	}
-	sort.Slice(devices, func(i, j int) bool { return devices[i].Name < devices[j].Name })
 	return devices
 }
 

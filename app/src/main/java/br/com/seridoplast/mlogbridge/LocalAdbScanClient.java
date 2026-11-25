@@ -30,7 +30,8 @@ final class LocalAdbScanClient {
     boolean hasPendingScans(){return pending.get()>0 || cameraBusy.get();}
 
     /** No coalescing by barcode value: two deliberate reads must remain two. */
-    boolean scan(String raw) {
+    boolean scan(String raw) {return scan(raw,null);}
+    boolean scan(String raw,ProductivityLog.Event event) {
         // O CMX pode anexar CR/LF/TAB/NUL ou marcadores invisiveis. O teste
         // de leitura mostra o codigo, mas o caminho Adb antigo recusava
         // o payload completo antes de digitar no Flutter.
@@ -70,6 +71,7 @@ final class LocalAdbScanClient {
                     // A failure after the text step is ambiguous: never retry and
                     // accidentally register the barcode twice.
                     if(!LocalAdbBridge.scan(code))ScanCoordinator.status(context,"ADB: leitura sem confirmação. Confira o MLOG.");
+                    else ProductivityLog.record(context,event);
                 } catch(Exception ex) {
                     Log.w("MLOGBridge","ADB_REMOTE_COMMAND_FAILED",ex);
                     ScanCoordinator.status(context,"Falha na injeção ADB. Confira o MLOG.");
