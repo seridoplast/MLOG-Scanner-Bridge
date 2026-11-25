@@ -11,8 +11,15 @@ public final class AdbRecoveryWorker extends Worker {
     @NonNull @Override public Result doWork(){
         Context c=getApplicationContext();
         if(LocalAdbBridge.enabled(c)){
-            AdbWifiRecovery.recoverIfNeeded(c);
-            LocalAdbBridge.tick(c);
+            // Keep the worker alive while the asynchronous connection is being established.
+            // In a live accessibility process its normal watchdog takes over afterwards.
+            long deadline=android.os.SystemClock.elapsedRealtime()+45_000L;
+            do{
+                if(isStopped() || Thread.currentThread().isInterrupted())break;
+                LocalAdbBridge.tick(c);
+                if(LocalAdbBridge.ready() && !LocalAdbBridge.checking())break;
+                try{Thread.sleep(1000L);}catch(InterruptedException e){Thread.currentThread().interrupt();break;}
+            }while(android.os.SystemClock.elapsedRealtime()<deadline);
         }
         return Result.success();
     }
@@ -25,6 +32,6 @@ public final class AdbRecoveryWorker extends Worker {
         wm.enqueueUniquePeriodicWork("adb_recovery_v3621",ExistingPeriodicWorkPolicy.KEEP,
             new PeriodicWorkRequest.Builder(AdbRecoveryWorker.class,15,TimeUnit.MINUTES).build());
         if(afterBoot)wm.enqueueUniqueWork("adb_recovery_boot_v3621",ExistingWorkPolicy.REPLACE,
-            new OneTimeWorkRequest.Builder(AdbRecoveryWorker.class).setInitialDelay(20,TimeUnit.SECONDS).build());
+            new OneTimeWorkRequest.Builder(AdbRecoveryWorker.class).setInitialDelay(5,TimeUnit.SECONDS).build());
     }
 }

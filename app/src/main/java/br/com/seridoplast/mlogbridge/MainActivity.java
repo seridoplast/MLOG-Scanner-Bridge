@@ -665,8 +665,8 @@ public final class MainActivity extends Activity {
         LinearLayout recovery=card();
         sectionHeader(recovery,R.drawable.ui_wifi,"Recuperação automática");
         recoveryStatus=label(AdbWifiRecovery.status(this),13,muted,false);space(recovery,10);recovery.addView(recoveryStatus);
-        subtitle(recovery,"Após reiniciar, tenta reativar a depuração somente nos pontos Wi-Fi cadastrados. Requer autorização inicial via USB.");
-        button(recovery,"Cadastrar Wi-Fi atual",true,this::authorizeRecoveryNetwork);
+        subtitle(recovery,"Autorize a rede corporativa uma vez. O Bridge usa o ADB já pareado para obter as permissões, sem cabo.");
+        button(recovery,"Autorizar Wi-Fi atual",true,this::authorizeRecoveryNetwork);
         button(recovery,"Remover redes e desativar",false,()->{AdbWifiRecovery.clear(this);displayPage();});
         button(recovery,"Permissões do Android",false,()->startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName()))));
         button(recovery,"Testar recuperação",false,()->{LocalAdbBridge.retry(this);toast("Verificando recuperação ADB...");});
@@ -732,13 +732,21 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,-2,1);lp.leftMargin=dp(10);h.addView(title,lp);dest.addView(h);
     }
     private void authorizeRecoveryNetwork(){
-        if(!AdbWifiRecovery.hasGrant(this)){toast("Conceda WRITE_SECURE_SETTINGS pelo cabo USB primeiro.");return;}
+        if(!LocalAdbBridge.enabled(this)){toast("Pareie o ADB primeiro.");return;}
         if(checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)!=android.content.pm.PackageManager.PERMISSION_GRANTED){
-            requestPermissions(new String[]{android.Manifest.permission.ACCESS_FINE_LOCATION,android.Manifest.permission.ACCESS_COARSE_LOCATION},3621);toast("Autorize a localização precisa apenas para identificar o Wi-Fi; depois toque novamente.");return;
+            requestPermissions(new String[]{android.Manifest.permission.ACCESS_FINE_LOCATION,android.Manifest.permission.ACCESS_COARSE_LOCATION},3621);return;
         }
         new AlertDialog.Builder(this).setTitle("Autorizar recuperação nesta rede")
-          .setMessage("O Bridge poderá reativar a depuração sem fio neste ponto Wi-Fi após reiniciar. O Android mantém o controle de confiança e pareamento. Para recuperar em segundo plano, autorize localização o tempo todo nas permissões do Android.")
-          .setPositiveButton("Cadastrar",(dlg,w)->{toast(AdbWifiRecovery.enroll(this));displayPage();}).setNegativeButton("Cancelar",null).show();
+          .setMessage("Autorize a recuperação após reiniciar nesta rede corporativa protegida, inclusive em outros pontos de acesso da mesma rede salva. O Bridge usará a sessão ADB já pareada para conceder WRITE_SECURE_SETTINGS e localização em segundo plano ao próprio aplicativo. A localização serve somente para identificar a rede. O Android mantém o controle de confiança e pareamento.")
+          .setPositiveButton("Autorizar",(dlg,w)->{toast(AdbWifiRecovery.enroll(this));displayPage();}).setNegativeButton("Cancelar",null).show();
+    }
+    @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] results){
+        super.onRequestPermissionsResult(requestCode,permissions,results);
+        if(requestCode==3621){
+            if(checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)==android.content.pm.PackageManager.PERMISSION_GRANTED)
+                handler.post(()->{if(isActiveAppScreen())authorizeRecoveryNetwork();});
+            else toast("Localização precisa é necessária para reconhecer o Wi-Fi autorizado.");
+        }
     }
     private void diagnostic(){
         title("Diagnóstico","Consulte o estado da última operação.");

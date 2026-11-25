@@ -52,13 +52,25 @@ final class LocalAdbBridge {
     static void tick(Context context){
         Context c=context.getApplicationContext();
         if(!enabled(c) || pairing!=null)return;
+        AdbNetworkWatch.start(c);
         long now=SystemClock.elapsedRealtime();
-        if(lastCheck!=0 && now-lastCheck<30_000L)return;
+        if(lastCheck!=0 && now-lastCheck<(connected?30_000L:5_000L))return;
         if(!checking.compareAndSet(false,true))return;
         lastCheck=now;
         IO.execute(()->{try{ensure(c);}catch(Exception | LinkageError ex){if(pairing==null)connectionFailure(ex);}finally{checking.set(false);}});
     }
     static void retry(Context c){lastCheck=0;tick(c);}
+    static boolean checking(){return checking.get() || pairing!=null;}
+    // Only fixed permission grants, after consent and verified UID 2000. No LAN command path.
+    private static void provisionRecovery(Context c,Manager m){
+        if(!AdbWifiRecovery.shouldProvision(c))return;
+        try{
+            if(AdbWifiRecovery.provisionConsent(c) && !AdbWifiRecovery.hasGrant(c))command(m,"/system/bin/pm grant br.com.seridoplast.mlogbridge android.permission.WRITE_SECURE_SETTINGS",5000);
+            if(AdbWifiRecovery.provisionConsent(c) && !AdbWifiRecovery.hasBackground(c) && c.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)==android.content.pm.PackageManager.PERMISSION_GRANTED)
+                command(m,"/system/bin/pm grant br.com.seridoplast.mlogbridge android.permission.ACCESS_BACKGROUND_LOCATION",5000);
+        }catch(Exception ex){android.util.Log.w(TAG,"Autorização recuperação: "+ex.getClass().getSimpleName());}
+        finally{AdbWifiRecovery.provisionResult(c);}
+    }
     static void disable(Context context){
         synchronized(PAIR_LOCK){
             PairAttempt current=pairing;
@@ -137,6 +149,7 @@ final class LocalAdbBridge {
     }
     private static void ensure(Context c)throws Exception{
         if(!enabled(c) || pairing!=null){connected=false;return;}
+        AdbWifiRecovery.migrateLegacy(c);
         if(!AdbWifiRecovery.wifiDebugOn(c)){
             connected=false;
             AdbWifiRecovery.recoverIfNeeded(c);
@@ -146,7 +159,11 @@ final class LocalAdbBridge {
         }
         Manager m=get(c);
         if(m.isConnected()){
-            if(command(m,"/system/bin/id -u",3_000).contains("\n2000\n")){connected=enabled(c)&&pairing==null;if(connected)status="Conectado";return;}
+            try{
+                if(command(m,"/system/bin/id -u",3_000).contains("\n2000\n")){
+                    connected=enabled(c)&&pairing==null;if(connected){status="Conectado";provisionRecovery(c,m);}return;
+                }
+            }catch(Exception ignored){connected=false;}
             m.disconnect();
         }
         connected=false;status="Procurando ADB sem fio";
@@ -161,6 +178,7 @@ final class LocalAdbBridge {
         }
         if(!m.isConnected() || !command(m,"/system/bin/id -u",3_000).contains("\n2000\n"))throw new IOException("ADB não autorizado");
         connected=enabled(c)&&pairing==null;if(pairing==null)status=connected?"Conectado":"Desativado";
+        if(connected)provisionRecovery(c,m);
     }
     private static java.net.InetSocketAddress discover(Context c)throws Exception{
         CountDownLatch latch=new CountDownLatch(1);java.util.concurrent.atomic.AtomicReference<java.net.InetSocketAddress> endpoint=new java.util.concurrent.atomic.AtomicReference<>();

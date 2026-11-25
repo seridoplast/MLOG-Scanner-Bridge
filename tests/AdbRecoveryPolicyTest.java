@@ -12,6 +12,14 @@ public final class AdbRecoveryPolicyTest {
         expect(!AdbRecoveryPolicy.mayEnable(true,true,true,"02:00:00:00:00:00",Set.of("02:00:00:00:00:00")));
         expect(!AdbRecoveryPolicy.mayEnable(true,true,true,null,allowed));
         expect(!AdbRecoveryPolicy.mayEnable(true,true,true,"12:34:56:ab:cd:ef",Set.of()));
+        String net=AdbRecoveryPolicy.networkKey(7,"\"Seridoplast\"",2);
+        expect(!net.isEmpty());
+        expect(AdbRecoveryPolicy.approved("12:34:56:ab:cd:00",net,allowed,Set.of(net)));
+        expect(!AdbRecoveryPolicy.approved("12:34:56:ab:cd:00",AdbRecoveryPolicy.networkKey(8,"\"Seridoplast\"",2),allowed,Set.of(net)));
+        expect(!AdbRecoveryPolicy.approved("12:34:56:ab:cd:00",AdbRecoveryPolicy.networkKey(7,"\"Seridoplast\"",0),allowed,Set.of(net)));
+        expect(AdbRecoveryPolicy.networkKey(-1,"\"Seridoplast\"",2).isEmpty());
+        expect(AdbRecoveryPolicy.networkKey(7,"<unknown ssid>",2).isEmpty());
+        expect(!AdbRecoveryPolicy.approved("02:00:00:00:00:00",net,allowed,Set.of(net)));
         System.out.println("AdbRecoveryPolicyTest OK");
     }
 }
