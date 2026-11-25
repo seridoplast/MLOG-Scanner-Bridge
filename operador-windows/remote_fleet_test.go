@@ -28,8 +28,12 @@ func TestFleetActionAllowlistAndReceipt(t *testing.T) {
 	if w.Code != 400 {
 		t.Fatalf("unexpected remote shell acceptance: %d", w.Code)
 	}
-	// Only currently online devices eligible. Shizuku assist is skipped on ready devices.
+	// Removed third-party assist and keep explicit individual update requests.
 	w = testAPI(t, s, "POST", "/api/admin/device/command", "", map[string]string{"kind": "shizuku_assist", "target": "all_online"})
+	if w.Code != 400 {
+		t.Fatal("obsolete command accepted")
+	}
+	w = testAPI(t, s, "POST", "/api/admin/device/command", "", map[string]string{"kind": "check_stable_update", "target": "single", "deviceId": id2})
 	if w.Code != 200 {
 		t.Fatal(w.Body.String())
 	}
@@ -40,7 +44,7 @@ func TestFleetActionAllowlistAndReceipt(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.Queued != 1 || result.Skipped != 1 {
+	if result.Queued != 1 || result.Skipped != 0 {
 		t.Fatalf("unexpected counts: %+v", result)
 	}
 	action := s.db.Actions[0]
@@ -63,7 +67,7 @@ func TestFleetActionAllowlistAndReceipt(t *testing.T) {
 	if w.Code != 404 {
 		t.Fatalf("foreign ack accepted: %d", w.Code)
 	}
-	w = testAPI(t, s, "POST", "/api/device/command-result", s.db.Token, map[string]string{"id": id2, "commandId": action.ID, "result": "Operador deve iniciar Shizuku"})
+	w = testAPI(t, s, "POST", "/api/device/command-result", s.db.Token, map[string]string{"id": id2, "commandId": action.ID, "result": "Consulta agendada"})
 	if w.Code != 200 {
 		t.Fatal(w.Body.String())
 	}
@@ -149,5 +153,30 @@ func TestMlogOperatorSavedInCollectorProfile(t *testing.T) {
 	}
 	if reopened.devices[id].MlogOperator != "" || reopened.devices[id].LastMlogOperator != "JARLENE" {
 		t.Fatal("logout state incorrect")
+	}
+}
+
+func TestPausedMessagesNotOffered(t *testing.T) {
+	s, err := newServer(filepath.Join(t.TempDir(), "paused.json"), 8765)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+	hb := map[string]interface{}{"id": id, "name": "TC60", "messagesPaused": true}
+	if w := testAPI(t, s, "POST", "/api/device/heartbeat", s.db.Token, hb); w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	if w := testAPI(t, s, "POST", "/api/admin/broadcast", "", map[string]string{"action": "send", "text": "historico"}); w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	w := testAPI(t, s, "POST", "/api/device/heartbeat", s.db.Token, hb)
+	var result struct {
+		Broadcasts []Broadcast `json:"broadcasts"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Broadcasts) != 0 || len(s.db.Broadcasts[0].Delivered) != 0 {
+		t.Fatal("paused message was offered or marked delivered")
 	}
 }

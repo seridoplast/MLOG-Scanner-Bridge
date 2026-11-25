@@ -1,10 +1,10 @@
 package br.com.seridoplast.mlogbridge;
 
 /** Experimental, mutually exclusive native-broadcast -> privileged-keyboard mode. */
-final class ShizukuScanMode {
-    static final String PREF = "shizuku_scan_mode_v340";
+final class AdbScanMode {
+    static final String PREF = "adb_scan_mode_v340";
     static final int MAX_PENDING = 8;
-    private ShizukuScanMode() {}
+    private AdbScanMode() {}
 
     // Do not silently strip or modify barcode payload. Shell receives tokens as argv,
     // never interpolated into a shell command. Explicitly reject unsupported bytes.

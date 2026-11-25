@@ -1,3 +1,7 @@
+# Atualização 3.6.21
+
+**ADB integrado exclusivo; avisos e janelas flutuantes suspensos.** Para configuração, migração e limitações, veja [ATUALIZACAO-v3.6.21.md](ATUALIZACAO-v3.6.21.md). As notas abaixo documentam versões anteriores e não representam as funções ativas desta versão.
+
 # MLOG Scanner Bridge — Seridóplast
 
 **Versão:** 3.6.16 | Pacote Android: `br.com.seridoplast.mlogbridge`

@@ -5,8 +5,8 @@ package br.com.seridoplast.mlogbridge;
  * Preserva EXATAMENTE os caracteres do codigo, incluindo zeros a esquerda.
  * Nao corrige GTIN/check digit; esse julgamento pertence ao MLOG.
  */
-final class ShizukuBarcodePayload {
-    private ShizukuBarcodePayload() { }
+final class AdbBarcodePayload {
+    private AdbBarcodePayload() { }
 
     static String prepare(String raw) {
         if (raw == null || raw.isEmpty()) return null;

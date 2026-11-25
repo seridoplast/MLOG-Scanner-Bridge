@@ -19,4 +19,16 @@ final class BridgePreferences {
             .putBoolean(MIGRATION,true)
             .apply();
     }
+    static void adbOnly(SharedPreferences prefs){
+        if(prefs.getBoolean("adb_only_v3621",false))return;
+        prefs.edit().putBoolean("adb_only_v3621",true)
+            .putBoolean(AdbScanMode.PREF,true).putBoolean("enabled",true)
+            .putBoolean(ZebraImeMode.PREF,false).putBoolean(ZebraProfile0Mode.PREF,false)
+            .putBoolean(NativeScannerController.PREF,true).putBoolean(DirectScanPolicy.PREF,true)
+            .putBoolean(BridgeEnterPolicy.PREFERENCE,false).putBoolean(ZebraImeMode.AUTO_FOCUS_PREF,false)
+            .putBoolean("trigger_prefocus",false).putBoolean("guided_taps",false)
+            .putBoolean("layout_fallback",false).putBoolean(NativeScannerController.LONG_HOLD_PREF,false)
+            .putBoolean(ScanAssistState.BATCH,false).putBoolean(ScanAssistState.ARMED,false)
+            .putBoolean("floating_auto_start_v302",false).apply();
+    }
 }

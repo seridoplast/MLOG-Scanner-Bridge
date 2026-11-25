@@ -42,9 +42,9 @@ public final class BridgeIdleInstallWorker extends Worker {
             BridgeUpdater.status(ctx,"Versao "+update.tag+" aguardando liberacao gradual ("+rollout+"%).");
             return;
         }
-        if(!ShizukuApkInstaller.ready()) {
+        if(!LocalAdbApkInstaller.ready()) {
             LocalAdbBridge.tick(ctx);
-            BridgeUpdater.status(ctx,"Atualização pronta; aguardando ADB local ou Shizuku autorizado.");
+            BridgeUpdater.status(ctx,"Atualização pronta; aguardando ADB local autorizado.");
             return;
         }
         if(!isCollectorIdle(ctx)){
@@ -52,15 +52,15 @@ public final class BridgeIdleInstallWorker extends Worker {
             return;
         }
         try {
-            ShizukuApkInstaller.installVerified(ctx,update);
+            LocalAdbApkInstaller.installVerified(ctx,update);
         } catch(Exception ex) {
             BridgeUpdater.status(ctx,"Instalacao adiada/falhou: "+ex.getMessage());
         }
     }
-    /** Same conservative idle guard used for corporate and Shizuku manager updates. */
+    /** Conservative idle guard for corporate updates. */
     static boolean isCollectorIdle(Context ctx){
         SharedPreferences sp=ctx.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE);
-        long lastScan=sp.getLong("bridge_last_shizuku_scan_wall",0L);
+        long lastScan=sp.getLong("bridge_last_adb_scan_wall",0L);
         long now=System.currentTimeMillis();
         if(lastScan>0 && (now<lastScan || now-lastScan<2*60*1000L))return false;
         PowerManager pm=(PowerManager)ctx.getSystemService(Context.POWER_SERVICE);

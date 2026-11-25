@@ -107,7 +107,7 @@ public final class BridgeUpdater {
     }
 
     /** Solicitacao do painel LAN: apenas verifica a Release ESTAVEL oficial.
-     * O worker preserva validacao de assinatura, rollout, ociosidade e Shizuku.
+     * O worker preserva validacao de assinatura, rollout, ociosidade e Adb.
      * Nunca instala pre-release nem recebe URLs/APKs remotos arbitrarios. */
     static boolean checkRequestedByPanel(Context ctx) {
         Context app=ctx.getApplicationContext();

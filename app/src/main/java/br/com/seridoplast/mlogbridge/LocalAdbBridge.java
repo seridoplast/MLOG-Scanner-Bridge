@@ -137,6 +137,13 @@ final class LocalAdbBridge {
     }
     private static void ensure(Context c)throws Exception{
         if(!enabled(c) || pairing!=null){connected=false;return;}
+        if(!AdbWifiRecovery.wifiDebugOn(c)){
+            connected=false;
+            AdbWifiRecovery.recoverIfNeeded(c);
+            status="Depuração Wi-Fi desligada · "+AdbWifiRecovery.status(c);
+            try{if(manager!=null)manager.disconnect();}catch(Exception ignored){}
+            return;
+        }
         Manager m=get(c);
         if(m.isConnected()){
             if(command(m,"/system/bin/id -u",3_000).contains("\n2000\n")){connected=enabled(c)&&pairing==null;if(connected)status="Conectado";return;}
@@ -170,7 +177,7 @@ final class LocalAdbBridge {
     }
     /** One atomic choice of backend for text+Enter; never replay uncertain operations. */
     static boolean scan(String code)throws Exception{
-        if(!ShizukuScanMode.supported(code))return false;
+        if(!AdbScanMode.supported(code))return false;
         return execute("/system/bin/input text '"+code+"' && sleep 0.11 && /system/bin/input keyevent 66",6000);
     }
     static boolean volume(int x,int y,int pause)throws Exception{

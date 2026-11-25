@@ -40,13 +40,13 @@ public final class BridgeScanInputMethodService extends InputMethodService {
     private final Handler main=new Handler(Looper.getMainLooper());
     private LinearLayout panel;
     private boolean targetMlog=false;
-    // Apenas observa abertura/fechamento do teclado no modo Shizuku.
-    private boolean shizukuMlogImeShown=false;
-    private void shizukuImeClosedIfNeeded(){
-        if(!shizukuMlogImeShown)return;
-        shizukuMlogImeShown=false;
+    // Apenas observa abertura/fechamento do teclado no modo Adb.
+    private boolean adbMlogImeShown=false;
+    private void adbImeClosedIfNeeded(){
+        if(!adbMlogImeShown)return;
+        adbMlogImeShown=false;
         MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
-        if(svc!=null)svc.onShizukuImeClosed();
+        if(svc!=null)svc.onAdbImeClosed();
     }
     private boolean manual=false;
     private boolean numeric=false;
@@ -506,10 +506,10 @@ public final class BridgeScanInputMethodService extends InputMethodService {
     @Override public void onStartInputView(EditorInfo info,boolean restarting){
         super.onStartInputView(info,restarting);
         targetMlog=info!=null && ScanCoordinator.TARGET.equals(info.packageName);
-        if(targetMlog && zebraPrefs().getBoolean(ShizukuScanMode.PREF,false)){
-            shizukuMlogImeShown=true;
+        if(targetMlog && zebraPrefs().getBoolean(AdbScanMode.PREF,false)){
+            adbMlogImeShown=true;
             MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
-            if(svc!=null)svc.onShizukuImeOpened();
+            if(svc!=null)svc.onAdbImeOpened();
         }
         // onFinishInputView ja recolheu quando a janela foi escondida.
         // Nao interromper digitacao por um restartInput do mesmo campo.
@@ -520,14 +520,14 @@ public final class BridgeScanInputMethodService extends InputMethodService {
     }
 
     @Override public void onFinishInputView(boolean finishingInput){
-        shizukuImeClosedIfNeeded();
+        adbImeClosedIfNeeded();
         stopErase();
         if(targetMlog){manual=false;if(panel!=null)render();}
         super.onFinishInputView(finishingInput);
     }
 
     @Override public void onFinishInput(){
-        shizukuImeClosedIfNeeded();
+        adbImeClosedIfNeeded();
         stopErase();
         if(targetMlog){manual=false;if(panel!=null)render();}
         targetMlog=false;

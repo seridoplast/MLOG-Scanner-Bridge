@@ -84,9 +84,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     // Protecao adicional se o Android nao entregar ACTION_UP (ex.: bloqueio da tela).
     private static final long LONG_HOLD_MAX_MS=30000L;
 
-    private ShizukuScanClient shizukuScan;
+    private LocalAdbScanClient adbScan;
     // v3.5.5: dois toques validados via ADB no coletor piloto:
-    // Volume (648,175) -> 10 ms -> seta do MLOG (55,103), via Shizuku.
+    // Volume (648,175) -> 10 ms -> seta do MLOG (55,103), via ADB.
     // Nao reenviar qualquer codigo ou Enter durante a recuperacao.
     private static final long VOLUME_DEBOUNCE_MS=60L;
     private static final long VOLUME_KEYBOARD_POLL_MS=120L;
@@ -97,17 +97,17 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private int recoveryEpoch;
     // Ignorar eventos IME transitorios criados pela propria micro-navegacao.
     private long suppressVolumeImeUntil;
-    private long lastPhysicalShizukuScanAt;
+    private long lastPhysicalAdbScanAt;
 
     // Compativel com o IME antigo, mas a observacao principal usa as janelas
     // reais do Android, independentemente do teclado selecionado.
-    void onShizukuImeOpened(){trace("BRIDGE_IME_OPENED_OBSERVED_BY_WINDOWS");}
-    void onShizukuImeClosed(){trace("BRIDGE_IME_CLOSED_OBSERVED_BY_WINDOWS");}
+    void onAdbImeOpened(){trace("BRIDGE_IME_OPENED_OBSERVED_BY_WINDOWS");}
+    void onAdbImeClosed(){trace("BRIDGE_IME_CLOSED_OBSERVED_BY_WINDOWS");}
 
     /** Resetar Bipe: chamado apos recolher o painel flutuante. */
-    void requestShizukuFocusRecovery(){
-        if(!prefs().getBoolean(ShizukuScanMode.PREF,false)){
-            volumeFeedback(true,"Recuperacao por Volume exige Bipe Shizuku (Shizuku).");
+    void requestAdbFocusRecovery(){
+        if(!prefs().getBoolean(AdbScanMode.PREF,false)){
+            volumeFeedback(true,"Recuperacao por Volume exige Bipe ADB.");
             return;
         }
         final int epoch=++recoveryEpoch;
@@ -119,13 +119,13 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     }
 
     // O Gboard pode abrir/fechar sem um TYPE_WINDOWS_CHANGED confiavel no CMX.
-    // Monitorar a janela de IME em intervalos curtos enquanto Shizuku e usado.
+    // Monitorar a janela de IME em intervalos curtos enquanto Adb e usado.
     private final Runnable keyboardWindowWatcher=new Runnable(){
         @Override public void run(){
-            if(prefs().getBoolean(ShizukuScanMode.PREF,false) &&
+            if(prefs().getBoolean(AdbScanMode.PREF,false) &&
                !recoveryPolicy.isRecovering()){
                 observeImeVisibility(isImeVisible());
-            }else if(!prefs().getBoolean(ShizukuScanMode.PREF,false)){
+            }else if(!prefs().getBoolean(AdbScanMode.PREF,false)){
                 recoveryPolicy.resetKeyboard();
             }
             main.postDelayed(this,VOLUME_KEYBOARD_POLL_MS);
@@ -133,7 +133,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     };
 
     private void observeAndroidKeyboard(AccessibilityEvent event){
-        if(event==null || !prefs().getBoolean(ShizukuScanMode.PREF,false) ||
+        if(event==null || !prefs().getBoolean(AdbScanMode.PREF,false) ||
            recoveryPolicy.isRecovering())return;
         int kind=event.getEventType();
         if(kind!=AccessibilityEvent.TYPE_WINDOWS_CHANGED &&
@@ -153,7 +153,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         if(visible==recoveryPolicy.keyboardVisible())return;
         if(visible){
             // Teclado da quantidade do proprio painel nao deve iniciar Volume.
-            if(FloatingToolsService.isBatchInputOpen())return;
+
             AccessibilityNodeInfo root=mlogRoot();
             if(!isVolumeRecoveryReady(root))return;
         }
@@ -199,7 +199,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     }
 
     private void startVolumeRecovery(boolean manual,String reason){
-        if(!prefs().getBoolean(ShizukuScanMode.PREF,false) ||
+        if(!prefs().getBoolean(AdbScanMode.PREF,false) ||
            (!manual && !prefs().getBoolean("camera_auto_recovery_v348",true)))return;
         long now=SystemClock.elapsedRealtime();
         if(recoveryPolicy.isRecovering()){
@@ -208,7 +208,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         // O diagnostico mostrou fechamento de IME durante a leitura e
         // RECOVERY_BLOCKED pelo limite antigo de 1s. Reagendar uma unica vez
         // evita perder a recuperacao sem disputar com o Enter ainda em voo.
-        long sinceScan=now-lastPhysicalShizukuScanAt;
+        long sinceScan=now-lastPhysicalAdbScanAt;
         if(!manual && sinceScan>=0 && sinceScan<1000L &&
            !reason.endsWith("_deferred")){
             final int epoch=recoveryEpoch;
@@ -219,14 +219,14 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             trace("VOLUME_RECOVERY_DEFERRED_AFTER_SCAN");
             return;
         }
-        if(shizukuBatchActive || ScanAssistState.isArmed(this) ||
-           (shizukuScan!=null && shizukuScan.hasPendingScans()) ||
+        if(adbBatchActive || ScanAssistState.isArmed(this) ||
+           (adbScan!=null && adbScan.hasPendingScans()) ||
            !scanQueue.isIdle() || pendingCode!=null ||
            (!manual && sinceScan>=0 && sinceScan<1000L)){
             volumeFeedback(manual,"Aguarde o fim das leituras antes de recuperar.");return;
         }
-        if(shizukuScan==null || !shizukuScan.ready()){
-            volumeFeedback(manual,"Shizuku nao esta pronto para recuperar a leitura.");return;
+        if(adbScan==null || !adbScan.ready()){
+            volumeFeedback(manual,"ADB não esta pronto para recuperar a leitura.");return;
         }
         AccessibilityNodeInfo root=mlogRoot();
         if(!isVolumeRecoveryReady(root)){
@@ -281,10 +281,10 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         final int epoch=++recoveryEpoch;
         trace("VOLUME_RECOVERY_START_"+reason);
         final String initialScreen=info.screen;
-        // Um unico shell Shizuku: 648,175 -> 10ms -> 55,103.
+        // Um unico shell Adb: 648,175 -> 10ms -> 55,103.
         // Evita o keyevent BACK, que pode fechar o IME em vez de sair da tela.
         // Nao ha como confirmar o resultado Flutter nesses 10 ms.
-        boolean accepted=shizukuScan.recoverVolume(x,y,
+        boolean accepted=adbScan.recoverVolume(x,y,
             VolumeRecoveryTarget.PAUSE_MS,ok->{
                 if(epoch!=recoveryEpoch){recoveryPolicy.finish();return;}
                 if(!ok){
@@ -292,7 +292,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                     suppressVolumeImeUntil=SystemClock.elapsedRealtime()+700L;
                     recoveryPolicy.resetKeyboard();
                     trace("VOLUME_RECOVERY_SEQUENCE_FAILED");
-                    volumeFeedback(manual,"Falha na sequencia rapida de Volume pelo Shizuku.");
+                    volumeFeedback(manual,"Falha na sequencia rapida de Volume pelo ADB.");
                     return;
                 }
                 trace("VOLUME_RECOVERY_DOUBLE_TAP_SENT_UNVERIFIED");
@@ -305,8 +305,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             });
         if(!accepted){
             recoveryPolicy.finish();
-            trace("VOLUME_RECOVERY_SHIZUKU_REJECTED");
-            volumeFeedback(manual,"Shizuku ocupado ou indisponivel para Volume.");
+            trace("VOLUME_RECOVERY_ADB_REJECTED");
+            volumeFeedback(manual,"ADB ocupado ou indisponivel para Volume.");
         }
     }
     /** Aguarda a volta do Flutter e fecha somente um IME visivel na tela
@@ -318,7 +318,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         boolean safeOnOrigin=isVolumeRecoveryReady(current);
         if(safeOnOrigin && isImeVisible()){
             // O teclado aberto pode consumir o BACK. Aqui ele e intencional:
-            // a seta da tela Volume ja recebeu seu toque via Shizuku.
+            // a seta da tela Volume ja recebeu seu toque via ADB.
             boolean requested=performGlobalAction(GLOBAL_ACTION_BACK);
             trace(requested?"VOLUME_RECOVERY_POST_IME_HIDE_REQUESTED":
                 "VOLUME_RECOVERY_POST_IME_HIDE_FAILED");
@@ -353,14 +353,14 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
 
     // Independente do motor IME antigo. Uma leitura fisica inicia o lote,
     // cada passo seguinte exige incremento visivel de 1 no MESMO produto.
-    private boolean shizukuBatchActive;
-    private int shizukuBatchGeneration;
-    private int shizukuBatchTarget;
-    private int shizukuBatchDispatched;
-    private String shizukuBatchBarcode;
-    private String shizukuBatchScreen;
-    private SeparatedQuantityProbe.Result shizukuBatchObserved;
-    private long shizukuBatchDispatchedAt;
+    private boolean adbBatchActive;
+    private int adbBatchGeneration;
+    private int adbBatchTarget;
+    private int adbBatchDispatched;
+    private String adbBatchBarcode;
+    private String adbBatchScreen;
+    private SeparatedQuantityProbe.Result adbBatchObserved;
+    private long adbBatchDispatchedAt;
 
     private BroadcastReceiver receiver;
     private boolean receiverRegistered;
@@ -498,9 +498,10 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     }
 
     // Background health check while accessibility service is alive; no focus stealing.
-    private final Runnable shizukuWatchdog=new Runnable(){
+    private final Runnable adbWatchdog=new Runnable(){
         @Override public void run(){
-            ShizukuHealthMonitor.refresh(MlogFocusAccessibilityService.this);
+            LocalAdbBridge.tick(MlogFocusAccessibilityService.this);
+            FleetTelemetry.tick(MlogFocusAccessibilityService.this);
             main.postDelayed(this,5000);
         }
     };
@@ -510,11 +511,13 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         instance=this;
         lastForegroundIsMlog=false;
         lastMlogInteractionAt=0L;
-        shizukuScan=new ShizukuScanClient(this);
-        shizukuScan.start();
-        main.post(shizukuWatchdog);
+        adbScan=new LocalAdbScanClient(this);
+        adbScan.start();
+        main.post(adbWatchdog);
         main.post(keyboardWindowWatcher);
         BridgePreferences.enableOnUpgrade(prefs());
+        BridgePreferences.adbOnly(prefs());
+        OrderNotesClient.startBeaconListener(this);
         updateClickCooldownMs(prefs().getInt(ScanAssistState.CLICK_COOLDOWN_MS,
                 (int)TimedClickGate.COOLDOWN_MS));
         if(!ScanAssistState.AUTO_BIPS_ENABLED){
@@ -538,7 +541,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             si.eventTypes|=AccessibilityEvent.TYPE_WINDOWS_CHANGED |
                            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED;
             configuredFastEvents=fastImeMode();
-            configuredTriggerEvents=!prefs().getBoolean(ShizukuScanMode.PREF,false) &&
+            configuredTriggerEvents=!prefs().getBoolean(AdbScanMode.PREF,false) &&
                 !prefs().getBoolean(ZebraImeMode.PREF,false) &&
                 (prefs().getBoolean("trigger_prefocus",false) ||
                  prefs().getBoolean(NativeScannerController.LONG_HOLD_PREF,false));
@@ -550,9 +553,9 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         }
         receiver=new BroadcastReceiver(){
             @Override public void onReceive(Context context,Intent intent){
-                // Shizuku is an isolated broadcast-only input channel. Never touch the
+                // Adb is an isolated broadcast-only input channel. Never touch the
                 // MLOG UI, send old Enter, or process alternate/duplicate sources.
-                if (prefs().getBoolean(ShizukuScanMode.PREF,false)) {
+                if (prefs().getBoolean(AdbScanMode.PREF,false)) {
                     if (intent==null || !DirectScanPolicy.ACTION.equals(intent.getAction()))return;
                     AccessibilityNodeInfo active=getRootInActiveWindow();
                     if(active==null || active.getPackageName()==null ||
@@ -563,7 +566,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                     String raw=ScannerProtocol.barcodeRaw(intent);
                     // Observações são vinculadas exclusivamente ao número do pedido
                     // visível no cabeçalho, nunca ao código de um produto ou bip.
-                    lastPhysicalShizukuScanAt=SystemClock.elapsedRealtime();
+                    lastPhysicalAdbScanAt=SystemClock.elapsedRealtime();
                     // Cancela recuperacao pendente se houve nova leitura.
                     ++recoveryEpoch;
                     if(recoveryPolicy.isRecovering()){
@@ -571,14 +574,14 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                         status("Leitura durante recuperacao de Volume: nao enviada. Bipe novamente.");
                         return;
                     }
-                    if(shizukuBatchActive){
+                    if(adbBatchActive){
                         // Another physical scan means operator interrupted the batch.
-                        stopShizukuBatch("Novo bipe físico recebido: lote automático interrompido.");
+                        stopAdbBatch("Novo bipe físico recebido: lote automático interrompido.");
                     }
-                    if(ScanAssistState.isArmed(MlogFocusAccessibilityService.this))startShizukuBatch(raw);
-                    if(shizukuScan!=null)shizukuScan.scan(raw);
-                    if(!ShizukuHealthMonitor.privilegedReady())
-                        ShizukuHealthMonitor.refresh(MlogFocusAccessibilityService.this);
+                    if(ScanAssistState.isArmed(MlogFocusAccessibilityService.this))startAdbBatch(raw);
+                    if(adbScan!=null)adbScan.scan(raw);
+                    if(!LocalAdbBridge.ready())
+                        LocalAdbBridge.tick(MlogFocusAccessibilityService.this);
                     return;
                 }
                 // Modo Zebra: acessibilidade NUNCA escreve codigo nem envia Enter.
@@ -708,7 +711,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             // Nunca preparar/clicar na tela sem receber uma leitura.
             prefs().edit().putBoolean("prearm_field",false).apply();
             // Versoes anteriores podiam deixar o teclado oculto pelo controlador.
-            if(!prefs().getBoolean(ShizukuScanMode.PREF,false))restoreKeyboard();
+            if(!prefs().getBoolean(AdbScanMode.PREF,false))restoreKeyboard();
             status("Bridge conectado: aguardando leitura do MLOG.");
             if(prefs().getBoolean(NativeScannerController.PREF,false)){
                 boolean applied=NativeScannerController.configure(this);
@@ -718,7 +721,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         }catch(RuntimeException e){status("Falha ao registrar o broadcast do scanner.");}
     }
 
-    void prepareShizuku(){
+    void prepareAdb(){
         recoveryPolicy.resetKeyboard();
         recoveryPolicy.finish();
         ++recoveryEpoch;
@@ -727,14 +730,14 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         // Cancel every outstanding old-mode Enter/focus/tap callback before
         // accepting the first privileged barcode. Never replay old reads.
         main.removeCallbacksAndMessages(null);
-        main.post(shizukuWatchdog);
+        main.post(adbWatchdog);
         main.post(keyboardWindowWatcher);
         enterTimer.removeCallbacksAndMessages(null);
         cancelPending();
         scanQueue.clear();
         ++workGeneration;
         zebraInitialScan=null;
-        if(shizukuScan!=null)shizukuScan.connect();
+        if(adbScan!=null)adbScan.connect();
     }
 
     /** Atualiza o bloqueio entre gatilhos sem reiniciar a acessibilidade. */
@@ -746,14 +749,14 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private SharedPreferences prefs(){return getSharedPreferences(ScanCoordinator.PREFS,MODE_PRIVATE);}
     /** So acelera quando o operador optou pelo teclado proprio E pelo modo rapido. */
     private boolean fastImeMode(){
-        if(prefs().getBoolean(ShizukuScanMode.PREF,false))return false;
+        if(prefs().getBoolean(AdbScanMode.PREF,false))return false;
         return prefs().getBoolean("experimental_bridge_ime",false) &&
                prefs().getBoolean("fast_ime_mode",false);
     }
     /** O usuario pode alternar sem reiniciar a acessibilidade. */
     void refreshEventThrottle(){
         boolean fast=fastImeMode();
-        boolean trigger=!prefs().getBoolean(ShizukuScanMode.PREF,false) &&
+        boolean trigger=!prefs().getBoolean(AdbScanMode.PREF,false) &&
             !prefs().getBoolean(ZebraImeMode.PREF,false) &&
             (prefs().getBoolean("trigger_prefocus",false) ||
              prefs().getBoolean(NativeScannerController.LONG_HOLD_PREF,false) ||
@@ -1177,8 +1180,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             }
             String old=visibleOrderConfirmed;
             visibleOrderConfirmed=candidate;
-            if(!old.isEmpty() && !old.equals(candidate))
-                FloatingToolsService.orderHeaderChanged(old,candidate);
+
             OrderNotesClient.observedOrder(MlogFocusAccessibilityService.this,candidate);
         }
     };
@@ -1209,7 +1211,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         }
         observeMlogLoginIdentity(event);
         observeVisibleOrder(event);
-        if(prefs().getBoolean(ShizukuScanMode.PREF,false)){
+        if(prefs().getBoolean(AdbScanMode.PREF,false)){
             observeAndroidKeyboard(event);
             return;
         }
@@ -1425,7 +1427,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     }
 
     @Override protected boolean onKeyEvent(KeyEvent event){
-        if(prefs().getBoolean(ShizukuScanMode.PREF,false))return false;
+        if(prefs().getBoolean(AdbScanMode.PREF,false))return false;
         if(prefs().getBoolean(ZebraImeMode.PREF,false))return false;
         observeLongHold(event);
         if(event!=null && BridgeEnterPolicy.active(prefs().getBoolean(
@@ -3010,15 +3012,15 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         ScanAssistState.report("Bipes automáticos: aguardando confirmação do 1º bipe físico; faltam "+(quantity-1)+" virtuais.");
     }
 
-    /** Automatic repeats via the SAME Shizuku text+Enter pipeline as physical scans.
-     *  We never use the old IME/Accessibility Enter path in Shizuku mode.
+    /** Automatic repeats via the SAME Adb text+Enter pipeline as physical scans.
+     *  We never use the old IME/Accessibility Enter path in Adb mode.
      *  No retry after uncertain delivery. Requires a visible count before arming.
      */
-    private void startShizukuBatch(String barcode){
+    private void startAdbBatch(String barcode){
         prefs().edit().putBoolean(ScanAssistState.ARMED,false).apply();
-        if(!ScanAssistState.isBatch(this) || !ShizukuScanMode.supported(barcode) ||
-            !ShizukuHealthMonitor.privilegedReady()){
-            ScanAssistState.report("Lote não iniciado: Shizuku indisponível ou código inválido.");
+        if(!ScanAssistState.isBatch(this) || !AdbScanMode.supported(barcode) ||
+            !LocalAdbBridge.ready()){
+            ScanAssistState.report("Lote não iniciado: ADB indisponível ou código inválido.");
             return;
         }
         int total=ScanAssistState.clamp(prefs().getInt(ScanAssistState.COUNT,1));
@@ -3033,100 +3035,100 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             ScanAssistState.report("Lote não iniciado: abra Separação com contador SEPARADO visível.");
             return;
         }
-        shizukuBatchActive=true;
-        shizukuBatchGeneration++;
-        shizukuBatchTarget=total;
-        shizukuBatchDispatched=1; // first physical scan follows immediately
-        shizukuBatchBarcode=barcode;
-        shizukuBatchScreen=info.screen;
-        shizukuBatchObserved=baseline;
-        shizukuBatchDispatchedAt=SystemClock.elapsedRealtime();
+        adbBatchActive=true;
+        adbBatchGeneration++;
+        adbBatchTarget=total;
+        adbBatchDispatched=1; // first physical scan follows immediately
+        adbBatchBarcode=barcode;
+        adbBatchScreen=info.screen;
+        adbBatchObserved=baseline;
+        adbBatchDispatchedAt=SystemClock.elapsedRealtime();
         ScanAssistState.report("Bipe 1/"+total+" enviado; aguardando confirmação na Separação.");
-        final int generation=shizukuBatchGeneration;
-        main.postDelayed(()->checkShizukuBatch(generation),120);
+        final int generation=adbBatchGeneration;
+        main.postDelayed(()->checkAdbBatch(generation),120);
     }
 
     /** Fail closed if count doesn't increase exactly by one in 5 seconds. */
-    private void checkShizukuBatch(int generation){
-        if(!shizukuBatchActive || generation!=shizukuBatchGeneration)return;
-        if(!ScanAssistState.isBatch(this) || !prefs().getBoolean(ShizukuScanMode.PREF,false) ||
-            !ShizukuHealthMonitor.privilegedReady()){
-            stopShizukuBatch("Lote interrompido: Shizuku desligado ou opção desativada.");return;
+    private void checkAdbBatch(int generation){
+        if(!adbBatchActive || generation!=adbBatchGeneration)return;
+        if(!ScanAssistState.isBatch(this) || !prefs().getBoolean(AdbScanMode.PREF,false) ||
+            !LocalAdbBridge.ready()){
+            stopAdbBatch("Lote interrompido: ADB desligado ou opção desativada.");return;
         }
         AccessibilityNodeInfo root=mlogRoot();
         if(root==null || isBlockingOverlay(root)){
-            stopShizukuBatch("Lote interrompido: tela MLOG indisponível.");return;
+            stopAdbBatch("Lote interrompido: tela MLOG indisponível.");return;
         }
         ScreenInfo info=inspect(root);
-        if(info.dialog || info.login || !shizukuBatchScreen.equals(info.screen)){
-            stopShizukuBatch("Lote interrompido: tela de Separação mudou.");return;
+        if(info.dialog || info.login || !adbBatchScreen.equals(info.screen)){
+            stopAdbBatch("Lote interrompido: tela de Separação mudou.");return;
         }
         SeparatedQuantityProbe.Result result=separatedOnScreen(root);
-        if(result!=null && shizukuBatchObserved!=null &&
-            shizukuBatchObserved.sameProduct(result)){
-            int delta=result.count-shizukuBatchObserved.count;
+        if(result!=null && adbBatchObserved!=null &&
+            adbBatchObserved.sameProduct(result)){
+            int delta=result.count-adbBatchObserved.count;
             if(delta==1){
-                shizukuBatchObserved=result;
-                int done=shizukuBatchDispatched;
-                ScanAssistState.report("MLOG confirmou "+done+"/"+shizukuBatchTarget+
+                adbBatchObserved=result;
+                int done=adbBatchDispatched;
+                ScanAssistState.report("MLOG confirmou "+done+"/"+adbBatchTarget+
                     " leituras (SEPARADO +1).");
-                if(done>=shizukuBatchTarget){
-                    stopShizukuBatch("Lote concluído: "+done+
+                if(done>=adbBatchTarget){
+                    stopAdbBatch("Lote concluído: "+done+
                         " leituras verificadas na tela. Confira o pedido.");return;
                 }
                 // Fast but never overlap a pending barcode/Enter injection.
-                long wait=Math.max(120L,450L-(SystemClock.elapsedRealtime()-shizukuBatchDispatchedAt));
-                main.postDelayed(()->sendNextShizukuBatch(generation),wait);
+                long wait=Math.max(120L,450L-(SystemClock.elapsedRealtime()-adbBatchDispatchedAt));
+                main.postDelayed(()->sendNextAdbBatch(generation),wait);
                 return;
             }
             if(delta>1 || delta<0){
-                stopShizukuBatch("Lote parado: contador mudou "+delta+
+                stopAdbBatch("Lote parado: contador mudou "+delta+
                     " unidades. Confira possíveis duplicidades.");return;
             }
         }else if(result!=null){
-            stopShizukuBatch("Lote parado: produto mudou. Confira a quantidade.");return;
+            stopAdbBatch("Lote parado: produto mudou. Confira a quantidade.");return;
         }
-        if(SystemClock.elapsedRealtime()-shizukuBatchDispatchedAt>5000L){
-            stopShizukuBatch("Lote parado: MLOG não confirmou o incremento em 5 s. Não reenviado.");
+        if(SystemClock.elapsedRealtime()-adbBatchDispatchedAt>5000L){
+            stopAdbBatch("Lote parado: MLOG não confirmou o incremento em 5 s. Não reenviado.");
             return;
         }
-        main.postDelayed(()->checkShizukuBatch(generation),100);
+        main.postDelayed(()->checkAdbBatch(generation),100);
     }
-    private void sendNextShizukuBatch(int generation){
-        if(!shizukuBatchActive || generation!=shizukuBatchGeneration)return;
+    private void sendNextAdbBatch(int generation){
+        if(!adbBatchActive || generation!=adbBatchGeneration)return;
         // Recheck state and UI immediately before each send.
-        if(!ScanAssistState.isBatch(this) || !ShizukuHealthMonitor.privilegedReady() ||
-            shizukuScan==null || !ShizukuScanMode.supported(shizukuBatchBarcode)){
-            stopShizukuBatch("Lote parado: Shizuku indisponível.");return;
+        if(!ScanAssistState.isBatch(this) || !LocalAdbBridge.ready() ||
+            adbScan==null || !AdbScanMode.supported(adbBatchBarcode)){
+            stopAdbBatch("Lote parado: ADB indisponível.");return;
         }
         AccessibilityNodeInfo root=mlogRoot();
         if(root==null || isBlockingOverlay(root)){
-            stopShizukuBatch("Lote parado: MLOG indisponível.");return;
+            stopAdbBatch("Lote parado: MLOG indisponível.");return;
         }
         ScreenInfo info=inspect(root);
         SeparatedQuantityProbe.Result current=separatedOnScreen(root);
-        if(info.dialog || info.login || !shizukuBatchScreen.equals(info.screen) ||
-           current==null || shizukuBatchObserved==null ||
-           !shizukuBatchObserved.sameProduct(current) ||
-           current.count!=shizukuBatchObserved.count){
-            stopShizukuBatch("Lote parado: estado do produto não corresponde ao último bipe.");return;
+        if(info.dialog || info.login || !adbBatchScreen.equals(info.screen) ||
+           current==null || adbBatchObserved==null ||
+           !adbBatchObserved.sameProduct(current) ||
+           current.count!=adbBatchObserved.count){
+            stopAdbBatch("Lote parado: estado do produto não corresponde ao último bipe.");return;
         }
         // No retry if command fails after text injection: operator must inspect MLOG.
-        if(!shizukuScan.scan(shizukuBatchBarcode)){
-            stopShizukuBatch("Lote parado: Shizuku não aceitou a próxima leitura.");return;
+        if(!adbScan.scan(adbBatchBarcode)){
+            stopAdbBatch("Lote parado: ADB não aceitou a próxima leitura.");return;
         }
-        shizukuBatchDispatched++;
-        shizukuBatchDispatchedAt=SystemClock.elapsedRealtime();
-        ScanAssistState.report("Enviado "+shizukuBatchDispatched+"/"+shizukuBatchTarget+
+        adbBatchDispatched++;
+        adbBatchDispatchedAt=SystemClock.elapsedRealtime();
+        ScanAssistState.report("Enviado "+adbBatchDispatched+"/"+adbBatchTarget+
             "; aguardando SEPARADO aumentar 1.");
-        main.postDelayed(()->checkShizukuBatch(generation),120);
+        main.postDelayed(()->checkAdbBatch(generation),120);
     }
-    private void stopShizukuBatch(String message){
-        if(!shizukuBatchActive)return;
-        shizukuBatchActive=false;
-        shizukuBatchGeneration++;
-        shizukuBatchBarcode=null;
-        shizukuBatchObserved=null;
+    private void stopAdbBatch(String message){
+        if(!adbBatchActive)return;
+        adbBatchActive=false;
+        adbBatchGeneration++;
+        adbBatchBarcode=null;
+        adbBatchObserved=null;
         prefs().edit().putBoolean(ScanAssistState.ARMED,false).apply();
         if(message!=null)ScanAssistState.report(message);
     }
@@ -3140,7 +3142,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
 
     /** Botao cancelar acessivel a partir da janela flutuante. */
     void cancelAutoCount(String message){
-        stopShizukuBatch(message);
+        stopAdbBatch(message);
         boolean wasRunning=autoCountRunning;
         ++autoCountToken;
         autoCountRunning=false;
@@ -3481,7 +3483,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         scheduleAutoRepeat();
     }
 
-    @Override public void onInterrupt(){lastKnownEditor=null;lastKnownScreen="";stopLongHold();cancelAutoCount("Acessibilidade interrompida; contador cancelado.");cancelPending();scanQueue.clear();++workGeneration;if(!prefs().getBoolean(ShizukuScanMode.PREF,false))restoreKeyboard();status("Acessibilidade interrompida.");}
+    @Override public void onInterrupt(){lastKnownEditor=null;lastKnownScreen="";stopLongHold();cancelAutoCount("Acessibilidade interrompida; contador cancelado.");cancelPending();scanQueue.clear();++workGeneration;if(!prefs().getBoolean(AdbScanMode.PREF,false))restoreKeyboard();status("Acessibilidade interrompida.");}
     @Override public void onDestroy(){
         ++recoveryEpoch;
         recoveryPolicy.finish();
@@ -3490,7 +3492,8 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         stopLongHold();
         cancelAutoCount("Acessibilidade encerrada; contador cancelado.");
         if(receiverRegistered)try{unregisterReceiver(receiver);}catch(RuntimeException ignored){}
-        if(shizukuScan!=null)shizukuScan.stop();
+        if(adbScan!=null)adbScan.stop();
+        OrderNotesClient.stopBeaconListener();
         main.removeCallbacksAndMessages(null);
         enterTimer.removeCallbacksAndMessages(null);
         cancelPending();

@@ -11,7 +11,7 @@ final class ScanAssistState {
     static final String COUNT = "scan_assist_count";
     static final int MAX_COUNT = 100;
     // Bipes automáticos: feature off by default and explicit password activation.
-    static final boolean AUTO_BIPS_ENABLED = true;
+    static final boolean AUTO_BIPS_ENABLED = false;
     static final String CLICK_COOLDOWN_MS = "click_cooldown_ms";
     private ScanAssistState(){}
     static SharedPreferences prefs(Context context){
@@ -28,5 +28,5 @@ final class ScanAssistState {
         MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
         if(svc!=null)svc.cancelAutoCount("Bipes automáticos desligados.");
     }
-    static void report(String message){FloatingToolsService.report(message);}
+    static void report(String message){MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();if(svc!=null)ScanCoordinator.status(svc,message);}
 }

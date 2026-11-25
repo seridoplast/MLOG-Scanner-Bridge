@@ -27,7 +27,7 @@ import (
 //go:embed web/*
 var webFiles embed.FS
 
-const centralVersion = "3.6.19"
+const centralVersion = "3.6.21"
 
 type Note struct {
 	ID            string `json:"id"`
@@ -322,7 +322,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		if !readJSON(w, r, &in) {
 			return
 		}
-		if in.Kind != "check_stable_update" && in.Kind != "shizuku_assist" {
+		if in.Kind != "check_stable_update" {
 			fail(w, 400, "comando não permitido")
 			return
 		}
@@ -350,10 +350,6 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		count := 0
 		skipped := 0
 		for _, d := range selected {
-			if in.Kind == "shizuku_assist" && (d.Shizuku || d.ADBLocal) {
-				skipped++
-				continue
-			}
 			throttled := false
 			for _, a := range s.db.Actions {
 				if a.DeviceID != d.ID || a.Kind != in.Kind {
@@ -681,6 +677,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			Model             string `json:"model"`
 			Shizuku           bool   `json:"shizuku"`
 			ADBLocal          bool   `json:"adbLocal"`
+			MessagesPaused    bool   `json:"messagesPaused"`
 			UpdateStatus      string `json:"updateStatus"`
 			Accessibility     bool   `json:"accessibility"`
 			MlogForeground    bool   `json:"mlogForeground"`
@@ -788,7 +785,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		deliveredNew := false
 		for i := range s.db.Broadcasts {
 			b := &s.db.Broadcasts[i]
-			if b.Status != "active" || !contains(b.Targets, in.ID) {
+			if in.MessagesPaused || b.Status != "active" || !contains(b.Targets, in.ID) {
 				continue
 			}
 			if _, seen := b.Seen[in.ID]; seen {
@@ -813,7 +810,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		commands := []FleetAction{}
 		for i := range s.db.Actions {
 			a := &s.db.Actions[i]
-			if a.DeviceID != in.ID || a.Status == "acknowledged" {
+			if a.Kind != "check_stable_update" || a.DeviceID != in.ID || a.Status == "acknowledged" {
 				continue
 			}
 			created, err := time.Parse(time.RFC3339, a.CreatedAt)

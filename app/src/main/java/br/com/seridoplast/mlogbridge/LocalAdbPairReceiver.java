@@ -38,11 +38,11 @@ public final class LocalAdbPairReceiver extends BroadcastReceiver {
                 }
                 NotificationManager nm=a.getSystemService(NotificationManager.class);
                 if(nm==null || !nm.areNotificationsEnabled()){Toast.makeText(a,"Ative as notificações do Bridge.",Toast.LENGTH_LONG).show();return;}
-                nm.createNotificationChannel(new NotificationChannel(CHANNEL,"Pareamento ADB",NotificationManager.IMPORTANCE_DEFAULT));
+                nm.createNotificationChannel(new NotificationChannel(CHANNEL,"Pareamento ADB",NotificationManager.IMPORTANCE_LOW));
                 PendingIntent pi=PendingIntent.getBroadcast(a,ID,new Intent(a,LocalAdbPairReceiver.class).setAction(ACTION),PendingIntent.FLAG_UPDATE_CURRENT|(Build.VERSION.SDK_INT>=31?PendingIntent.FLAG_MUTABLE:0));
                 RemoteInput input=new RemoteInput.Builder(REPLY).setLabel("IP:porta código").build();
-                Notification.Action action=new Notification.Action.Builder(android.R.drawable.ic_menu_send,"Informar porta e código",pi).addRemoteInput(input).build();
-                nm.notify(ID,new Notification.Builder(a,CHANNEL).setSmallIcon(android.R.drawable.ic_dialog_info).setContentTitle("MLOG Bridge · Parear ADB").setContentText("Abra o código de pareamento e responda aqui: IP:porta código").addAction(action).setVisibility(Notification.VISIBILITY_PRIVATE).setTimeoutAfter(180000L).setAutoCancel(false).build());
+                Notification.Action action=new Notification.Action.Builder(R.drawable.ui_terminal,"Informar porta e código",pi).addRemoteInput(input).build();
+                nm.notify(ID,new Notification.Builder(a,CHANNEL).setSmallIcon(R.drawable.ui_terminal).setContentTitle("MLOG Bridge · Parear ADB").setContentText("Abra o código de pareamento e responda aqui: IP:porta código").addAction(action).setVisibility(Notification.VISIBILITY_PRIVATE).setTimeoutAfter(180000L).setAutoCancel(false).build());
                 try{a.startActivity(new Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS));}catch(Exception ignored){a.startActivity(new Intent(Settings.ACTION_SETTINGS));}
             }).setNegativeButton("Cancelar",null).show();
     }
@@ -61,7 +61,7 @@ public final class LocalAdbPairReceiver extends BroadcastReceiver {
         String[] endpoint=parts[0].split(":");
         String host=endpoint.length==2?endpoint[0]:"127.0.0.1";
         int port=Integer.parseInt(endpoint[endpoint.length-1]);
-        if(nm!=null)nm.notify(ID,new Notification.Builder(app,CHANNEL).setSmallIcon(android.R.drawable.ic_dialog_info)
+        if(nm!=null)nm.notify(ID,new Notification.Builder(app,CHANNEL).setSmallIcon(R.drawable.ui_terminal)
             .setContentTitle("MLOG Bridge · Pareando").setContentText("Autenticando com o Android (até 25 segundos)")
             .setProgress(0,0,true).setOnlyAlertOnce(true).setVisibility(Notification.VISIBILITY_PRIVATE).setTimeoutAfter(30000L).build());
         PendingResult pending=goAsync();
@@ -73,7 +73,7 @@ public final class LocalAdbPairReceiver extends BroadcastReceiver {
         });
     }
     private static void result(Context app,NotificationManager nm,String message){
-        if(nm!=null)nm.notify(ID,new Notification.Builder(app,CHANNEL).setSmallIcon(android.R.drawable.ic_dialog_info)
+        if(nm!=null)nm.notify(ID,new Notification.Builder(app,CHANNEL).setSmallIcon(R.drawable.ui_terminal)
             .setContentTitle("MLOG Bridge · ADB local").setContentText(message).setStyle(new Notification.BigTextStyle().bigText(message))
             .setProgress(0,0,false).setOnlyAlertOnce(true).setVisibility(Notification.VISIBILITY_PRIVATE).setAutoCancel(true).setTimeoutAfter(90000L).build());
         Toast.makeText(app,message,Toast.LENGTH_LONG).show();

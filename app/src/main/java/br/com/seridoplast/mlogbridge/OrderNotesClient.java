@@ -210,8 +210,9 @@ final class OrderNotesClient {
                 }catch(Exception ignored){body.put("bridgeVersion","?");}
                 body.put("androidVersion",Build.VERSION.RELEASE);
                 body.put("model",Build.MODEL==null?"Coletor":Build.MODEL);
-                body.put("shizuku",ShizukuHealthMonitor.ready());
+                
                 body.put("adbLocal",LocalAdbBridge.ready());
+                body.put("messagesPaused",true);
                 body.put("updateStatus",app.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE).getString(BridgeUpdater.LAST_STATUS,""));
                 body.put("accessibility",MlogFocusAccessibilityService.current()!=null);
                 body.put("mlogForeground",MlogFocusAccessibilityService.mlogForeground());
@@ -231,8 +232,11 @@ final class OrderNotesClient {
                 try {data=request(app,"POST","/api/device/heartbeat",body);}
                 catch(IOException compatibility){
                     // Painel Windows antigo rejeita campos adicionais (HTTP 400).
-                    // Mantemos avisos e observacoes funcionando ate o PC ser atualizado.
+                    // Preservamos telemetria compatível até o PC ser atualizado.
                     if(compatibility.getMessage()==null || !compatibility.getMessage().contains("HTTP 400"))throw compatibility;
+                    body.remove("messagesPaused");
+                    try{data=request(app,"POST","/api/device/heartbeat",body);}catch(IOException stillOlder){
+                    if(stillOlder.getMessage()==null || !stillOlder.getMessage().contains("HTTP 400"))throw stillOlder;
                     body.remove("adbLocal");body.remove("updateStatus");
                     try{data=request(app,"POST","/api/device/heartbeat",body);}
                     catch(IOException older){
@@ -241,20 +245,22 @@ final class OrderNotesClient {
                         legacy.put("id",deviceId(app));legacy.put("name",deviceName(app));legacy.put("order",LAST_ORDER);
                         data=request(app,"POST","/api/device/heartbeat",legacy);
                     }
+                    }
                 }
                 String preferred=data.optString("preferredName","");
                 if(!preferred.isEmpty())setDeviceName(app,preferred);
                 lastGoodAt=SystemClock.elapsedRealtime();
                 lastProblem="";
-                ArrayList<Broadcast> messages=new ArrayList<>();
-                JSONArray arr=data.optJSONArray("broadcasts");
-                if(arr!=null)for(int i=0;i<arr.length()&&i<60;i++){
-                    JSONObject item=arr.optJSONObject(i);if(item==null)continue;
-                    String id=item.optString("id","");String message=item.optString("text","");
-                    if(id.matches("[0-9a-f]{32}")&&!message.isEmpty()&&message.length()<=1500)
-                        messages.add(new Broadcast(id,message));
-                }
-                MAIN.post(()->FloatingToolsService.showBroadcasts(messages,()->received(app,messages)));
+                // Avisos desativados temporariamente. Não confirmar mensagens que não foram exibidas.
+                // ArrayList<Broadcast> messages=new ArrayList<>();
+                // JSONArray arr=data.optJSONArray("broadcasts");
+                // if(arr!=null)for(int i=0;i<arr.length()&&i<60;i++){
+                // JSONObject item=arr.optJSONObject(i);if(item==null)continue;
+                // String id=item.optString("id","");String message=item.optString("text","");
+                // if(id.matches("[0-9a-f]{32}")&&!message.isEmpty()&&message.length()<=1500)
+                // messages.add(new Broadcast(id,message));
+                // }
+                // MAIN.post(()->FloatingToolsService.showBroadcasts(messages,()->received(app,messages)));
                 JSONArray commands=data.optJSONArray("commands");
                 if(commands!=null)processPanelCommands(app,commands);
             }catch(Exception ex){
@@ -266,7 +272,7 @@ final class OrderNotesClient {
         });
     }
     /** Deliberately narrow allow-list. No remote shell, arbitrary URL or APK install.
-     * The panel can request an approved Release check or notify an operator to start Shizuku.
+     * The panel can request an approved Release check only.
      * Commands are idempotent over retries and expire server-side. */
     private static void processPanelCommands(Context c,JSONArray commands){
         SharedPreferences sp=c.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE);
@@ -285,11 +291,6 @@ final class OrderNotesClient {
                 if("check_stable_update".equals(kind)){
                     result=BridgeUpdater.checkRequestedByPanel(c)?
                         "Consulta da Release estavel agendada":"Busca automatica desativada no coletor";
-                }else if("shizuku_assist".equals(kind)){
-                    if(LocalAdbBridge.ready())result="ADB local ativo; Shizuku dispensável";
-                    else if(ShizukuHealthMonitor.ready())result="Shizuku ja esta ativo";
-                    else result=ShizukuHealthMonitor.requestOperatorStart(c)?
-                        "Notificacao exibida; operador deve iniciar Shizuku":"Sem permissao para avisar; ativacao precisa de ADB ou operador";
                 }else continue;
                 // Bounded deduplication ledger, retained for server retry on lost ACK.
                 String[] old=history.split("\\|",-1);
@@ -434,24 +435,26 @@ final class OrderNotesClient {
         String order=OrderNumberPolicy.normalize(raw);
         if(order==null)return;
         LAST_ORDER=order;
-        if(!configured(c)){reconnect(c);return;}
-        final Context app=c.getApplicationContext();
-        final int generation=GENERATION.incrementAndGet();
-        IO.execute(()->{
-            try{
-                JSONObject result=request(app,"GET","/api/notes?order="+URLEncoder.encode(order,"UTF-8"),null);
-                JSONArray arr=result.optJSONArray("notes");
-                ArrayList<Note> list=new ArrayList<>();
-                if(arr!=null){for(int i=0;i<arr.length()&&i<100;i++){
-                    JSONObject o=arr.optJSONObject(i);if(o==null)continue;
-                    String id=o.optString("id","");String number=o.optString("order","");String text=o.optString("text","");
-                    if(id.matches("[0-9a-f]{32}")&&order.equals(number)&&!text.isEmpty())list.add(new Note(id,number,text));
-                }}
-                MAIN.postDelayed(()->{
-                    if(GENERATION.get()==generation)FloatingToolsService.showOrderNotes(order,list);
-                },850);
-            }catch(Exception e){MAIN.post(()->{if(GENERATION.get()==generation)FloatingToolsService.report("Observações: painel sem conexão.");});}
-        });
+        // Consulta e pop-up de observações suspensos. O número segue no heartbeat.
+        // if(!configured(c)){reconnect(c);return;}
+        // final Context app=c.getApplicationContext();
+        // final int generation=GENERATION.incrementAndGet();
+        // IO.execute(()->{
+        // try{
+        // JSONObject result=request(app,"GET","/api/notes?order="+URLEncoder.encode(order,"UTF-8"),null);
+        // JSONArray arr=result.optJSONArray("notes");
+        // ArrayList<Note> list=new ArrayList<>();
+        // if(arr!=null){for(int i=0;i<arr.length()&&i<100;i++){
+        // JSONObject o=arr.optJSONObject(i);if(o==null)continue;
+        // String id=o.optString("id","");String number=o.optString("order","");String text=o.optString("text","");
+        // if(id.matches("[0-9a-f]{32}")&&order.equals(number)&&!text.isEmpty())list.add(new Note(id,number,text));
+        // }}
+        // MAIN.postDelayed(()->{
+        // if(GENERATION.get()==generation)FloatingToolsService.showOrderNotes(order,list);
+        // },850);
+        // }catch(Exception e){MAIN.post(()->{if(GENERATION.get()==generation)FloatingToolsService.report("Observações: painel sem conexão.");});}
+        // });
+        // }
     }
     static void refresh(Context c,String order){if(order!=null)observedOrder(c,order);}
     static void complete(Context c,String order,List<Note> notes,Callback callback){

@@ -22,7 +22,7 @@ import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
-import android.widget.CheckBox;
+
 import android.widget.EditText;
 import android.text.InputType;
 import android.widget.ImageView;
@@ -30,7 +30,6 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
-import rikka.shizuku.Shizuku;
 import android.view.inputmethod.InputMethodManager;
 import android.view.inputmethod.InputMethodInfo;
 import java.util.List;
@@ -62,7 +61,7 @@ public final class MainActivity extends Activity {
     private int bg, card, line, ink, muted, inverse, inkSurface;
     private int primary, primarySoft, surfaceAlt, success, amber, heroBase;
     private LinearLayout root, content, footer;
-    private TextView preview, lastStatus, barcodeFormatStatus, barcodeArtifactStatus, barcodeFieldsStatus, serviceState, shizukuSettingsStatus, scannerConnectionStatus;
+    private TextView preview, lastStatus, barcodeFormatStatus, barcodeArtifactStatus, barcodeFieldsStatus, serviceState, adbSettingsStatus, scannerConnectionStatus;
     private TextView scannerConnectionTitle, scanHint, historyCount;
     private ImageView scannerConnectionDot;
     private LinearLayout recentReadsList;
@@ -80,19 +79,8 @@ public final class MainActivity extends Activity {
     private String lastSymbology;
     private String lastMetadataFields;
     private long lastThemeTapAt;
-    private TextView githubUpdateStatus, shizukuUpdateStatus, adbStatus;
-    private File shizukuPendingInstall;
+    private TextView githubUpdateStatus, adbStatus, recoveryStatus;
     private boolean githubChecking;
-    private static final int SHIZUKU_REQUEST=340;
-    private final Shizuku.OnRequestPermissionResultListener shizukuPermission=(code,result)->{
-        if(code!=SHIZUKU_REQUEST)return;
-        handler.post(()->{
-            if(result==android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                toast("Shizuku autorizado.");
-            } else toast("Shizuku nao autorizado. O modo atual foi mantido.");
-            if(!isFinishing())displayPage();
-        });
-    };
     private File githubPendingInstall;
 
     private final BroadcastReceiver scannerTest = new BroadcastReceiver(){
@@ -150,21 +138,23 @@ public final class MainActivity extends Activity {
     private final Runnable ticker=new Runnable(){
         @Override public void run(){
             if(serviceState!=null){
-                boolean shizuku=prefs.getBoolean(ShizukuScanMode.PREF,false);
+                boolean adb=prefs.getBoolean(AdbScanMode.PREF,false);
                 boolean active=MlogFocusAccessibilityService.current()!=null;
-                boolean ready=shizukuAuthorized();
-                boolean statusOk=shizuku && ready && active;
-                serviceState.setText(!shizuku?"Ative a leitura privilegiada em Ajustes":
-                    statusOk?(LocalAdbBridge.ready()?"Bipe ADB pronto":"Bipe Shizuku pronto"):
-                    !ready?"Conecte o ADB ou Shizuku":"Ative a acessibilidade");
+                boolean ready=adbAuthorized();
+                boolean statusOk=adb && ready && active;
+                serviceState.setText(!adb?"Ative a leitura privilegiada em Ajustes":
+                    statusOk?"Bipe ADB pronto":
+                    !ready?"Conecte o ADB local":"Ative a acessibilidade");
                 serviceState.setTextColor(statusOk?success:amber);
                 leadingIcon(serviceState,statusOk?R.drawable.ui_check_circle:R.drawable.ui_alert_circle,
                     statusOk?success:amber,16);
             }
-            if(prefs.getBoolean(ShizukuScanMode.PREF,false))
-                ShizukuHealthMonitor.refresh(MainActivity.this);
+            if(prefs.getBoolean(AdbScanMode.PREF,false))
+                LocalAdbBridge.tick(MainActivity.this);
             if(adbStatus!=null)adbStatus.setText(LocalAdbBridge.status());
-            updateShizukuUiStatus();
+            if(recoveryStatus!=null)recoveryStatus.setText(AdbWifiRecovery.status(MainActivity.this));
+            updateAdbUiStatus();
+            FleetTelemetry.tick(MainActivity.this);
             refreshSetupWarning();
             refreshScannerStatus();
             if(page==2 && lastStatus!=null){
@@ -177,48 +167,7 @@ public final class MainActivity extends Activity {
     @Override public void onCreate(Bundle saved){
         prefs=getSharedPreferences(ScanCoordinator.PREFS,MODE_PRIVATE);
         BridgePreferences.enableOnUpgrade(prefs);
-        // v3.6.10: leitura sempre ligada; bolha de observacoes ativa por padrão.
-        if(!prefs.getBoolean("observacoes_auto_v3610",false)){
-            prefs.edit().putBoolean("observacoes_auto_v3610",true)
-                .putBoolean("floating_auto_start_v302",true).apply();
-        }
-        prefs.edit().putBoolean(ScanAssistState.CLEAN,true).apply();
-        if(!prefs.getBoolean("auto_bips_optin_v344",false)){
-            prefs.edit().putBoolean("auto_bips_optin_v344",true)
-                .putBoolean(ScanAssistState.BATCH,false)
-                .putBoolean(ScanAssistState.ARMED,false).apply();
-        }
-        // v3.4.3: legacy Zebra modes removed from the UI. Preserve Shizuku;
-        // migrate old Zebra-only selections to Bipe Normal safely.
-        if(!prefs.getBoolean("migrated_remove_zebra_v343",false)){
-            boolean oldZebra=prefs.getBoolean(ZebraImeMode.PREF,false) ||
-                prefs.getBoolean(ZebraProfile0Mode.PREF,false);
-            boolean shizukuSelected=prefs.getBoolean(ShizukuScanMode.PREF,false);
-            SharedPreferences.Editor migration=prefs.edit()
-                .putBoolean("migrated_remove_zebra_v343",true)
-                .putBoolean(ZebraImeMode.PREF,false)
-                .putBoolean(ZebraProfile0Mode.PREF,false);
-            if(oldZebra && !shizukuSelected){
-                migration.putBoolean(BridgeEnterPolicy.PREFERENCE,true)
-                    .putBoolean(NativeScannerController.PREF,true)
-                    .putBoolean("enabled",true);
-            }
-            migration.apply();
-            if(oldZebra && !shizukuSelected)NativeScannerController.configure(this);
-        }
-        if(!ScanAssistState.AUTO_BIPS_ENABLED){
-            prefs.edit().putBoolean(ScanAssistState.ARMED,false)
-                .putBoolean(ScanAssistState.BATCH,false).apply();
-        }
-        // v3.5.9: interface usa apenas Shizuku; codigo do Bipe Normal permanece
-        // para compatibilidade, mas nao e selecionavel pela interface.
-        if(!prefs.getBoolean("shizuku_only_v359",false)){
-            prefs.edit().putBoolean("shizuku_only_v359",true)
-                .putBoolean(ShizukuScanMode.PREF,true)
-                .putBoolean(BridgeEnterPolicy.PREFERENCE,false)
-                .putBoolean("guided_taps",false)
-                .putBoolean("layout_fallback",false).apply();
-        }
+        BridgePreferences.adbOnly(prefs);
         themeChoice=prefs.getString("theme_choice","auto");
         // Corrige preferencia que podia ter sido alterada por Enter do scanner
         // em versoes antigas. A partir de agora, apenas toque real alterna tema.
@@ -252,7 +201,6 @@ public final class MainActivity extends Activity {
         boolean dark=darkNow();
         setTheme(dark?R.style.BridgeThemeDark:R.style.BridgeThemeLight);
         super.onCreate(saved);
-        Shizuku.addRequestPermissionResultListener(shizukuPermission);
         if(saved!=null)page=saved.getInt("page",0);
         palette(dark);
         displayPage();
@@ -294,7 +242,7 @@ public final class MainActivity extends Activity {
     private TextView label(String value,int sp,int color,boolean bold){
         TextView t=new TextView(this);t.setText(value);t.setTextSize(sp);t.setTextColor(color);
         if(bold)t.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
-        t.setIncludeFontPadding(true);return t;
+        t.setIncludeFontPadding(false);t.setLineSpacing(dp(2),1f);return t;
     }
     private ImageView icon(int res,int tint,int size){
         ImageView view=new ImageView(this);view.setImageResource(res);
@@ -319,8 +267,8 @@ public final class MainActivity extends Activity {
     }
     private void space(LinearLayout dest,int px){View v=new View(this);dest.addView(v,new LinearLayout.LayoutParams(1,dp(px)));}
     private LinearLayout card(){
-        LinearLayout c=column();c.setPadding(dp(18),dp(18),dp(18),dp(18));
-        c.setBackground(shape(card,line,22));c.setElevation(dp(2));
+        LinearLayout c=column();c.setPadding(dp(16),dp(18),dp(16),dp(18));
+        c.setBackground(shape(card,line,18));c.setElevation(0);
         LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(-1,-2);
         cp.bottomMargin=dp(14);content.addView(c,cp);return c;
     }
@@ -331,7 +279,9 @@ public final class MainActivity extends Activity {
     /** One consistent monochrome vector icon set for all command buttons. */
     private int actionIcon(String label){
         String n=label.toLowerCase(Locale.ROOT);
-        if(n.contains("avis")||n.contains("observ")||n.contains("mensag"))return R.drawable.ui_bell;
+        if(n.contains("parear")||n.contains("porta"))return R.drawable.ui_terminal;
+        if(n.contains("wi-fi")||n.contains("redes"))return R.drawable.ui_wifi;
+        if(n.contains("desligar")||n.contains("desativar")||n.contains("desconectar")||n.contains("fechar"))return R.drawable.ui_square;
         if(n.contains("buscar")||n.contains("procurar")||n.contains("verificar")||
            n.contains("reconectar")||n.contains("reconfigurar"))return R.drawable.ui_refresh;
         if(n.contains("instalar")||n.contains("ativar")||n.contains("confirmar"))return R.drawable.ui_check_circle;
@@ -345,8 +295,8 @@ public final class MainActivity extends Activity {
     }
     private TextView action(String name,boolean filled,Runnable callback){
         TextView b=label(name,14,filled?0xffffffff:primary,true);
-        b.setGravity(Gravity.CENTER);b.setPadding(dp(12),dp(14),dp(12),dp(14));
-        b.setBackground(filled?gradient(0xff3a7cfa,0xff2457d0,15):shape(primarySoft,0,15));
+        b.setGravity(Gravity.CENTER_VERTICAL);b.setMinHeight(dp(48));b.setPadding(dp(14),dp(12),dp(14),dp(12));
+        b.setBackground(filled?shape(primary,0,12):shape(primarySoft,0,12));
         leadingIcon(b,actionIcon(name),filled?0xffffffff:primary,18);
         b.setFocusable(false);b.setFocusableInTouchMode(false);
         b.setOnClickListener(w->callback.run());b.setClickable(true);
@@ -359,19 +309,21 @@ public final class MainActivity extends Activity {
     }
     private void displayPage(){
         root=column();root.setBackgroundColor(bg);setContentView(root);
+        if(Build.VERSION.SDK_INT>=35)root.setOnApplyWindowInsetsListener((v,insets)->{android.graphics.Insets i=insets.getInsets(android.view.WindowInsets.Type.systemBars()|android.view.WindowInsets.Type.displayCutout()); v.setPadding(i.left,i.top,i.right,i.bottom);return insets;});
+        root.requestApplyInsets();
         LinearLayout head=row();head.setPadding(dp(18),dp(13),dp(18),dp(13));
         LinearLayout left=row();
         ImageView logo=new ImageView(this);
         logo.setImageResource(darkNow()?R.drawable.brand_home_dark:R.drawable.brand_home_light);
         logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        left.addView(logo,new LinearLayout.LayoutParams(dp(43),dp(43)));
+        left.addView(logo,new LinearLayout.LayoutParams(dp(38),dp(38)));
         LinearLayout branding=column();
         ImageView name=new ImageView(this);
         name.setImageResource(darkNow()?R.drawable.brand_name_dark:R.drawable.brand_name_light);
         name.setScaleType(ImageView.ScaleType.FIT_START);
         name.setContentDescription("Seridóplast MLOG Bridge");
-        branding.addView(name,new LinearLayout.LayoutParams(dp(140),dp(38)));
-        LinearLayout.LayoutParams blp=new LinearLayout.LayoutParams(-2,-2);blp.leftMargin=dp(8);
+        branding.addView(name,new LinearLayout.LayoutParams(-1,dp(36)));
+        LinearLayout.LayoutParams blp=new LinearLayout.LayoutParams(0,-2,1);blp.leftMargin=dp(8);
         left.addView(branding,blp);
         head.addView(left,new LinearLayout.LayoutParams(0,-2,1));
         TextView version=capsule("v"+installedVersionName(),primary,primarySoft);
@@ -420,8 +372,8 @@ public final class MainActivity extends Activity {
             footer.addView(tab,tlp);
         }
         root.addView(footer);
-        githubUpdateStatus=null;adbStatus=null;preview=null;lastStatus=null;barcodeFormatStatus=null;barcodeArtifactStatus=null;
-        barcodeFieldsStatus=null;serviceState=null;shizukuSettingsStatus=null;scannerConnectionStatus=null;
+        githubUpdateStatus=null;adbStatus=null;recoveryStatus=null;preview=null;lastStatus=null;barcodeFormatStatus=null;barcodeArtifactStatus=null;
+        barcodeFieldsStatus=null;serviceState=null;adbSettingsStatus=null;scannerConnectionStatus=null;
         scannerConnectionTitle=null;scannerConnectionDot=null;scanHint=null;historyCount=null;
         recentReadsList=null;lastRenderedRead="";setupWarningCard=null;setupWarningLabel=null;
         setupAccessibilityStep=null;setupKeyboardEnabledStep=null;setupKeyboardSelectedStep=null;setupFloatingStep=null;
@@ -458,42 +410,11 @@ public final class MainActivity extends Activity {
         return keyboardEnabled() && selected!=null && selected.startsWith(getPackageName()+"/");
     }
     private boolean keyboardReady(){return keyboardSelected();}
-    private boolean floatingReady(){
-        boolean allowed=Build.VERSION.SDK_INT<23 || Settings.canDrawOverlays(this);
-        return allowed && FloatingToolsService.isRunning();
-    }
-    private String missingRequiredSetup(){
-        if(prefs.getBoolean(ShizukuScanMode.PREF,false)) {
-            if(!accessibilityReady())return "• Ative a acessibilidade do Bridge para receber o scanner";
-            return shizukuAuthorized()?"":"• Inicie e autorize o Shizuku";
-        }
-        if(ZebraProfile0Mode.isSelected(prefs.getBoolean(ZebraImeMode.PREF,false),
-                prefs.getBoolean(ZebraProfile0Mode.PREF,false)))return "";
-        if(prefs.getBoolean(ZebraImeMode.PREF,false)){
-            return keyboardReady()?"":"• Selecione o teclado Bridge nas configuracoes do Android";
-        }
-        StringBuilder missing=new StringBuilder();
-        if(!accessibilityReady())missing.append("• Acessibilidade desativada\n");
-        if(!keyboardReady())missing.append("• Teclado Bridge não habilitado/selecionado\n");
-        if(!floatingReady())missing.append("• Botão flutuante não autorizado/ativado\n");
-        return missing.toString().trim();
-    }
     private void openAccessibilitySettings(){
         startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
     }
     private void openKeyboardSettings(){
         startActivity(new Intent(Settings.ACTION_INPUT_METHOD_SETTINGS));
-    }
-    private void openOverlaySettings(){
-        prefs.edit().putBoolean("floating_auto_start_v302",true).apply();
-        if(Build.VERSION.SDK_INT<23 || Settings.canDrawOverlays(this)){
-            startService(new Intent(this,FloatingToolsService.class));
-            return;
-        }
-        if(Build.VERSION.SDK_INT>=23){
-            startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                Uri.parse("package:"+getPackageName())));
-        }
     }
     /** Cada autorização mostra um check verde ASSIM QUE o Android confirmar. */
     private TextView setupStep(String title,Runnable open){
@@ -524,14 +445,14 @@ public final class MainActivity extends Activity {
         setupWarningLabel=label("Conclua os passos para usar o leitor.",12,muted,false);
         space(setupWarningCard,5);setupWarningCard.addView(setupWarningLabel);
         setupAccessibilityStep=setupStep("Acessibilidade",this::openAccessibilitySettings);
-        setupFloatingStep=setupStep("Botão flutuante",this::openOverlaySettings);
+        setupFloatingStep=setupStep("ADB local",()->show(1));
         refreshSetupWarning();
     }
     private void refreshSetupWarning(){
         if(setupWarningCard==null || setupWarningLabel==null)return;
-        boolean access=accessibilityReady();boolean floating=floatingReady();
+        boolean access=accessibilityReady();boolean floating=LocalAdbBridge.ready();
         updateSetupStep(setupAccessibilityStep,access,"Acessibilidade");
-        updateSetupStep(setupFloatingStep,floating,"Botão flutuante");
+        updateSetupStep(setupFloatingStep,floating,"ADB local");
         setupWarningCard.setVisibility(access && floating?View.GONE:View.VISIBLE);
     }
 
@@ -584,18 +505,14 @@ public final class MainActivity extends Activity {
         codePlate.addView(preview);
         lastStatus=label("Nenhuma leitura ainda",12,0xffbdd0ef,false);
         lastStatus.setGravity(Gravity.CENTER);space(codePlate,5);codePlate.addView(lastStatus);
-        serviceState=label("Verificando Bipe Shizuku...",12,0xffb9d1fc,false);
+        serviceState=label("Verificando Bipe ADB...",12,0xffb9d1fc,false);
         serviceState.setGravity(Gravity.CENTER);space(testCard,12);testCard.addView(serviceState);
         LinearLayout actions=row();actions.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams alp=new LinearLayout.LayoutParams(-1,-2);alp.topMargin=dp(17);
         testCard.addView(actions,alp);
         TextView open=action("Abrir MLOG",true,this::openMlog);
-        open.setBackground(shape(0xffffffff,0,14));open.setTextColor(0xff1a4692);
-        TextView floating=action("Ferramentas",false,this::openFloatingTools);
-        floating.setBackground(shape(0xff284b84,0,14));floating.setTextColor(0xffffffff);
-        LinearLayout.LayoutParams oa=new LinearLayout.LayoutParams(0,-2,1);
-        LinearLayout.LayoutParams fa=new LinearLayout.LayoutParams(0,-2,1);fa.leftMargin=dp(8);
-        actions.addView(open,oa);actions.addView(floating,fa);
+        open.setBackground(shape(0xffffffff,0,14));open.setTextColor(0xff1a4692);leadingIcon(open,R.drawable.ui_scan,0xff1a4692,18);
+        actions.addView(open,new LinearLayout.LayoutParams(-1,-2));
 
         LinearLayout recentCard=card();
         LinearLayout recentHead=row();
@@ -620,16 +537,16 @@ public final class MainActivity extends Activity {
     private void refreshScannerStatus(){
         if(scannerConnectionStatus==null && scannerConnectionTitle==null)return;
         boolean available=NativeScannerController.isInstalled(this);
-        boolean ready=available && prefs.getBoolean(ShizukuScanMode.PREF,false)
-            && shizukuAuthorized() && accessibilityReady();
+        boolean ready=available && prefs.getBoolean(AdbScanMode.PREF,false)
+            && adbAuthorized() && accessibilityReady();
         if(scannerConnectionTitle!=null)scannerConnectionTitle.setText(available?"Leitor disponível":"Leitor não detectado");
         if(scannerConnectionDot!=null){
             scannerConnectionDot.setImageResource(ready?R.drawable.ui_check_circle:R.drawable.ui_alert_circle);
             scannerConnectionDot.setColorFilter(ready?success:amber,android.graphics.PorterDuff.Mode.SRC_IN);
         }
         if(scannerConnectionStatus!=null){
-            scannerConnectionStatus.setText(ready?"Bipe Shizuku pronto para testar":
-                !available?"Serviço CMX não localizado":"Confira Shizuku e acessibilidade");
+            scannerConnectionStatus.setText(ready?"Bipe ADB pronto para testar":
+                !available?"Serviço CMX não localizado":"Confira Adb e acessibilidade");
             scannerConnectionStatus.setTextColor(ready?success:amber);
         }
     }
@@ -699,89 +616,19 @@ public final class MainActivity extends Activity {
      * (C) Zebra IME = broadcast + teclado Bridge envia KeyEvents ao editor MLOG.
      * IMPORTANTE: (C) nao injeta teclas globais e exige InputConnection focada.
      */
-    private boolean shizukuAuthorized(){
-        return ShizukuHealthMonitor.privilegedReady();
+    private boolean adbAuthorized(){
+        return LocalAdbBridge.ready();
     }
-    private void openShizuku(){
-        if(!ShizukuHealthMonitor.openShizuku(this))
-            toast("Shizuku não encontrado. Instale o aplicativo Shizuku.");
-    }
-    private void updateShizukuUiStatus(){
-        if(shizukuSettingsStatus==null)return;
-        boolean ready=shizukuAuthorized();
+    private void updateAdbUiStatus(){
+        if(adbSettingsStatus==null)return;
+        boolean ready=adbAuthorized();
         boolean accessible=accessibilityReady();
         boolean statusOk=ready && accessible;
-        shizukuSettingsStatus.setText(statusOk?(LocalAdbBridge.ready()?"ADB local pronto":"Shizuku pronto"):
-            !ready?"Conecte o ADB ou Shizuku":"Ative a acessibilidade");
-        shizukuSettingsStatus.setTextColor(statusOk?success:amber);
-        leadingIcon(shizukuSettingsStatus,statusOk?R.drawable.ui_check_circle:R.drawable.ui_alert_circle,
+        adbSettingsStatus.setText(statusOk?"ADB local pronto":
+            !ready?"Conecte o ADB local":"Ative a acessibilidade");
+        adbSettingsStatus.setTextColor(statusOk?success:amber);
+        leadingIcon(adbSettingsStatus,statusOk?R.drawable.ui_check_circle:R.drawable.ui_alert_circle,
             statusOk?success:amber,16);
-    }
-    private void selectShizukuMode(){
-        if(!accessibilityReady()){
-            new AlertDialog.Builder(this).setTitle("Acessibilidade necessaria")
-                .setMessage("O Bridge recebe os broadcasts do coletor pelo servico de acessibilidade. " +
-                    "Neste modo ele NAO clica, abre teclado nem digita no MLOG. Habilite o servico.")
-                .setPositiveButton("Abrir configuracoes",(d,w)->openAccessibilitySettings())
-                .setNegativeButton("Cancelar",null).show();
-            return;
-        }
-        if(!shizukuAuthorized()){
-            try {
-                if(!Shizuku.pingBinder()){
-                    openShizuku();toast("No Shizuku, toque em Iniciar e volte ao Bridge.");return;
-                }
-                if(Shizuku.shouldShowRequestPermissionRationale()){
-                    toast("Permissao negada. Autorize o Bridge dentro do Shizuku.");return;
-                }
-                Shizuku.requestPermission(SHIZUKU_REQUEST);
-            }catch(RuntimeException e){toast("Nao foi possivel acessar o Shizuku.");}
-            return;
-        }
-        if(!NativeScannerController.configure(this)){
-            toast("Falha ao configurar broadcast exclusivo do CMX; modo preservado.");return;
-        }
-        prefs.edit().putBoolean(ShizukuScanMode.PREF,true)
-            .putBoolean(ZebraImeMode.PREF,false)
-            .putBoolean(ZebraProfile0Mode.PREF,false)
-            .putBoolean(NativeScannerController.PREF,true)
-            .putBoolean(DirectScanPolicy.PREF,true)
-            .putBoolean(BridgeEnterPolicy.PREFERENCE,false)
-            .putBoolean(ZebraImeMode.AUTO_FOCUS_PREF,false)
-            .putBoolean("trigger_prefocus",false)
-            .putBoolean(NativeScannerController.LONG_HOLD_PREF,false)
-            .putBoolean("guided_taps",false)
-            .putBoolean("layout_fallback",false)
-            .putBoolean("enabled",true).apply();
-        BridgeScanInputMethodService.resetForModeChange();
-        MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
-        if(svc!=null){svc.refreshEventThrottle();svc.prepareShizuku();}
-        displayPage();
-        ShizukuHealthMonitor.refresh(this);
-        ensureShizukuNotificationPermission();
-        toast("Bipe Shizuku ativado. Teste uma leitura no MLOG.");
-    }
-    private void selectReadMode(){
-        if(!NativeScannerController.isInstalled(this)){
-            toast("Servico nativo do leitor nao encontrado; modo preservado.");return;
-        }
-        if(!NativeScannerController.configure(this)){
-            toast("Nao foi possivel solicitar a saida por broadcast.");return;
-        }
-        prefs.edit().putBoolean(ShizukuScanMode.PREF,false)
-            .putBoolean(ZebraImeMode.PREF,false)
-            .putBoolean(ZebraProfile0Mode.PREF,false)
-            .putBoolean(NativeScannerController.PREF,true)
-            .putBoolean(DirectScanPolicy.PREF,true)
-            .putBoolean(BridgeEnterPolicy.PREFERENCE,true)
-            .putBoolean("enabled",true)
-            .putBoolean("legacy_options_expanded_v327",true).apply();
-        BridgeScanInputMethodService.resetForModeChange();
-        MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
-        if(svc!=null)svc.refreshEventThrottle();
-        displayPage();
-        ShizukuHealthMonitor.refresh(this); // removes a pending Shizuku alert
-        toast("Bipe Normal selecionado; modo broadcast solicitado.");
     }
     private void settings(){
         title("Ajustes","Personalize e mantenha o coletor pronto.");
@@ -790,13 +637,13 @@ public final class MainActivity extends Activity {
         lineHead.addView(icon(R.drawable.ui_scan,primary,24));
         LinearLayout modeName=column();
         modeName.addView(label("Leitura privilegiada",18,ink,true));
-        modeName.addView(label("ADB local / Shizuku",12,muted,false));
+        modeName.addView(label("ADB local",12,muted,false));
         LinearLayout.LayoutParams mn=new LinearLayout.LayoutParams(0,-2,1);mn.leftMargin=dp(10);
         lineHead.addView(modeName,mn);mode.addView(lineHead);
-        shizukuSettingsStatus=label("Verificando...",13,muted,true);
+        adbSettingsStatus=label("Verificando...",13,muted,true);
         LinearLayout.LayoutParams st=new LinearLayout.LayoutParams(-1,-2);st.topMargin=dp(10);
-        mode.addView(shizukuSettingsStatus,st);updateShizukuUiStatus();
-        button(mode,"Configurar Shizuku",true,this::selectShizukuMode);
+        mode.addView(adbSettingsStatus,st);updateAdbUiStatus();
+        
         button(mode,"Acessibilidade",false,this::openAccessibilitySettings);
         space(mode,7);
         check(mode,"Recuperação por Volume","camera_auto_recovery_v348",true);
@@ -804,34 +651,30 @@ public final class MainActivity extends Activity {
             "Leitor reconfigurado.":"Falha ao configurar o leitor."));
 
         LinearLayout adb=card();
-        adb.addView(label("ADB integrado (teste)",18,ink,true));
-        adbStatus=label(LocalAdbBridge.status(),13,muted,false);adb.addView(adbStatus);
-        subtitle(adb,"Android 11+. Pareamento local; Shizuku continua como alternativa.");
+        sectionHeader(adb,R.drawable.ui_terminal,"Conexão ADB");
+        adbStatus=label(LocalAdbBridge.status(),13,muted,false);space(adb,10);adb.addView(adbStatus);
+        subtitle(adb,"Pareie uma vez e reconecte automaticamente.");
         button(adb,"Parear ADB",true,()->LocalAdbPairReceiver.showPairing(this));
         button(adb,"Procurar / reconectar",false,()->{LocalAdbBridge.retry(this);toast("Buscando ADB local...");});
         button(adb,"Informar porta de conexão",false,()->{
-            EditText field=new EditText(this);field.setInputType(InputType.TYPE_CLASS_TEXT);field.setHint("IP:porta ou apenas porta");
+            EditText field=new EditText(this);field.setInputType(InputType.TYPE_CLASS_TEXT);field.setHint("IP:porta ou apenas porta");field.setPadding(dp(18),dp(14),dp(18),dp(14));
             new AlertDialog.Builder(this).setTitle("Porta de conexão (não de pareamento)").setMessage("Use o endereço IP e a porta da tela principal de Depuração sem fio.").setView(field)
                 .setPositiveButton("Conectar",(d,w)->{try{String[] ep=field.getText().toString().trim().split(":");if(ep.length>2)throw new IllegalArgumentException();LocalAdbBridge.setConnectionPort(this,ep.length==2?ep[0]:"127.0.0.1",Integer.parseInt(ep[ep.length-1]));}catch(Exception ex){toast("Verifique o endereço local, a porta e o pareamento.");}}).setNegativeButton("Cancelar",null).show();
         });
-        button(adb,"Desativar ADB integrado",false,()->{LocalAdbBridge.disable(this);displayPage();});
-        LinearLayout tools=card();
-        tools.addView(label("Botão flutuante",17,ink,true));
-        subtitle(tools,"Acesso rápido às ferramentas no MLOG.");
-        button(tools,"Abrir ferramentas",true,this::openFloatingTools);
-        button(tools,"Desligar botão flutuante",false,()->{
-            stopService(new Intent(this,FloatingToolsService.class));
-            prefs.edit().putBoolean("floating_auto_start_v302",false)
-                .putBoolean(ScanAssistState.CLEAN,true)
-                .putBoolean(ScanAssistState.BATCH,false)
-                .putBoolean(ScanAssistState.ARMED,false).apply();
-            toast("Botão flutuante desligado.");
-        });
+        button(adb,"Desconectar ADB",false,()->{LocalAdbBridge.disable(this);AdbWifiRecovery.clear(this);displayPage();});
+        LinearLayout recovery=card();
+        sectionHeader(recovery,R.drawable.ui_wifi,"Recuperação automática");
+        recoveryStatus=label(AdbWifiRecovery.status(this),13,muted,false);space(recovery,10);recovery.addView(recoveryStatus);
+        subtitle(recovery,"Após reiniciar, tenta reativar a depuração somente nos pontos Wi-Fi cadastrados. Requer autorização inicial via USB.");
+        button(recovery,"Cadastrar Wi-Fi atual",true,this::authorizeRecoveryNetwork);
+        button(recovery,"Remover redes e desativar",false,()->{AdbWifiRecovery.clear(this);displayPage();});
+        button(recovery,"Permissões do Android",false,()->startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName()))));
+        button(recovery,"Testar recuperação",false,()->{LocalAdbBridge.retry(this);toast("Verificando recuperação ADB...");});
 
         LinearLayout observations=card();
         LinearLayout obsHead=row();
-        obsHead.addView(icon(R.drawable.ui_bell,primary,24));
-        TextView obsTitle=label("Observações e comunicados",17,ink,true);
+        obsHead.addView(icon(R.drawable.ui_monitor,primary,24));
+        TextView obsTitle=label("Central de operações",17,ink,true);
         LinearLayout.LayoutParams obsTitleLp=new LinearLayout.LayoutParams(-1,-2);obsTitleLp.leftMargin=dp(9);
         obsHead.addView(obsTitle,obsTitleLp);observations.addView(obsHead);
         subtitle(observations,"Conexão automática com o painel do PC na mesma rede privada.");
@@ -873,7 +716,7 @@ public final class MainActivity extends Activity {
             TextView choice=action(opt[1],opt[0].equals(themeChoice),()->chooseTheme(opt[0]));
             // A largura no coletor e pequena: reduzir padding e ajustar fonte,
             // mantendo os três nomes sempre em uma única linha.
-            choice.setSingleLine(true);
+            choice.setCompoundDrawablesRelative(null,null,null,null);choice.setGravity(Gravity.CENTER);choice.setSingleLine(true);
             choice.setMaxLines(1);
             choice.setPadding(dp(4),dp(12),dp(4),dp(12));
             choice.setAutoSizeTextTypeUniformWithConfiguration(11,14,1,
@@ -883,34 +726,19 @@ public final class MainActivity extends Activity {
             themes.addView(choice,lp);
         }
         space(appearance,12);appearance.addView(themes);
-        LinearLayout automatic=card();automatic.addView(label("Bipes automáticos",17,ink,true));
-        subtitle(automatic,"Recurso opcional protegido por senha.");
-        boolean enabled=ScanAssistState.isBatch(this);
-        button(automatic,enabled?"Desativar":"Ativar com senha",enabled,()->{
-            if(ScanAssistState.isBatch(this)){
-                ScanAssistState.disable(this);displayPage();toast("Bipes automáticos desativados.");
-            } else requireAutoBipsPassword();
-        });
     }
-    private void requireAutoBipsPassword(){
-        final EditText password=new EditText(this);
-        password.setSingleLine(true);
-        password.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        int padding=dp(18); password.setPadding(padding,padding,padding,padding);
-        new AlertDialog.Builder(this)
-            .setTitle("Liberar bipes automáticos")
-            .setMessage("Função experimental: confira as quantidades lançadas no MLOG.")
-            .setView(password)
-            .setPositiveButton("Ativar",(dialog,which)->{
-                if(AutoBipsAccess.valid(password.getText().toString())){
-                    ScanAssistState.prefs(this).edit()
-                        .putBoolean(ScanAssistState.BATCH,true)
-                        .putBoolean(ScanAssistState.ARMED,false).apply();
-                    displayPage();
-                    toast("Bipes automáticos liberados. Configure no botão flutuante.");
-                }else toast("Senha incorreta. Recurso permanece desativado.");
-            })
-            .setNegativeButton("Cancelar",null).show();
+    private void sectionHeader(LinearLayout dest,int drawable,String text){
+        LinearLayout h=row();h.addView(icon(drawable,primary,23));TextView title=label(text,17,ink,true);
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,-2,1);lp.leftMargin=dp(10);h.addView(title,lp);dest.addView(h);
+    }
+    private void authorizeRecoveryNetwork(){
+        if(!AdbWifiRecovery.hasGrant(this)){toast("Conceda WRITE_SECURE_SETTINGS pelo cabo USB primeiro.");return;}
+        if(checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)!=android.content.pm.PackageManager.PERMISSION_GRANTED){
+            requestPermissions(new String[]{android.Manifest.permission.ACCESS_FINE_LOCATION,android.Manifest.permission.ACCESS_COARSE_LOCATION},3621);toast("Autorize a localização precisa apenas para identificar o Wi-Fi; depois toque novamente.");return;
+        }
+        new AlertDialog.Builder(this).setTitle("Autorizar recuperação nesta rede")
+          .setMessage("O Bridge poderá reativar a depuração sem fio neste ponto Wi-Fi após reiniciar. O Android mantém o controle de confiança e pareamento. Para recuperar em segundo plano, autorize localização o tempo todo nas permissões do Android.")
+          .setPositiveButton("Cadastrar",(dlg,w)->{toast(AdbWifiRecovery.enroll(this));displayPage();}).setNegativeButton("Cancelar",null).show();
     }
     private void diagnostic(){
         title("Diagnóstico","Consulte o estado da última operação.");
@@ -939,25 +767,7 @@ public final class MainActivity extends Activity {
         githubUpdateStatus=label(prefs.getString(BridgeUpdater.LAST_STATUS,"Aguardando verificação."),13,muted,false);
         space(updates,9);updates.addView(githubUpdateStatus);
         button(updates,"Buscar versões",true,this::checkGitHubUpdate);
-        button(updates,"Instalar APK baixado",false,this::installCachedShizuku);
-
-        LinearLayout shizukuUpdates=card();
-        LinearLayout shizukuHeading=row();
-        shizukuHeading.addView(icon(R.drawable.ui_refresh,primary,23));
-        TextView shizukuTitle=label("Atualizações do Shizuku",17,ink,true);
-        LinearLayout.LayoutParams titleLp=new LinearLayout.LayoutParams(0,-2,1);
-        titleLp.leftMargin=dp(10);
-        shizukuHeading.addView(shizukuTitle,titleLp);
-        shizukuUpdates.addView(shizukuHeading);
-        subtitle(shizukuUpdates,"APK oficial · verificação diária opcional");
-        check(shizukuUpdates,"Verificar e baixar diariamente",ShizukuReleaseUpdater.PREF_CHECK,false);
-        shizukuUpdateStatus=label(prefs.getString(ShizukuReleaseUpdater.STATUS,
-            "Desativado. Você pode verificar manualmente."),12,muted,false);
-        space(shizukuUpdates,8);shizukuUpdates.addView(shizukuUpdateStatus);
-        button(shizukuUpdates,"Verificar Shizuku agora",true,this::checkShizukuUpdate);
-        button(shizukuUpdates,"Instalar atualização baixada",false,this::installShizukuManual);
-        button(shizukuUpdates,prefs.getBoolean(ShizukuReleaseUpdater.PREF_INSTALL,false)?
-            "Desativar instalação automática":"Instalação automática (desligada)",false,this::toggleShizukuAutoInstall);
+        button(updates,"Instalar APK baixado",false,this::installCachedAdb);
 
         LinearLayout control=card();control.addView(label("Permissões",17,ink,true));
         button(control,"Acessibilidade",false,()->startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
@@ -987,24 +797,24 @@ public final class MainActivity extends Activity {
             .setNegativeButton("Cancelar",null).show();
     }
 
-    private void installCachedShizuku(){
+    private void installCachedAdb(){
         try {
             GitHubReleaseUpdater.Update update=GitHubReleaseUpdater.cachedVerified(this);
             if(update==null){setUpdateStatus("Nao ha APK novo no armazenamento.");return;}
             if(update.debug && !DebugUpdateAccess.allowed()){
-                requireDebugPassword(this::installCachedShizuku);return;
+                requireDebugPassword(this::installCachedAdb);return;
             }
         } catch(Exception ex) {setUpdateStatus("Falha ao validar APK: "+ex.getMessage());return;}
-        installCachedShizukuAuthorized();
+        installCachedAdbAuthorized();
     }
 
-    private void installCachedShizukuAuthorized(){
+    private void installCachedAdbAuthorized(){
 
-        if(!ShizukuApkInstaller.ready()){
-            setUpdateStatus("ADB e Shizuku indisponíveis. Você pode instalar pelo Android.");
+        if(!LocalAdbApkInstaller.ready()){
+            setUpdateStatus("ADB indisponível. Você pode instalar pelo Android.");
             new AlertDialog.Builder(this)
-                .setTitle("Shizuku indisponivel")
-                .setMessage("ADB e Shizuku não estão disponíveis. Deseja usar o instalador normal do Android?")
+                .setTitle("ADB indisponivel")
+                .setMessage("ADB indisponível. Deseja usar o instalador normal do Android?")
                 .setPositiveButton("Instalar pelo Android",(d,w)->installCachedViaAndroid())
                 .setNegativeButton("Cancelar",null).show();
             return;
@@ -1014,11 +824,11 @@ public final class MainActivity extends Activity {
             .setMessage("A instalacao pode reiniciar o Bridge. Feche a atividade de Separacao antes de continuar.")
             .setPositiveButton("Instalar",(d,w)->{
                 setUpdateStatus("Validando APK e preparando sessao de instalacao...");
-                ShizukuApkInstaller.installAsync(this,true,(ok,msg)->{
+                LocalAdbApkInstaller.installAsync(this,true,(ok,msg)->{
                     setUpdateStatus(msg);
                     if(!ok && !isFinishing() && !isDestroyed()){
                         new AlertDialog.Builder(this)
-                            .setTitle("Instalacao Shizuku interrompida")
+                            .setTitle("Instalação ADB interrompida")
                             .setMessage(msg+"\n\nDeseja tentar pelo instalador normal do Android? A instalacao exigira sua confirmacao.")
                             .setPositiveButton("Instalar pelo Android",(dialog,which)->installCachedViaAndroid())
                             .setNegativeButton("Depois",null).show();
@@ -1083,7 +893,7 @@ public final class MainActivity extends Activity {
         }
     }
     private void showBridgeInstallChooser(File file,String tag,boolean prerelease){
-        LinearLayout panel=column();panel.setBackground(shape(card,line,22));
+        LinearLayout panel=column();panel.setBackground(shape(card,line,18));
         panel.setPadding(dp(20),dp(20),dp(20),dp(16));
         LinearLayout head=row();head.addView(icon(R.drawable.ui_check_circle,success,25));
         TextView title=label("Atualização pronta",19,ink,true);
@@ -1092,99 +902,13 @@ public final class MainActivity extends Activity {
         subtitle(panel,tag+(prerelease?" · versão de teste":" · Release estável"));
         space(panel,8);
         final AlertDialog dlg=new AlertDialog.Builder(this).setView(panel).create();
-        button(panel,"Instalar atualização",true,()->{dlg.dismiss();installCachedShizuku();});
+        button(panel,"Instalar atualização",true,()->{dlg.dismiss();installCachedAdb();});
         button(panel,"Instalar pelo Android",false,()->{dlg.dismiss();installVerifiedApk(file);});
         button(panel,"Depois",false,dlg::dismiss);
         dlg.show();
         if(dlg.getWindow()!=null){dlg.getWindow().setBackgroundDrawableResource(android.R.color.transparent);
             dlg.getWindow().setLayout((int)(getResources().getDisplayMetrics().widthPixels*.92f),-2);}
     }
-    private void setShizukuStatus(String text){
-        ShizukuReleaseUpdater.status(this,text);
-        if(shizukuUpdateStatus!=null)shizukuUpdateStatus.setText(text);
-    }
-    private void checkShizukuUpdate(){
-        setShizukuStatus("Consultando Release oficial do Shizuku...");
-        ShizukuReleaseUpdater.checkAsync(this,(available,message)->{
-            if(isFinishing() || isDestroyed())return;
-            setShizukuStatus(message);
-            if(available)toast("Atualização do Shizuku pronta para instalar.");
-        });
-    }
-    private void toggleShizukuAutoInstall(){
-        boolean on=prefs.getBoolean(ShizukuReleaseUpdater.PREF_INSTALL,false);
-        if(on){
-            prefs.edit().putBoolean(ShizukuReleaseUpdater.PREF_INSTALL,false).apply();
-            ShizukuUpdateSchedule.schedule(this);displayPage();
-            toast("Instalação automática do Shizuku desativada.");return;
-        }
-        new AlertDialog.Builder(this).setTitle("Instalação automática do Shizuku")
-            .setMessage("Experimental: atualizar o Shizuku pode interromper seus privilégios " +
-                "e exigir nova inicialização via ADB. Use primeiro em apenas um coletor. " +
-                "O Bridge só instalará APKs oficiais verificados e com o coletor inativo.")
-            .setPositiveButton("Ativar no coletor",(d,w)->{
-                prefs.edit().putBoolean(ShizukuReleaseUpdater.PREF_CHECK,true)
-                    .putBoolean(ShizukuReleaseUpdater.PREF_INSTALL,true).apply();
-                ShizukuUpdateSchedule.schedule(this);
-                ShizukuUpdateSchedule.checkSoon(this);
-                displayPage();
-            }).setNegativeButton("Cancelar",null).show();
-    }
-    private void installShizukuManual(){
-        try {
-            File apk=ShizukuReleaseUpdater.cachedVerified(this);
-            if(apk==null){setShizukuStatus("Nenhuma atualização válida baixada. Verifique primeiro.");return;}
-            new AlertDialog.Builder(this)
-                .setTitle("Atualizar Shizuku")
-                .setMessage("O serviço Shizuku pode parar durante a atualização. " +
-                    "Depois, confira se continua autorizado. Não atualize durante uma separação.")
-                .setPositiveButton("Instalador Android",(d,w)->installShizukuViaAndroid())
-                .setNeutralButton("Via Shizuku (teste)",(d,w)->{
-                    if(!ShizukuApkInstaller.shizukuReady()){
-                        setShizukuStatus("Shizuku indisponível; use o instalador do Android.");return;}
-                    setShizukuStatus("Instalando Shizuku...");
-                    new Thread(()->{
-                        String result;
-                        try{
-                            File verified=ShizukuReleaseUpdater.cachedVerified(getApplicationContext());
-                            if(verified==null)throw new SecurityException("APK inválido.");
-                            result=ShizukuApkInstaller.installVerifiedShizuku(getApplicationContext(),verified);
-                        }catch(Exception e){
-                            result=ShizukuReleaseUpdater.stagedVersionInstalled(getApplicationContext())?
-                                "Shizuku instalado. Confira se o serviço está ativo.":
-                                "Shizuku: "+e.getMessage()+". Confira a versão antes de repetir.";
-                        }
-                        final String outcome=result;
-                        handler.post(()->setShizukuStatus(outcome));
-                    },"shizuku-self-update").start();
-                })
-                .setNegativeButton("Cancelar",null).show();
-        }catch(Exception ex){setShizukuStatus("APK rejeitado: "+ex.getMessage());}
-    }
-    private void installShizukuViaAndroid(){
-        File apk;
-        try{apk=ShizukuReleaseUpdater.cachedVerified(this);
-            if(apk==null){setShizukuStatus("Arquivo não passou pela verificação.");return;}}
-        catch(Exception e){setShizukuStatus("APK inválido: "+e.getMessage());return;}
-        if(Build.VERSION.SDK_INT>=26 && !getPackageManager().canRequestPackageInstalls()){
-            shizukuPendingInstall=apk;
-            new AlertDialog.Builder(this).setTitle("Autorizar instalação")
-                .setMessage("Autorize o Bridge a instalar APKs pelo Android e volte.")
-                .setPositiveButton("Configurações",(d,w)->startActivity(new Intent(
-                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,Uri.parse("package:"+getPackageName()))))
-                .setNegativeButton("Cancelar",(d,w)->shizukuPendingInstall=null).show();
-            return;
-        }
-        try {
-            Uri uri=FileProvider.getUriForFile(this,getPackageName()+".updates",apk);
-            Intent intent=new Intent(Intent.ACTION_VIEW);
-            intent.setDataAndType(uri,"application/vnd.android.package-archive");
-            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            startActivity(intent);
-            setShizukuStatus("Confirme a instalação do Shizuku no Android.");
-        }catch(Exception e){setShizukuStatus("Não foi possível abrir o instalador: "+e.getMessage());}
-    }
-
     private void checkGitHubUpdate(){
         if(githubChecking){toast("Busca em andamento.");return;}
         githubChecking=true;
@@ -1269,20 +993,13 @@ public final class MainActivity extends Activity {
     }
 
     private void check(LinearLayout dest,String text,String key,boolean fallback){
-        CheckBox b=new CheckBox(this);b.setButtonTintList(android.content.res.ColorStateList.valueOf(ink));
-        b.setText(text);b.setTextColor(ink);b.setTextSize(14);
-        b.setPadding(0,dp(5),0,dp(5));b.setChecked(prefs.getBoolean(key,fallback));
-        b.setOnCheckedChangeListener((control,on)->{
+        TextView b=label(text,14,ink,true);b.setGravity(Gravity.CENTER_VERTICAL);b.setMinHeight(dp(48));b.setPadding(dp(12),dp(10),dp(12),dp(10));
+        Runnable render=()->{boolean checked=prefs.getBoolean(key,fallback);leadingIcon(b,checked?R.drawable.ui_check_circle:R.drawable.ui_circle,checked?success:muted,21);b.setBackground(shape(surfaceAlt,line,12));b.setContentDescription(text+(checked?", ativado":", desativado"));};render.run();
+        b.setOnClickListener(v->{boolean on=!prefs.getBoolean(key,fallback);
             prefs.edit().putBoolean(key,on).apply();
             if(BridgeUpdater.PREF_ENABLED.equals(key) || BridgeUpdater.PREF_INSTALL.equals(key)){
                 BridgeUpdater.schedule(this);
                 if(on && BridgeUpdater.PREF_ENABLED.equals(key))BridgeUpdater.checkSoon(this);
-            }
-            if(ShizukuReleaseUpdater.PREF_CHECK.equals(key)){
-                if(!on)prefs.edit().putBoolean(ShizukuReleaseUpdater.PREF_INSTALL,false).apply();
-                ShizukuUpdateSchedule.schedule(this);
-                if(on){ShizukuUpdateSchedule.checkSoon(this);toast("Verificação diária do Shizuku ativada.");}
-                displayPage();
             }
             if("fast_ime_mode".equals(key) || "experimental_bridge_ime".equals(key) ||
                 "trigger_prefocus".equals(key) || NativeScannerController.LONG_HOLD_PREF.equals(key)){
@@ -1293,21 +1010,10 @@ public final class MainActivity extends Activity {
                 MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();
                 if(svc!=null)svc.refreshEventThrottle();
             }
+            render.run();
         });
-        dest.addView(b);
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.topMargin=dp(8);dest.addView(b,lp);
     }
-    private void openFloatingTools(){
-        if(android.os.Build.VERSION.SDK_INT>=23 && !Settings.canDrawOverlays(this)){
-            toast("Autorize Exibir sobre outros apps e volte para ativar a bolha.");
-            startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                Uri.parse("package:"+getPackageName())));
-            return;
-        }
-        prefs.edit().putBoolean("floating_auto_start_v302",true).apply();
-        startService(new Intent(this,FloatingToolsService.class));
-        toast("Engrenagem flutuante ativada; toque para abrir.");
-    }
-
     private void openMlog(){
         Intent i=getPackageManager().getLaunchIntentForPackage(ScanCoordinator.TARGET);
         if(i==null){toast("MLOG não encontrado.");return;}
@@ -1320,11 +1026,6 @@ public final class MainActivity extends Activity {
     }
     private void chooseTheme(String value){
         prefs.edit().putString("theme_choice",value).apply();themeChoice=value;
-        // Atualiza o painel flutuante imediatamente, mesmo quando o servico
-        // permanece ativo sobre o MLOG; evita manter as cores do tema anterior.
-        if(FloatingToolsService.isRunning())
-            startService(new Intent(this,FloatingToolsService.class)
-                .setAction(FloatingToolsService.ACTION_REFRESH_THEME));
         recreate();
     }
     private void nextTheme(){chooseTheme(darkNow()?"light":"dark");}
@@ -1337,32 +1038,17 @@ public final class MainActivity extends Activity {
         return super.dispatchKeyEvent(event);
     }
     private void toast(String text){Toast.makeText(this,text,Toast.LENGTH_SHORT).show();}
-    private void ensureShizukuNotificationPermission(){
-        // Android 13+: request only once, only in the Shizuku scan mode.
-        if(Build.VERSION.SDK_INT>=33 && prefs.getBoolean(ShizukuScanMode.PREF,false)
-            && checkSelfPermission("android.permission.POST_NOTIFICATIONS")
-                !=android.content.pm.PackageManager.PERMISSION_GRANTED
-            && !prefs.getBoolean("shizuku_notice_permission_asked_v346",false)){
-            prefs.edit().putBoolean("shizuku_notice_permission_asked_v346",true).apply();
-            requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"},346);
-        }
-    }
-
     @Override protected void onResume(){
         super.onResume();
-        ShizukuUpdateSchedule.schedule(this);
-        if(shizukuPendingInstall!=null && (Build.VERSION.SDK_INT<26 || getPackageManager().canRequestPackageInstalls())){
-            shizukuPendingInstall=null;
-            handler.post(this::installShizukuViaAndroid);
-        }
         if(githubPendingInstall!=null && (Build.VERSION.SDK_INT<26 || getPackageManager().canRequestPackageInstalls())){
             File pending=githubPendingInstall; githubPendingInstall=null;
             handler.post(() -> installVerifiedApk(pending));
         }
         BridgeUpdater.schedule(this);
+        AdbRecoveryWorker.schedule(this,false);
         // Reaplicar ao abrir o Bridge, pois o servico CMX pode reiniciar
         // com a saida padrao apos atualizacao/reboot do coletor.
-        if(prefs.getBoolean(ShizukuScanMode.PREF,false))
+        if(prefs.getBoolean(AdbScanMode.PREF,false))
             NativeScannerController.configure(this);
         else if(ZebraProfile0Mode.isSelected(prefs.getBoolean(ZebraImeMode.PREF,false),
                 prefs.getBoolean(ZebraProfile0Mode.PREF,false)))
@@ -1374,18 +1060,12 @@ public final class MainActivity extends Activity {
             else registerReceiver(scannerTest,f);
             receiving=true;
         }catch(RuntimeException ignored){}
-        if((Build.VERSION.SDK_INT<23 || Settings.canDrawOverlays(this)) &&
-            prefs.getBoolean("floating_auto_start_v302",true) &&
-            !FloatingToolsService.isRunning()){
-            startService(new Intent(this,FloatingToolsService.class));
-        }
         handler.post(ticker);
-        ShizukuHealthMonitor.refresh(this);
-        ensureShizukuNotificationPermission();
+        LocalAdbBridge.tick(this);
+        FleetTelemetry.tick(this);
         refreshSetupWarning();
     }
     @Override protected void onDestroy(){
-        Shizuku.removeRequestPermissionResultListener(shizukuPermission);
         super.onDestroy();
     }
     @Override protected void onPause(){
