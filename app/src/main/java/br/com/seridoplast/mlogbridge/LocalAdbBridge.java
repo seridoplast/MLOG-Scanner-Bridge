@@ -21,7 +21,6 @@ import java.security.spec.PKCS8EncodedKeySpec;
 import java.util.Date;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 import javax.crypto.*;
 import javax.crypto.spec.GCMParameterSpec;
 import org.bouncycastle.asn1.x500.X500Name;
@@ -33,6 +32,11 @@ import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 final class LocalAdbBridge {
     static final String PREF="local_adb_enabled_v3619";
     private static final String PORT="local_adb_port_v3619";
+    private static final String HOST="local_adb_host_v3620";
+    private static final String TAG="BridgeLocalADB";
+    private static final Object PAIR_LOCK=new Object();
+    private static final ScheduledExecutorService WATCH=Executors.newSingleThreadScheduledExecutor(r->{Thread t=new Thread(r,"bridge-adb-watch");t.setDaemon(true);return t;});
+    private static volatile PairAttempt pairing;
     private static final String KEY="bridge_adb_wrap_v3619";
     private static final ExecutorService IO=Executors.newSingleThreadExecutor(r->{Thread t=new Thread(r,"bridge-local-adb");t.setDaemon(true);return t;});
     private static final AtomicBoolean checking=new AtomicBoolean();
@@ -47,56 +51,118 @@ final class LocalAdbBridge {
     static String status(){return status;}
     static void tick(Context context){
         Context c=context.getApplicationContext();
-        if(!enabled(c))return;
+        if(!enabled(c) || pairing!=null)return;
         long now=SystemClock.elapsedRealtime();
         if(lastCheck!=0 && now-lastCheck<30_000L)return;
         if(!checking.compareAndSet(false,true))return;
         lastCheck=now;
-        IO.execute(()->{try{ensure(c);}catch(Exception | LinkageError ex){failed("ADB indisponível: "+ex.getClass().getSimpleName());}finally{checking.set(false);}});
+        IO.execute(()->{try{ensure(c);}catch(Exception | LinkageError ex){if(pairing==null)connectionFailure(ex);}finally{checking.set(false);}});
     }
     static void retry(Context c){lastCheck=0;tick(c);}
-    static void disable(Context context){prefs(context).edit().putBoolean(PREF,false).apply();connected=false;status="Desativado";IO.execute(()->{try{if(manager!=null)manager.disconnect();}catch(Exception ignored){}});}
+    static void disable(Context context){
+        synchronized(PAIR_LOCK){
+            PairAttempt current=pairing;
+            if(current!=null)finishPair(current,false,"Pareamento cancelado");
+            prefs(context).edit().putBoolean(PREF,false).apply();connected=false;status="Desativado";
+        }
+        IO.execute(()->{try{if(manager!=null)manager.disconnect();}catch(Exception ignored){}});
+    }
     interface PairCallback{void done(boolean ok,String message);}
-    static void pair(Context context,int port,String code,PairCallback cb){
+    private static final class PairAttempt {
+        final PairCallback cb;
+        volatile LocalAdbPairTransport transport;
+        volatile ScheduledFuture<?> watchdog;
+        PairAttempt(PairCallback cb){this.cb=cb;}
+    }
+    static boolean pairing(){return pairing!=null;}
+    private static void finishPair(PairAttempt attempt,boolean ok,String message){
+        synchronized(PAIR_LOCK){
+            if(pairing!=attempt)return;
+            pairing=null;status=message;
+            if(!ok)connected=false;
+            if(attempt.watchdog!=null)attempt.watchdog.cancel(false);
+            if(attempt.transport!=null)attempt.transport.close();
+        }
+        attempt.cb.done(ok,message);
+    }
+    static void pair(Context context,String host,int port,String code,PairCallback cb){
         Context c=context.getApplicationContext();
         if(Build.VERSION.SDK_INT<30 || port<1 || port>65535 || code==null || !code.matches("[0-9]{6}")){cb.done(false,"Informe a porta de pareamento e o código de seis dígitos.");return;}
-        IO.execute(()->{try{
-            Manager m=get(c);connected=false;m.disconnect();
-            if(!m.pair("127.0.0.1",port,code))throw new IOException("Pareamento recusado");
-            prefs(c).edit().putBoolean(PREF,true).remove(PORT).apply();
-            lastCheck=0;status="Pareado; procurando porta de conexão";
-            cb.done(true,status);
-            try{ensure(c);}catch(Exception ex){failed("Pareado; aguardando ADB sem fio");}
-        }catch(Exception | LinkageError ex){failed("Pareamento não concluído: "+ex.getClass().getSimpleName());cb.done(false,status);}});
+        final PairAttempt attempt=new PairAttempt(cb);
+        synchronized(PAIR_LOCK){
+            if(pairing!=null){cb.done(false,"Já existe uma tentativa de pareamento.");return;}
+            pairing=attempt;connected=false;status="Pareando ADB (até 25 segundos)";
+            attempt.watchdog=WATCH.schedule(()->finishPair(attempt,false,"Tempo de pareamento esgotado. Gere um novo código."),25,TimeUnit.SECONDS);
+        }
+        IO.execute(()->{
+            if(pairing!=attempt)return;
+            try{
+                Manager m=get(c);m.disconnect();
+                if(pairing!=attempt)return;
+                try(LocalAdbPairTransport transport=new LocalAdbPairTransport(host,port,18_000L)){
+                    synchronized(PAIR_LOCK){if(pairing!=attempt)return;attempt.transport=transport;status="Pareando: autenticando com o Android";}
+                    android.util.Log.i(TAG,"Pareamento: transporte local aberto; iniciando TLS");
+                    boolean ok;
+                    try{ok=m.pair("127.0.0.1",transport.port(),code);}
+                    catch(Exception | LinkageError ex){
+                        if(transport.timedOut())throw new java.net.SocketTimeoutException("Tempo de pareamento esgotado");
+                        throw ex;
+                    }
+                    if(!ok || transport.timedOut())throw new IOException("Pareamento recusado ou expirado");
+                }
+                synchronized(PAIR_LOCK){
+                    if(pairing!=attempt)return;
+                    prefs(c).edit().putBoolean(PREF,true).remove(PORT).remove(HOST).apply();
+                    android.util.Log.i(TAG,"Pareamento concluído; iniciando descoberta de conexão");
+                    lastCheck=0;finishPair(attempt,true,"Pareado; procurando porta de conexão");
+                }
+                try{ensure(c);}catch(Exception | LinkageError ex){connectionFailure(ex);}
+            }catch(Exception | LinkageError ex){
+                // Never log the pairing code, credentials or arbitrary exception messages.
+                android.util.Log.w(TAG,"Pareamento falhou: "+ex.getClass().getSimpleName()+"; causa="+(ex.getCause()==null?"-":ex.getCause().getClass().getSimpleName()));
+                String message=ex instanceof java.net.SocketTimeoutException?"Tempo de pareamento esgotado. Gere um novo código.":ex instanceof java.net.ConnectException?"Porta recusada. Confira a porta da janela de pareamento ou use IP:porta.":"Pareamento falhou: "+ex.getClass().getSimpleName()+". Gere um novo código.";
+                finishPair(attempt,false,message);
+            }
+        });
     }
-    static void setConnectionPort(Context c,int port){if(port<1 || port>65535)return;prefs(c).edit().putInt(PORT,port).apply();retry(c);}
+    static void setConnectionPort(Context c,String host,int port)throws IOException{
+        if(port<1 || port>65535)throw new IOException("Porta inválida");
+        LocalAdbPairTransport.localAddress(host);
+        if(!enabled(c))throw new IOException("Pareie o ADB primeiro");
+        prefs(c).edit().putInt(PORT,port).putString(HOST,host).apply();retry(c);
+    }
+    private static void connectionFailure(Throwable ex){
+        android.util.Log.w(TAG,"Conexão falhou: "+ex.getClass().getSimpleName());
+        failed("Pareado; conexão indisponível ("+ex.getClass().getSimpleName()+"). Informe a porta de conexão.");
+    }
     private static void ensure(Context c)throws Exception{
-        if(!enabled(c)){connected=false;return;}
+        if(!enabled(c) || pairing!=null){connected=false;return;}
         Manager m=get(c);
         if(m.isConnected()){
-            if(command(m,"/system/bin/id -u",3_000).contains("\n2000\n")){connected=enabled(c);status="Conectado";return;}
+            if(command(m,"/system/bin/id -u",3_000).contains("\n2000\n")){connected=enabled(c)&&pairing==null;if(connected)status="Conectado";return;}
             m.disconnect();
         }
         connected=false;status="Procurando ADB sem fio";
         int old=prefs(c).getInt(PORT,0);
-        if(old>0){try{m.connect("127.0.0.1",old);}catch(Exception ignored){m.disconnect();}}
+        if(old>0){try{String host=prefs(c).getString(HOST,"127.0.0.1");LocalAdbPairTransport.localAddress(host);m.connect(host,old);}catch(Exception ignored){m.disconnect();}}
         if(!m.isConnected()){
-            int discovered=discover(c);
-            if(discovered<=0)throw new IOException("Porta ADB não anunciada");
-            m.disconnect();m.connect("127.0.0.1",discovered);
-            if(m.isConnected())prefs(c).edit().putInt(PORT,discovered).apply();
+            java.net.InetSocketAddress discovered=discover(c);
+            if(discovered==null)throw new IOException("Porta ADB não anunciada");
+            String host=discovered.getAddress().getHostAddress();
+            m.disconnect();m.connect(host,discovered.getPort());
+            if(m.isConnected())prefs(c).edit().putInt(PORT,discovered.getPort()).putString(HOST,host).apply();
         }
         if(!m.isConnected() || !command(m,"/system/bin/id -u",3_000).contains("\n2000\n"))throw new IOException("ADB não autorizado");
-        connected=enabled(c);status=connected?"Conectado":"Desativado";
+        connected=enabled(c)&&pairing==null;if(pairing==null)status=connected?"Conectado":"Desativado";
     }
-    private static int discover(Context c)throws Exception{
-        CountDownLatch latch=new CountDownLatch(1);AtomicInteger port=new AtomicInteger(-1);
+    private static java.net.InetSocketAddress discover(Context c)throws Exception{
+        CountDownLatch latch=new CountDownLatch(1);java.util.concurrent.atomic.AtomicReference<java.net.InetSocketAddress> endpoint=new java.util.concurrent.atomic.AtomicReference<>();
         AdbMdns mdns=new AdbMdns(c,AdbMdns.SERVICE_TYPE_TLS_CONNECT,(address,p)->{
-            try{if(address!=null && p>0 && p<=65535 && (address.isLoopbackAddress() || NetworkInterface.getByInetAddress(address)!=null)){port.set(p);latch.countDown();}}catch(Exception ignored){}
+            try{if(address instanceof java.net.Inet4Address && p>0 && p<=65535 && (address.isLoopbackAddress() || NetworkInterface.getByInetAddress(address)!=null)){endpoint.compareAndSet(null,new java.net.InetSocketAddress(address,p));latch.countDown();}}catch(Exception ignored){}
         });
-        try{mdns.start();latch.await(8,TimeUnit.SECONDS);return port.get();}finally{mdns.stop();}
+        try{mdns.start();latch.await(8,TimeUnit.SECONDS);return endpoint.get();}finally{mdns.stop();}
     }
-    private static void failed(String message){connected=false;status=message;try{if(manager!=null)manager.disconnect();}catch(Exception ignored){}}
+    private static void failed(String message){connected=false;if(pairing==null)status=message;try{if(manager!=null)manager.disconnect();}catch(Exception ignored){}}
     private static Manager get(Context c)throws Exception{if(manager==null)manager=new Manager(c);return manager;}
     private static <T> T submit(Callable<T> task,long ms)throws Exception{
         Future<T> f=IO.submit(task);

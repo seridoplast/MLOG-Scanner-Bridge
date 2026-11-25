@@ -80,6 +80,12 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
+      - name: Testar prazo e restricao local do pareamento ADB
+        run: |
+          mkdir -p /tmp/adb-pair-test
+          javac -d /tmp/adb-pair-test app/src/main/java/br/com/seridoplast/mlogbridge/LocalAdbPairTransport.java tests/LocalAdbPairTransportTest.java
+          java -cp /tmp/adb-pair-test br.com.seridoplast.mlogbridge.LocalAdbPairTransportTest
+
       - name: Testar identificacao do operador MLOG
         run: |
           mkdir -p /tmp/mlog-user-test

@@ -810,9 +810,9 @@ public final class MainActivity extends Activity {
         button(adb,"Parear ADB",true,()->LocalAdbPairReceiver.showPairing(this));
         button(adb,"Procurar / reconectar",false,()->{LocalAdbBridge.retry(this);toast("Buscando ADB local...");});
         button(adb,"Informar porta de conexão",false,()->{
-            EditText field=new EditText(this);field.setInputType(InputType.TYPE_CLASS_NUMBER);
-            new AlertDialog.Builder(this).setTitle("Porta de conexão (não de pareamento)").setView(field)
-                .setPositiveButton("Conectar",(d,w)->{try{LocalAdbBridge.setConnectionPort(this,Integer.parseInt(field.getText().toString()));}catch(Exception ex){toast("Porta inválida");}}).setNegativeButton("Cancelar",null).show();
+            EditText field=new EditText(this);field.setInputType(InputType.TYPE_CLASS_TEXT);field.setHint("IP:porta ou apenas porta");
+            new AlertDialog.Builder(this).setTitle("Porta de conexão (não de pareamento)").setMessage("Use o endereço IP e a porta da tela principal de Depuração sem fio.").setView(field)
+                .setPositiveButton("Conectar",(d,w)->{try{String[] ep=field.getText().toString().trim().split(":");if(ep.length>2)throw new IllegalArgumentException();LocalAdbBridge.setConnectionPort(this,ep.length==2?ep[0]:"127.0.0.1",Integer.parseInt(ep[ep.length-1]));}catch(Exception ex){toast("Verifique o endereço local, a porta e o pareamento.");}}).setNegativeButton("Cancelar",null).show();
         });
         button(adb,"Desativar ADB integrado",false,()->{LocalAdbBridge.disable(this);displayPage();});
         LinearLayout tools=card();
