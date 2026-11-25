@@ -25,6 +25,8 @@ final class ShizukuHealthMonitor {
 
     private ShizukuHealthMonitor(){}
 
+    static boolean privilegedReady(){return LocalAdbBridge.ready() || ready();}
+
     static boolean ready(){
         try{return Shizuku.pingBinder() &&
             Shizuku.checkSelfPermission()==PackageManager.PERMISSION_GRANTED &&
@@ -44,7 +46,7 @@ final class ShizukuHealthMonitor {
     /** Remote panel can request an operator notification, never elevate privileges.
      * Starting Shizuku still requires root, ADB or on-device Wireless Debugging. */
     static boolean requestOperatorStart(Context context){
-        if(ready())return true;
+        if(privilegedReady())return true;
         if(context.getPackageManager().getLaunchIntentForPackage(SHIZUKU_PACKAGE)==null)return false;
         boolean posted=notifyUnavailable(context);
         if(posted)warningPosted=true;
@@ -53,9 +55,10 @@ final class ShizukuHealthMonitor {
 
     /** Invoked by the active accessibility watchdog, Shizuku binder and app screen. */
     static synchronized void refresh(Context context){
+        LocalAdbBridge.tick(context);
         boolean shizukuSelected=context.getSharedPreferences(ScanCoordinator.PREFS,
             Context.MODE_PRIVATE).getBoolean(ShizukuScanMode.PREF,false);
-        if(!shizukuSelected || ready()){
+        if(!shizukuSelected || privilegedReady()){
             cancel(context);
             warningPosted=false;
             return;
@@ -97,8 +100,8 @@ final class ShizukuHealthMonitor {
             Notification.Builder builder=Build.VERSION.SDK_INT>=26?
                 new Notification.Builder(context,CHANNEL):new Notification.Builder(context);
             builder.setSmallIcon(android.R.drawable.stat_notify_error)
-                .setContentTitle("MLOG: Shizuku desligado")
-                .setContentText("Leituras pausadas. Toque para abrir o Shizuku e iniciar.")
+                .setContentTitle("MLOG: leitura privilegiada indisponível")
+                .setContentText("Confira o ADB local ou inicie o Shizuku.")
                 .setContentIntent(action)
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)

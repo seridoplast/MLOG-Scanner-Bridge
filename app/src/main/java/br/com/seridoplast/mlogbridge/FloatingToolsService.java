@@ -630,7 +630,7 @@ public final class FloatingToolsService extends Service {
                         statusText="Ative Bipes automáticos em Ajustes com senha.";
                         if(status!=null)status.setText(statusText);return;
                     }
-                    if(pref.getBoolean(ShizukuScanMode.PREF,false) && !ShizukuHealthMonitor.ready()){
+                    if(pref.getBoolean(ShizukuScanMode.PREF,false) && !ShizukuHealthMonitor.privilegedReady()){
                         statusText="Shizuku desligado. Não armei bipes automáticos.";
                         if(status!=null)status.setText(statusText);return;
                     }

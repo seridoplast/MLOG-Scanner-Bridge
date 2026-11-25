@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generates the public (non-secret) GitHub Pages update catalog.
+"""Generates the public (non-secret) GitHub Releases update catalog.
 
 Uses the Actions token SERVER SIDE only. Never bundle a GitHub token in an APK.
 The installed APK is independently checked for SHA-256 and pinned signature.
@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import time
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError
 
 REPO = os.environ.get('GITHUB_REPOSITORY', 'seridoplast/MLOG-Scanner-Bridge')
 TOKEN = os.environ.get('GH_TOKEN') or os.environ.get('GITHUB_TOKEN')
@@ -80,9 +81,10 @@ def generate():
     latest = None
     try:
         latest = api('/releases/latest')
-    except Exception:
-        # A repo with only prereleases has no /latest. Publish manual list anyway.
-        pass
+    except HTTPError as exc:
+        # Only 404 means no stable release. Preserve the old feed on outages.
+        if exc.code != 404:
+            raise
     ordered = []
     seen = set()
     for rel in releases:
@@ -92,6 +94,9 @@ def generate():
             ordered.append(rel)
     if latest and latest.get('tag_name') not in seen:
         ordered.append(latest)
+    # Sort by semantic version, not release creation order.
+    ordered.sort(key=lambda r: tuple(int(x) for x in r["tag_name"][1:].split("."))
+                 if re.fullmatch(r"v\d+\.\d+\.\d+", r.get("tag_name", "")) else (-1,), reverse=True)
     # Four newest releases including tests. Preserve latest approved independently.
     newest = []
     for rel in ordered:

@@ -23,6 +23,8 @@ on:
     branches:
       - main
       - master
+    paths-ignore:
+      - 'releases.json'
 
 permissions:
   contents: write
@@ -403,6 +405,10 @@ jobs:
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$APPROVE" == "true" ]]; then
             if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
               # Promover a MESMA tag e o MESMO APK, sem substituicao.
+              if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+                   --json assets --jq '.assets[].name' | grep -Fxq "$(basename "$ASSET")"; then
+                gh release upload "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY"
+              fi
               gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" \
                 --prerelease=false --latest --title "MLOG Scanner Bridge ${TAG}" \
                 --notes "rollout=${ROLLOUT}"
@@ -411,7 +417,7 @@ jobs:
                 --target "$GITHUB_SHA" --title "MLOG Scanner Bridge ${TAG}" \
                 --notes "rollout=${ROLLOUT}" --latest
             fi
-          elif [[ "$GITHUB_EVENT_NAME" == "push" && "$VERSION" == "3.6.18" || "$VERSION" == "3.6.17" || "$VERSION" == "3.6.8" ]]; then
+          elif [[ "$GITHUB_EVENT_NAME" == "push" && ( "$VERSION" == "3.6.18" || "$VERSION" == "3.6.17" || "$VERSION" == "3.6.8" ) ]]; then
             # Versoes explicitamente aprovadas para distribuicao direta; mesmo que a tag ja exista
             # como pre-release, converter para release estavel/Latest/rollout=100.
             if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
@@ -435,10 +441,11 @@ jobs:
               --target "$GITHUB_SHA" --title "MLOG Scanner Bridge ${TAG}" \
               --notes 'rollout=100' --latest
           elif ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            # git push por padrao = testavel via USB, sem distribuicao automatica.
+            # Pre-release nunca entra no canal automatico. rollout=100 so passa a valer
+            # quando o administrador promover a tag a Release estavel/Latest.
             gh release create "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" --title "MLOG Scanner Bridge ${TAG}" \
-              --notes 'rollout=0' --prerelease
+              --notes 'rollout=100' --prerelease
           else
             echo "::notice::Tag $TAG ja publicada; nao substituir APK."
           fi
@@ -449,17 +456,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          python3 scripts/build_release_feed.py
-          cp site/releases.json releases.json
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add releases.json
-          if ! git diff --cached --quiet; then
-            git commit -m 'chore: catalogo atualizado [skip ci]'
-            git push origin HEAD:main
-          fi
+        run: python3 scripts/publish_release_feed.py
 
       - name: Publicar APK assinado para download
         uses: actions/upload-artifact@v4

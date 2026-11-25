@@ -577,7 +577,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                     }
                     if(ScanAssistState.isArmed(MlogFocusAccessibilityService.this))startShizukuBatch(raw);
                     if(shizukuScan!=null)shizukuScan.scan(raw);
-                    if(!ShizukuHealthMonitor.ready())
+                    if(!ShizukuHealthMonitor.privilegedReady())
                         ShizukuHealthMonitor.refresh(MlogFocusAccessibilityService.this);
                     return;
                 }
@@ -3017,7 +3017,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private void startShizukuBatch(String barcode){
         prefs().edit().putBoolean(ScanAssistState.ARMED,false).apply();
         if(!ScanAssistState.isBatch(this) || !ShizukuScanMode.supported(barcode) ||
-            !ShizukuHealthMonitor.ready()){
+            !ShizukuHealthMonitor.privilegedReady()){
             ScanAssistState.report("Lote não iniciado: Shizuku indisponível ou código inválido.");
             return;
         }
@@ -3050,7 +3050,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private void checkShizukuBatch(int generation){
         if(!shizukuBatchActive || generation!=shizukuBatchGeneration)return;
         if(!ScanAssistState.isBatch(this) || !prefs().getBoolean(ShizukuScanMode.PREF,false) ||
-            !ShizukuHealthMonitor.ready()){
+            !ShizukuHealthMonitor.privilegedReady()){
             stopShizukuBatch("Lote interrompido: Shizuku desligado ou opção desativada.");return;
         }
         AccessibilityNodeInfo root=mlogRoot();
@@ -3095,7 +3095,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private void sendNextShizukuBatch(int generation){
         if(!shizukuBatchActive || generation!=shizukuBatchGeneration)return;
         // Recheck state and UI immediately before each send.
-        if(!ScanAssistState.isBatch(this) || !ShizukuHealthMonitor.ready() ||
+        if(!ScanAssistState.isBatch(this) || !ShizukuHealthMonitor.privilegedReady() ||
             shizukuScan==null || !ShizukuScanMode.supported(shizukuBatchBarcode)){
             stopShizukuBatch("Lote parado: Shizuku indisponível.");return;
         }

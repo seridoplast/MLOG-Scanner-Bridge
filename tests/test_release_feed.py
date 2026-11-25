@@ -34,3 +34,31 @@ with tempfile.TemporaryDirectory() as d:
     finally:
         os.chdir(prior)
 print('Release feed smoke test OK')
+
+# A promotion changes the channel, not the signed asset or tag.
+with tempfile.TemporaryDirectory() as d:
+    prior=os.getcwd()
+    try:
+        os.chdir(d)
+        pre=sample('v3.6.19',True)
+        pre['body']='rollout=100'
+        old=sample('v3.6.18')
+        with patch.object(feed,'api',side_effect=lambda path: old if path=='/releases/latest' else [pre,old]):
+            feed.generate()
+        before=json.loads(Path('site/releases.json').read_text())
+        stable=dict(pre,prerelease=False)
+        with patch.object(feed,'api',side_effect=lambda path: stable if path=='/releases/latest' else [stable,old]):
+            feed.generate()
+        after=json.loads(Path('site/releases.json').read_text())
+        assert before['releases'][0]['prerelease'] is True
+        assert after['latest']['tag_name']==pre['tag_name']
+        assert after['latest']['prerelease'] is False
+        assert after['latest']['body']=='rollout=100'
+        assert after['latest']['assets']==before['releases'][0]['assets']
+        paused=dict(stable,body='rollout=0')
+        with patch.object(feed,'api',side_effect=lambda path: paused if path=='/releases/latest' else [paused]):
+            feed.generate()
+        assert json.loads(Path('site/releases.json').read_text())['latest']['body']=='rollout=0'
+    finally:
+        os.chdir(prior)
+print('Promotion and intentional rollout pause OK')

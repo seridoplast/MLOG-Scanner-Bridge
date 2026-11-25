@@ -3,7 +3,7 @@ plugins { id 'com.android.application' }
 // A mesma chave assina todas as builds de producao.
 // NUNCA gravar senhas ou keystore neste arquivo/repositório.
 // ALTERAR SOMENTE ESTA LINHA para a proxima versao (ex.: 3.2.4).
-def bridgeVersion = '3.6.18'
+def bridgeVersion = '3.6.19'
 def bridgeParts = bridgeVersion.tokenize('.').collect { it.toInteger() }
 if (bridgeParts.size() != 3 || bridgeParts.any { it < 0 || it > 99 }) {
     throw new GradleException('bridgeVersion precisa estar em N.N.N, com cada parte entre 0 e 99')
@@ -14,6 +14,7 @@ android {
     compileSdk 35
 
     buildFeatures { aidl true }
+    packaging { resources { excludes += ['META-INF/DEPENDENCIES', 'META-INF/LICENSE*', 'META-INF/NOTICE*', 'META-INF/versions/**/OSGI-INF/**'] } }
 
     defaultConfig {
         applicationId 'br.com.seridoplast.mlogbridge'
@@ -56,6 +57,9 @@ android {
  dependencies {
     implementation 'androidx.core:core:1.15.0'
     implementation 'androidx.work:work-runtime:2.10.2'
+    implementation 'com.github.MuntashirAkon:libadb-android:3.1.1'
+    implementation 'org.conscrypt:conscrypt-android:2.5.3'
+    implementation 'org.bouncycastle:bcpkix-jdk18on:1.80'
     implementation 'dev.rikka.shizuku:api:13.1.5'
     implementation 'dev.rikka.shizuku:provider:13.1.5'
 }

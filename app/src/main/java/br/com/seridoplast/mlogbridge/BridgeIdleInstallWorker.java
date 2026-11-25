@@ -32,6 +32,10 @@ public final class BridgeIdleInstallWorker extends Worker {
             BridgeUpdater.status(ctx,"APK de teste nao entra no canal automatico.");
             return;
         }
+        if(!GitHubReleaseUpdater.approvalCurrent(ctx,update)){
+            BridgeUpdater.status(ctx,"APK aguardando nova confirmação do catálogo estável.");
+            return;
+        }
         int rollout=sp.getInt(GitHubReleaseUpdater.PREF_ROLLOUT,0);
         String androidId=Settings.Secure.getString(ctx.getContentResolver(), Settings.Secure.ANDROID_ID);
         if(!BridgeRolloutPolicy.eligible(androidId,rollout)) {
@@ -39,10 +43,14 @@ public final class BridgeIdleInstallWorker extends Worker {
             return;
         }
         if(!ShizukuApkInstaller.ready()) {
-            BridgeUpdater.status(ctx,"Atualizacao pronta; aguardando Shizuku ativo/autorizado.");
+            LocalAdbBridge.tick(ctx);
+            BridgeUpdater.status(ctx,"Atualização pronta; aguardando ADB local ou Shizuku autorizado.");
             return;
         }
-        if(!isCollectorIdle(ctx))return;
+        if(!isCollectorIdle(ctx)){
+            BridgeUpdater.status(ctx,"Atualização pronta; aguardando coletor ocioso e MLOG fora de uso.");
+            return;
+        }
         try {
             ShizukuApkInstaller.installVerified(ctx,update);
         } catch(Exception ex) {

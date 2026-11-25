@@ -80,7 +80,7 @@ public final class MainActivity extends Activity {
     private String lastSymbology;
     private String lastMetadataFields;
     private long lastThemeTapAt;
-    private TextView githubUpdateStatus, shizukuUpdateStatus;
+    private TextView githubUpdateStatus, shizukuUpdateStatus, adbStatus;
     private File shizukuPendingInstall;
     private boolean githubChecking;
     private static final int SHIZUKU_REQUEST=340;
@@ -154,15 +154,16 @@ public final class MainActivity extends Activity {
                 boolean active=MlogFocusAccessibilityService.current()!=null;
                 boolean ready=shizukuAuthorized();
                 boolean statusOk=shizuku && ready && active;
-                serviceState.setText(!shizuku?"Ative Bipe Shizuku em Ajustes":
-                    statusOk?"Bipe Shizuku pronto":
-                    !ready?"Ative o Shizuku":"Ative a acessibilidade");
+                serviceState.setText(!shizuku?"Ative a leitura privilegiada em Ajustes":
+                    statusOk?(LocalAdbBridge.ready()?"Bipe ADB pronto":"Bipe Shizuku pronto"):
+                    !ready?"Conecte o ADB ou Shizuku":"Ative a acessibilidade");
                 serviceState.setTextColor(statusOk?success:amber);
                 leadingIcon(serviceState,statusOk?R.drawable.ui_check_circle:R.drawable.ui_alert_circle,
                     statusOk?success:amber,16);
             }
             if(prefs.getBoolean(ShizukuScanMode.PREF,false))
                 ShizukuHealthMonitor.refresh(MainActivity.this);
+            if(adbStatus!=null)adbStatus.setText(LocalAdbBridge.status());
             updateShizukuUiStatus();
             refreshSetupWarning();
             refreshScannerStatus();
@@ -419,7 +420,7 @@ public final class MainActivity extends Activity {
             footer.addView(tab,tlp);
         }
         root.addView(footer);
-        githubUpdateStatus=null;preview=null;lastStatus=null;barcodeFormatStatus=null;barcodeArtifactStatus=null;
+        githubUpdateStatus=null;adbStatus=null;preview=null;lastStatus=null;barcodeFormatStatus=null;barcodeArtifactStatus=null;
         barcodeFieldsStatus=null;serviceState=null;shizukuSettingsStatus=null;scannerConnectionStatus=null;
         scannerConnectionTitle=null;scannerConnectionDot=null;scanHint=null;historyCount=null;
         recentReadsList=null;lastRenderedRead="";setupWarningCard=null;setupWarningLabel=null;
@@ -699,7 +700,7 @@ public final class MainActivity extends Activity {
      * IMPORTANTE: (C) nao injeta teclas globais e exige InputConnection focada.
      */
     private boolean shizukuAuthorized(){
-        return ShizukuHealthMonitor.ready();
+        return ShizukuHealthMonitor.privilegedReady();
     }
     private void openShizuku(){
         if(!ShizukuHealthMonitor.openShizuku(this))
@@ -710,8 +711,8 @@ public final class MainActivity extends Activity {
         boolean ready=shizukuAuthorized();
         boolean accessible=accessibilityReady();
         boolean statusOk=ready && accessible;
-        shizukuSettingsStatus.setText(statusOk?"Pronto":
-            !ready?"Inicie o Shizuku":"Ative a acessibilidade");
+        shizukuSettingsStatus.setText(statusOk?(LocalAdbBridge.ready()?"ADB local pronto":"Shizuku pronto"):
+            !ready?"Conecte o ADB ou Shizuku":"Ative a acessibilidade");
         shizukuSettingsStatus.setTextColor(statusOk?success:amber);
         leadingIcon(shizukuSettingsStatus,statusOk?R.drawable.ui_check_circle:R.drawable.ui_alert_circle,
             statusOk?success:amber,16);
@@ -788,20 +789,32 @@ public final class MainActivity extends Activity {
         LinearLayout lineHead=row();
         lineHead.addView(icon(R.drawable.ui_scan,primary,24));
         LinearLayout modeName=column();
-        modeName.addView(label("Bipe Shizuku",18,ink,true));
-        modeName.addView(label("Leitura via Shizuku",12,muted,false));
+        modeName.addView(label("Leitura privilegiada",18,ink,true));
+        modeName.addView(label("ADB local / Shizuku",12,muted,false));
         LinearLayout.LayoutParams mn=new LinearLayout.LayoutParams(0,-2,1);mn.leftMargin=dp(10);
         lineHead.addView(modeName,mn);mode.addView(lineHead);
         shizukuSettingsStatus=label("Verificando...",13,muted,true);
         LinearLayout.LayoutParams st=new LinearLayout.LayoutParams(-1,-2);st.topMargin=dp(10);
         mode.addView(shizukuSettingsStatus,st);updateShizukuUiStatus();
-        button(mode,"Ativar / reconectar",true,this::selectShizukuMode);
+        button(mode,"Configurar Shizuku",true,this::selectShizukuMode);
         button(mode,"Acessibilidade",false,this::openAccessibilitySettings);
         space(mode,7);
         check(mode,"Recuperação por Volume","camera_auto_recovery_v348",true);
         button(mode,"Reconfigurar leitor",false,()->toast(NativeScannerController.configure(this)?
             "Leitor reconfigurado.":"Falha ao configurar o leitor."));
 
+        LinearLayout adb=card();
+        adb.addView(label("ADB integrado (teste)",18,ink,true));
+        adbStatus=label(LocalAdbBridge.status(),13,muted,false);adb.addView(adbStatus);
+        subtitle(adb,"Android 11+. Pareamento local; Shizuku continua como alternativa.");
+        button(adb,"Parear ADB",true,()->LocalAdbPairReceiver.showPairing(this));
+        button(adb,"Procurar / reconectar",false,()->{LocalAdbBridge.retry(this);toast("Buscando ADB local...");});
+        button(adb,"Informar porta de conexão",false,()->{
+            EditText field=new EditText(this);field.setInputType(InputType.TYPE_CLASS_NUMBER);
+            new AlertDialog.Builder(this).setTitle("Porta de conexão (não de pareamento)").setView(field)
+                .setPositiveButton("Conectar",(d,w)->{try{LocalAdbBridge.setConnectionPort(this,Integer.parseInt(field.getText().toString()));}catch(Exception ex){toast("Porta inválida");}}).setNegativeButton("Cancelar",null).show();
+        });
+        button(adb,"Desativar ADB integrado",false,()->{LocalAdbBridge.disable(this);displayPage();});
         LinearLayout tools=card();
         tools.addView(label("Botão flutuante",17,ink,true));
         subtitle(tools,"Acesso rápido às ferramentas no MLOG.");
@@ -988,16 +1001,16 @@ public final class MainActivity extends Activity {
     private void installCachedShizukuAuthorized(){
 
         if(!ShizukuApkInstaller.ready()){
-            setUpdateStatus("Shizuku indisponivel. Voce pode instalar pelo Android.");
+            setUpdateStatus("ADB e Shizuku indisponíveis. Você pode instalar pelo Android.");
             new AlertDialog.Builder(this)
                 .setTitle("Shizuku indisponivel")
-                .setMessage("O Shizuku nao esta ativo ou autorizado. Deseja usar o instalador normal do Android?")
+                .setMessage("ADB e Shizuku não estão disponíveis. Deseja usar o instalador normal do Android?")
                 .setPositiveButton("Instalar pelo Android",(d,w)->installCachedViaAndroid())
                 .setNegativeButton("Cancelar",null).show();
             return;
         }
         new AlertDialog.Builder(this)
-            .setTitle("Instalar pelo Shizuku")
+            .setTitle("Instalar atualização")
             .setMessage("A instalacao pode reiniciar o Bridge. Feche a atividade de Separacao antes de continuar.")
             .setPositiveButton("Instalar",(d,w)->{
                 setUpdateStatus("Validando APK e preparando sessao de instalacao...");
@@ -1079,7 +1092,7 @@ public final class MainActivity extends Activity {
         subtitle(panel,tag+(prerelease?" · versão de teste":" · Release estável"));
         space(panel,8);
         final AlertDialog dlg=new AlertDialog.Builder(this).setView(panel).create();
-        button(panel,"Instalar pelo Shizuku",true,()->{dlg.dismiss();installCachedShizuku();});
+        button(panel,"Instalar atualização",true,()->{dlg.dismiss();installCachedShizuku();});
         button(panel,"Instalar pelo Android",false,()->{dlg.dismiss();installVerifiedApk(file);});
         button(panel,"Depois",false,dlg::dismiss);
         dlg.show();
@@ -1127,7 +1140,7 @@ public final class MainActivity extends Activity {
                     "Depois, confira se continua autorizado. Não atualize durante uma separação.")
                 .setPositiveButton("Instalador Android",(d,w)->installShizukuViaAndroid())
                 .setNeutralButton("Via Shizuku (teste)",(d,w)->{
-                    if(!ShizukuApkInstaller.ready()){
+                    if(!ShizukuApkInstaller.shizukuReady()){
                         setShizukuStatus("Shizuku indisponível; use o instalador do Android.");return;}
                     setShizukuStatus("Instalando Shizuku...");
                     new Thread(()->{

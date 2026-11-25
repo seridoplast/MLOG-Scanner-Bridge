@@ -16,6 +16,7 @@ import java.util.concurrent.TimeUnit;
 public final class BridgeUpdater {
     static final String AUTO_CHECK="bridge_auto_check_10m_a_v362";
     private static final String CHECK_B="bridge_auto_check_10m_b_v362";
+    static final String CHECK_WATCHDOG="bridge_check_watchdog_v3619";
     static final String AUTO_INSTALL="bridge_auto_install_idle_v359";
     private static final String RETRY_A="bridge_idle_retry_2m_a_v359";
     private static final String RETRY_B="bridge_idle_retry_2m_b_v359";
@@ -44,6 +45,7 @@ public final class BridgeUpdater {
         if(!sp.getBoolean(PREF_ENABLED,true)) {
             sp.edit().remove("updater_next_check_due_v362").apply();
             manager.cancelUniqueWork(AUTO_CHECK);
+            manager.cancelUniqueWork(CHECK_WATCHDOG);
             manager.cancelUniqueWork(CHECK_B);
             manager.cancelUniqueWork("bridge_check_soon_v362");
             manager.cancelUniqueWork(AUTO_INSTALL);
@@ -54,6 +56,10 @@ public final class BridgeUpdater {
         // PeriodicWorkRequest nao aceita intervalos menores que 15 minutos.
         // Usar ONE-TIME work com re-agendamento a cada 10 minutos, sujeito a Doze.
         queueNextCheck(ctx,null);
+        // A periodic fallback restores checks even if an OEM kills the one-time chain.
+        PeriodicWorkRequest watchdog=new PeriodicWorkRequest.Builder(BridgeAutoUpdateWorker.class,15,TimeUnit.MINUTES)
+            .setConstraints(online()).build();
+        manager.enqueueUniquePeriodicWork(CHECK_WATCHDOG,ExistingPeriodicWorkPolicy.KEEP,watchdog);
         // Installer rechecks staged APK even when no new release is available.
         if(!sp.getBoolean(PREF_INSTALL,true)){
             manager.cancelUniqueWork(AUTO_INSTALL);

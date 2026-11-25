@@ -40,7 +40,7 @@ final class ShizukuScanClient {
         this.context=context.getApplicationContext();
         died=()->{
             ScanCoordinator.status(this.context,
-                "Shizuku parou. Leituras bloqueadas; reinicie o Shizuku.");
+                LocalAdbBridge.ready()?"ADB local ativo; Shizuku indisponível.":"Shizuku parou. Aguardando ADB local ou Shizuku.");
             ShizukuHealthMonitor.refresh(this.context);
         };
         arrived=()->{
@@ -64,6 +64,7 @@ final class ShizukuScanClient {
     }
 
     boolean ready() {
+        if(LocalAdbBridge.ready())return true;
         try {
             return Shizuku.pingBinder() &&
                 Shizuku.checkSelfPermission()==PackageManager.PERMISSION_GRANTED &&
@@ -114,6 +115,10 @@ final class ShizukuScanClient {
                     // The tested ADB sequence, not InputConnection nor accessibility.
                     // A failure after the text step is ambiguous: never retry and
                     // accidentally register the barcode twice.
+                    if(LocalAdbBridge.ready()){
+                        if(!LocalAdbBridge.scan(code))ScanCoordinator.status(context,"ADB: leitura sem confirmação. Confira o MLOG.");
+                        return;
+                    }
                     if(!runInput("text",code)){
                         ScanCoordinator.status(context,"Falha ao digitar. Confira o MLOG.");
                         return;
@@ -163,7 +168,7 @@ final class ShizukuScanClient {
                         // Apenas inteiros validados; nenhum argumento arbitrario.
                         // Se o toque falhar, '&&' impede o BACK.
                         String sequence=VolumeRecoveryTarget.shellSequence(x,y,pauseMs);
-                        ok=runRemoteShellSequence(sequence);
+                        ok=LocalAdbBridge.ready()?LocalAdbBridge.volume(x,y,pauseMs):runRemoteShellSequence(sequence);
                     }
                     Log.i("MLOGBridge",(ok?"VOLUME_SHIZUKU_SEQUENCE_OK":"VOLUME_SHIZUKU_SEQUENCE_FAILED")+
                         " elapsed_ms="+(android.os.SystemClock.elapsedRealtime()-started)+

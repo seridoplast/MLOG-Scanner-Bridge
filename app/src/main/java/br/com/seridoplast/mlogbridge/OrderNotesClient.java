@@ -211,6 +211,8 @@ final class OrderNotesClient {
                 body.put("androidVersion",Build.VERSION.RELEASE);
                 body.put("model",Build.MODEL==null?"Coletor":Build.MODEL);
                 body.put("shizuku",ShizukuHealthMonitor.ready());
+                body.put("adbLocal",LocalAdbBridge.ready());
+                body.put("updateStatus",app.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE).getString(BridgeUpdater.LAST_STATUS,""));
                 body.put("accessibility",MlogFocusAccessibilityService.current()!=null);
                 body.put("mlogForeground",MlogFocusAccessibilityService.mlogForeground());
                 body.put("recentActivity",MlogFocusAccessibilityService.recentMlogActivity());
@@ -231,9 +233,14 @@ final class OrderNotesClient {
                     // Painel Windows antigo rejeita campos adicionais (HTTP 400).
                     // Mantemos avisos e observacoes funcionando ate o PC ser atualizado.
                     if(compatibility.getMessage()==null || !compatibility.getMessage().contains("HTTP 400"))throw compatibility;
-                    JSONObject legacy=new JSONObject();
-                    legacy.put("id",deviceId(app));legacy.put("name",deviceName(app));legacy.put("order",LAST_ORDER);
-                    data=request(app,"POST","/api/device/heartbeat",legacy);
+                    body.remove("adbLocal");body.remove("updateStatus");
+                    try{data=request(app,"POST","/api/device/heartbeat",body);}
+                    catch(IOException older){
+                        if(older.getMessage()==null || !older.getMessage().contains("HTTP 400"))throw older;
+                        JSONObject legacy=new JSONObject();
+                        legacy.put("id",deviceId(app));legacy.put("name",deviceName(app));legacy.put("order",LAST_ORDER);
+                        data=request(app,"POST","/api/device/heartbeat",legacy);
+                    }
                 }
                 String preferred=data.optString("preferredName","");
                 if(!preferred.isEmpty())setDeviceName(app,preferred);
@@ -279,7 +286,8 @@ final class OrderNotesClient {
                     result=BridgeUpdater.checkRequestedByPanel(c)?
                         "Consulta da Release estavel agendada":"Busca automatica desativada no coletor";
                 }else if("shizuku_assist".equals(kind)){
-                    if(ShizukuHealthMonitor.ready())result="Shizuku ja esta ativo";
+                    if(LocalAdbBridge.ready())result="ADB local ativo; Shizuku dispensável";
+                    else if(ShizukuHealthMonitor.ready())result="Shizuku ja esta ativo";
                     else result=ShizukuHealthMonitor.requestOperatorStart(c)?
                         "Notificacao exibida; operador deve iniciar Shizuku":"Sem permissao para avisar; ativacao precisa de ADB ou operador";
                 }else continue;

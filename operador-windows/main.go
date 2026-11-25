@@ -27,7 +27,7 @@ import (
 //go:embed web/*
 var webFiles embed.FS
 
-const centralVersion = "3.6.18"
+const centralVersion = "3.6.19"
 
 type Note struct {
 	ID            string `json:"id"`
@@ -83,6 +83,8 @@ type Device struct {
 	AndroidVersion   string              `json:"androidVersion,omitempty"`
 	Model            string              `json:"model,omitempty"`
 	Shizuku          bool                `json:"shizuku"`
+	ADBLocal         bool                `json:"adbLocal"`
+	UpdateStatus     string              `json:"updateStatus,omitempty"`
 	Accessibility    bool                `json:"accessibility"`
 	MlogForeground   bool                `json:"mlogForeground"`
 	RecentActivity   bool                `json:"recentActivity"`
@@ -348,7 +350,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		count := 0
 		skipped := 0
 		for _, d := range selected {
-			if in.Kind == "shizuku_assist" && d.Shizuku {
+			if in.Kind == "shizuku_assist" && (d.Shizuku || d.ADBLocal) {
 				skipped++
 				continue
 			}
@@ -678,6 +680,8 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			AndroidVersion    string `json:"androidVersion"`
 			Model             string `json:"model"`
 			Shizuku           bool   `json:"shizuku"`
+			ADBLocal          bool   `json:"adbLocal"`
+			UpdateStatus      string `json:"updateStatus"`
 			Accessibility     bool   `json:"accessibility"`
 			MlogForeground    bool   `json:"mlogForeground"`
 			RecentActivity    bool   `json:"recentActivity"`
@@ -691,7 +695,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			len(in.MlogOperator) > 60 || len(in.LastMlogOperator) > 60 ||
 			(in.MlogOperator != "" && !validMlogUsername(in.MlogOperator)) ||
 			(in.LastMlogOperator != "" && !validMlogUsername(in.LastMlogOperator)) ||
-			len(in.BridgeVersion) > 24 || len(in.Model) > 80 || len(in.AndroidVersion) > 24 || in.Battery < -1 || in.Battery > 100 {
+			len(in.UpdateStatus) > 1000 || len(in.BridgeVersion) > 24 || len(in.Model) > 80 || len(in.AndroidVersion) > 24 || in.Battery < -1 || in.Battery > 100 {
 			fail(w, 400, "coletor invalido")
 			return
 		}
@@ -727,6 +731,8 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		d.AndroidVersion = in.AndroidVersion
 		d.Model = in.Model
 		d.Shizuku = in.Shizuku
+		d.ADBLocal = in.ADBLocal
+		d.UpdateStatus = in.UpdateStatus
 		d.Accessibility = in.Accessibility
 		d.MlogForeground = in.MlogForeground
 		d.RecentActivity = in.RecentActivity

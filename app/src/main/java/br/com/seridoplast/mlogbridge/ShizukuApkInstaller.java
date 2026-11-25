@@ -29,7 +29,9 @@ final class ShizukuApkInstaller {
     private static final String PM = "/system/bin/pm";
     private ShizukuApkInstaller() { }
 
-    static boolean ready() {
+    static boolean ready() {return LocalAdbBridge.ready() || shizukuReady();}
+
+    static boolean shizukuReady() {
         try {
             return Shizuku.pingBinder()
                 && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
@@ -90,6 +92,12 @@ final class ShizukuApkInstaller {
             if (size < 50L * 1024L || size > 120L * 1024L * 1024L)
                 throw new IllegalStateException("Tamanho de APK inesperado.");
 
+            if(LocalAdbBridge.ready()){
+                BridgeUpdater.status(context,"Instalando "+update.tag+" via ADB local...");
+                if(!LocalAdbBridge.installBridge(apk))throw new IOException("ADB sem confirmação da instalação; confira a versão instalada.");
+                BridgeUpdater.status(context,"Instalação ADB confirmada: "+update.tag);
+                return "Atualização instalada: "+update.tag;
+            }
             BridgeUpdater.status(context, "Criando sessao de instalacao " + update.tag + "...");
             ProcessResult created = exec(30, PM, "install-create", "-r", "-S", Long.toString(size));
             if (!created.ok()) throw new IOException("pm install-create: " + created.description());
@@ -124,7 +132,7 @@ final class ShizukuApkInstaller {
         if(!INSTALLING.compareAndSet(false,true))throw new IllegalStateException("Outra instalação em andamento.");
         String session=null;boolean committed=false;
         try {
-            if(!ready())throw new IllegalStateException("Shizuku não autorizado.");
+            if(!shizukuReady())throw new IllegalStateException("Shizuku não autorizado.");
             File verified=ShizukuReleaseUpdater.cachedVerified(context);
             if(verified==null || candidate==null || !verified.equals(candidate))
                 throw new SecurityException("APK do Shizuku não foi validado.");
@@ -144,7 +152,7 @@ final class ShizukuApkInstaller {
             return "Shizuku atualizado. Confirme a disponibilidade do serviço.";
         } finally {
             if(session!=null && !committed){
-                try{if(ready())exec(10,PM,"install-abandon",session);}
+                try{if(shizukuReady())exec(10,PM,"install-abandon",session);}
                 catch(Exception ignored){}
             }
             INSTALLING.set(false);

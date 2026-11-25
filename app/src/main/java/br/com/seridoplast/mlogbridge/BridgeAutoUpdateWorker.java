@@ -8,6 +8,7 @@ import androidx.work.WorkerParameters;
 
 /** HTTPS + hash + signing certificate validation; no installation while downloading. */
 public final class BridgeAutoUpdateWorker extends Worker {
+    private static final java.util.concurrent.atomic.AtomicBoolean CHECKING=new java.util.concurrent.atomic.AtomicBoolean();
     public BridgeAutoUpdateWorker(@NonNull Context context,@NonNull WorkerParameters params) {super(context,params);}
     @NonNull @Override public Result doWork() {
         Context ctx=getApplicationContext();
@@ -15,6 +16,7 @@ public final class BridgeAutoUpdateWorker extends Worker {
         BridgeUpdater.queueNextCheck(ctx,getInputData().getString("check_slot"));
         SharedPreferences sp=ctx.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE);
         if(!sp.getBoolean(BridgeUpdater.PREF_ENABLED,true))return Result.success();
+        if(!CHECKING.compareAndSet(false,true))return Result.success();
         try {
             GitHubReleaseUpdater.Update update=GitHubReleaseUpdater.downloadLatest(ctx);
             if(update==null){BridgeUpdater.status(ctx,"Nenhuma nova versao aprovada.");return Result.success();}
@@ -27,6 +29,6 @@ public final class BridgeAutoUpdateWorker extends Worker {
         } catch(Exception ex) {
             BridgeUpdater.status(ctx,"Falha ao consultar atualizacao: "+ex.getMessage());
             return Result.success(); // Aguarda proximo periodo, evita flood na API.
-        }
+        } finally {CHECKING.set(false);}
     }
 }

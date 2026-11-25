@@ -5,7 +5,7 @@ on:
     types: [published, edited, released, prereleased, deleted, unpublished]
   workflow_dispatch:
   schedule:
-    - cron: '17 * * * *'
+    - cron: '3,13,23,33,43,53 * * * *'
 
 permissions:
   contents: write
@@ -22,22 +22,7 @@ jobs:
         with:
           ref: main
           persist-credentials: true
-      - name: Gerar catalogo estatico sem GitHub Pages
+      - name: Publicar catalogo em branch propria e espelho legado
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          python3 scripts/build_release_feed.py
-          cp site/releases.json releases.json
-      - name: Atualizar releases.json na branch principal
-        run: |
-          set -euo pipefail
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add releases.json
-          if git diff --cached --quiet; then
-            echo 'Catalogo sem alteracoes.'
-            exit 0
-          fi
-          git commit -m 'chore: atualizar catalogo estatico de releases [skip ci]'
-          git push origin HEAD:main
+        run: python3 scripts/publish_release_feed.py

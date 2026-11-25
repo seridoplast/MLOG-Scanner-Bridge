@@ -31,7 +31,11 @@ public final class GitHubReleaseUpdater {
     private static final String REPOSITORY = "seridoplast/MLOG-Scanner-Bridge";
     private static final String API = "https://api.github.com/repos/" + REPOSITORY + "/releases/latest";
     // Catalogo estatico via raw.githubusercontent.com (sem GitHub Pages nem API REST nos coletores).
-    private static final String FEED = "https://raw.githubusercontent.com/seridoplast/MLOG-Scanner-Bridge/main/releases.json";
+    private static final String FEED = "https://raw.githubusercontent.com/seridoplast/MLOG-Scanner-Bridge/release-catalog/releases.json";
+    private static final String LEGACY_FEED = "https://raw.githubusercontent.com/seridoplast/MLOG-Scanner-Bridge/main/releases.json";
+    private static final long FEED_MAX_AGE_MS=3L*60*60*1000;
+    static final String PREF_APPROVED_AT="update_stable_approval_at_v3619";
+    static final String PREF_APPROVED_TAG="update_stable_approval_tag_v3619";
     private static final String RATE_UNTIL = "updater_github_api_blocked_until_v368";
     private static final String API_AUTO_ATTEMPT = "updater_fallback_auto_v368";
     private static final String API_MANUAL_ATTEMPT = "updater_fallback_manual_v368";
@@ -153,7 +157,25 @@ public final class GitHubReleaseUpdater {
         JSONObject release = latestRelease(context.getApplicationContext());
         if(!BridgeUpdateChannel.isAutoChannel(release.optBoolean("draft",false),release.optBoolean("prerelease",false)))
             throw new IOException("A release consultada nao esta aprovada para atualizacao automatica.");
-        return downloadRelease(context, release, false);
+        synchronized(UPDATE_LOCK){
+            SharedPreferences sp=context.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE);
+            // An old staged APK must not survive a withdrawal, downgrade of Latest,
+            // or rollout change. Promotion of the same cached tag is revalidated.
+            sp.edit().remove(PREF_APPROVED_AT).remove(PREF_APPROVED_TAG).apply();
+            Update found=downloadRelease(context, release, false);
+            if(found!=null){
+                sp.edit().putLong(PREF_APPROVED_AT,System.currentTimeMillis())
+                    .putString(PREF_APPROVED_TAG,found.tag).apply();
+            }
+            return found;
+        }
+    }
+
+    static boolean approvalCurrent(Context ctx,Update update){
+        SharedPreferences sp=ctx.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE);
+        long age=System.currentTimeMillis()-sp.getLong(PREF_APPROVED_AT,0L);
+        return update!=null && !update.debug && update.tag.equals(sp.getString(PREF_APPROVED_TAG,""))
+            && age>=0 && age<=FEED_MAX_AGE_MS;
     }
 
     /** Same certificate, checksum, version and URL checks for stable and prerelease APKs. */
@@ -259,11 +281,19 @@ public final class GitHubReleaseUpdater {
 
     /** Arquivo estatico servido pelo CDN raw do GitHub, sem token. */
     private static JSONObject readFeed() throws Exception {
-        JSONObject feed=new JSONObject(new String(fetchJson(FEED,null),"UTF-8"));
+        try{return readFeedAt(FEED);}catch(Exception ex){return readFeedAt(LEGACY_FEED);}
+    }
+    private static JSONObject readFeedAt(String source) throws Exception {
+        // Refresh the raw CDN cache key in 5-minute buckets, no REST quota.
+        JSONObject feed=new JSONObject(new String(fetchJson(source+"?t="+(System.currentTimeMillis()/300000L),null),"UTF-8"));
         if(feed.optInt("schema",-1)!=1 || !REPOSITORY.equals(feed.optString("repository","")))
             throw new IOException("Catalogo de atualizacoes inesperado.");
         if(feed.optJSONArray("releases")==null)
             throw new IOException("Catalogo sem lista de versoes.");
+        long generated=feed.optLong("generated_at",0L)*1000L;
+        long age=System.currentTimeMillis()-generated;
+        if(generated<=0L || age>FEED_MAX_AGE_MS || age< -10*60*1000L)
+            throw new IOException("Catálogo está desatualizado; aguardando publicação.");
         return feed;
     }
 
@@ -299,7 +329,7 @@ public final class GitHubReleaseUpdater {
             long last=sp.getLong(key,0);
             long interval=manual?API_MANUAL_INTERVAL_MS:API_AUTO_INTERVAL_MS;
             if(GitHubRatePolicy.waitForFallback(now,last,interval))
-                throw new IOException("Catalogo ainda indisponivel. Consulta reserva aguardando; verifique releases.json na branch main.");
+                throw new IOException("Catalogo ainda indisponivel. Consulta reserva aguardando; verifique o catálogo release-catalog.");
             sp.edit().putLong(key,now).apply();
             return fetchJson(url,ctx);
         }
@@ -323,7 +353,7 @@ public final class GitHubReleaseUpdater {
                             android.text.format.DateFormat.format("HH:mm",blockedUntil)+".");
                     }
                 }
-                if (status == 404) throw new IOException("Catalogo GitHub Pages nao publicado (HTTP 404).");
+                if (status == 404) throw new IOException("Catálogo de Releases ainda não publicado (HTTP 404).");
                 throw new IOException("Servidor de atualizacoes respondeu HTTP " + status + ".");
             }
             try (InputStream in = conn.getInputStream(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
@@ -367,6 +397,7 @@ public final class GitHubReleaseUpdater {
             conn.setConnectTimeout(12000);
             conn.setReadTimeout(30000);
             conn.setInstanceFollowRedirects(false);
+            conn.setUseCaches(false);
             conn.setRequestProperty("User-Agent", "Seridoplast-MLOG-Bridge-Updater");
             conn.setRequestProperty("Accept", "application/vnd.github+json");
             int status = conn.getResponseCode();

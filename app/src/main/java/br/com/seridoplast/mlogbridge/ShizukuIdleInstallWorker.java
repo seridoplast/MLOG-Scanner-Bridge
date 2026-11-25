@@ -15,7 +15,7 @@ public final class ShizukuIdleInstallWorker extends Worker {
         SharedPreferences sp=ctx.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE);
         if(!sp.getBoolean(ShizukuReleaseUpdater.PREF_CHECK,false) ||
            !sp.getBoolean(ShizukuReleaseUpdater.PREF_INSTALL,false))return Result.success();
-        if(!ShizukuApkInstaller.ready() || !BridgeIdleInstallWorker.isCollectorIdle(ctx))return Result.success();
+        if(!ShizukuApkInstaller.shizukuReady() || !BridgeIdleInstallWorker.isCollectorIdle(ctx))return Result.success();
         try {
             File apk=ShizukuReleaseUpdater.cachedVerified(ctx);
             if(apk!=null)ShizukuApkInstaller.installVerifiedShizuku(ctx,apk);
