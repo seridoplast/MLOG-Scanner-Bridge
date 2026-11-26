@@ -95,8 +95,9 @@ jobs:
       - name: Testar estabilidade e avisos de desconexão ADB
         run: |
           mkdir -p /tmp/adb-health-test
-          javac -d /tmp/adb-health-test app/src/main/java/br/com/seridoplast/mlogbridge/AdbConnectionHealth.java tests/AdbConnectionHealthTest.java
+          javac -d /tmp/adb-health-test app/src/main/java/br/com/seridoplast/mlogbridge/{AdbConnectionHealth,ConnectionNoticePolicy}.java tests/{AdbConnectionHealthTest,ConnectionNoticePolicyTest}.java
           java -cp /tmp/adb-health-test br.com.seridoplast.mlogbridge.AdbConnectionHealthTest
+          java -cp /tmp/adb-health-test br.com.seridoplast.mlogbridge.ConnectionNoticePolicyTest
 
       - name: Testar serviço local autenticado e ausência de replay
         run: |

@@ -1,3 +1,7 @@
+# Atualização 3.6.29 — limite diário de avisos de conexão
+
+Pré-release Android: o aviso automático de perda de conexão ADB do Bridge fica limitado a uma vez a cada 24 horas por instalação, inclusive após reiniciar. A recuperação e o status nos ajustes continuam em tempo real. Não altera avisos de pareamento, produtividade, serviço offline ou notificações do Android/MLOG Target. Consulte [ATUALIZACAO-v3.6.29.md](ATUALIZACAO-v3.6.29.md).
+
 # Atualização 3.6.28 — funcionamento local durante perda de Wi-Fi
 
 Pré-release para piloto no TC60. Consulte [ATUALIZACAO-v3.6.28.md](ATUALIZACAO-v3.6.28.md) para aplicar, validar e entender os limites do serviço local. As notas abaixo são históricas.
