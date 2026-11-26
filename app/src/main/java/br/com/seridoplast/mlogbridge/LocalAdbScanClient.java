@@ -9,7 +9,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/** Local-device ADB only; bounded serialized scan queue. */
+/** Local privileged input (detached service or authorized ADB); bounded serialized scan queue. */
 final class LocalAdbScanClient {
     private final Context context;
     private final ExecutorService worker=Executors.newSingleThreadExecutor(r -> {
@@ -48,7 +48,7 @@ final class LocalAdbScanClient {
             return false;
         }
         if(!ready()){
-            ScanCoordinator.status(context,"ADB sem conexao. Leitura nao enviada.");
+            ScanCoordinator.status(context,"Serviço local e ADB indisponíveis. Leitura não enviada.");
             return false;
         }
         context.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE)
@@ -64,17 +64,17 @@ final class LocalAdbScanClient {
                     if(!context.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE)
                         .getBoolean(AdbScanMode.PREF,false))return;
                     if(!ready()){
-                        ScanCoordinator.status(context,"ADB desconectado; leitura nao enviada.");
+                        ScanCoordinator.status(context,"Serviço local indisponível; leitura não enviada.");
                         return;
                     }
                     // The tested ADB sequence, not InputConnection nor accessibility.
                     // A failure after the text step is ambiguous: never retry and
                     // accidentally register the barcode twice.
-                    if(!LocalAdbBridge.scan(code))ScanCoordinator.status(context,"ADB: leitura sem confirmação. Confira o MLOG.");
+                    if(!LocalAdbBridge.scan(code))ScanCoordinator.status(context,"Leitura sem confirmação. Confira o MLOG.");
                     else ProductivityLog.record(context,event);
                 } catch(Exception ex) {
                     Log.w("MLOGBridge","ADB_REMOTE_COMMAND_FAILED",ex);
-                    ScanCoordinator.status(context,"Falha na injeção ADB. Confira o MLOG.");
+                    ScanCoordinator.status(context,"Falha na injeção local. Confira o MLOG.");
                 } finally {pending.decrementAndGet();}
             });
             return true;

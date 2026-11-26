@@ -17,7 +17,7 @@ public final class AdbRecoveryWorker extends Worker {
             do{
                 if(isStopped() || Thread.currentThread().isInterrupted())break;
                 LocalAdbBridge.tick(c);
-                if(LocalAdbBridge.ready() && !LocalAdbBridge.checking())break;
+                if(LocalAdbBridge.transportReady() && !LocalAdbBridge.checking())break;
                 try{Thread.sleep(1000L);}catch(InterruptedException e){Thread.currentThread().interrupt();break;}
             }while(android.os.SystemClock.elapsedRealtime()<deadline);
         }

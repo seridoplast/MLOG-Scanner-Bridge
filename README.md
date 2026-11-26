@@ -1,3 +1,7 @@
+# Atualização 3.6.28 — funcionamento local durante perda de Wi-Fi
+
+Pré-release para piloto no TC60. Consulte [ATUALIZACAO-v3.6.28.md](ATUALIZACAO-v3.6.28.md) para aplicar, validar e entender os limites do serviço local. As notas abaixo são históricas.
+
 # Atualização 3.6.21
 
 **ADB integrado exclusivo; avisos e janelas flutuantes suspensos.** Para configuração, migração e limitações, veja [ATUALIZACAO-v3.6.21.md](ATUALIZACAO-v3.6.21.md). As notas abaixo documentam versões anteriores e não representam as funções ativas desta versão.

@@ -20,12 +20,12 @@ final class AdbNetworkWatch {
         Context c=context.getApplicationContext();
         ConnectivityManager cm=c.getSystemService(ConnectivityManager.class);
         if(cm==null)return;
-        final Runnable retry=()->LocalAdbBridge.retry(c);
+        final Runnable retry=()->LocalAdbBridge.networkChanged(c);
         final Runnable signal=()->{MAIN.removeCallbacks(retry);MAIN.postDelayed(retry,1200L);};
         try{
             cm.registerNetworkCallback(new NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI).build(),
                 new ConnectivityManager.NetworkCallback(){
-                    @Override public void onAvailable(Network n){signal.run();}
+                    @Override public void onAvailable(Network n){signal.run();ProductivityLog.networkAvailable(c);}
                     @Override public void onLost(Network n){signal.run();}
                 });
             started=true;

@@ -98,6 +98,12 @@ jobs:
           javac -d /tmp/adb-health-test app/src/main/java/br/com/seridoplast/mlogbridge/AdbConnectionHealth.java tests/AdbConnectionHealthTest.java
           java -cp /tmp/adb-health-test br.com.seridoplast.mlogbridge.AdbConnectionHealthTest
 
+      - name: Testar serviço local autenticado e ausência de replay
+        run: |
+          mkdir -p /tmp/bridge-offline
+          javac -d /tmp/bridge-offline app/src/main/java/br/com/seridoplast/mlogbridge/{AdbScanMode,VolumeRecoveryTarget,OfflineShellProtocol}.java tests/OfflineShellProtocolTest.java
+          java -cp /tmp/bridge-offline br.com.seridoplast.mlogbridge.OfflineShellProtocolTest
+
       - name: Testar recuperação de publicação GitHub
         run: python3 tests/test_publish_apk_release.py
 

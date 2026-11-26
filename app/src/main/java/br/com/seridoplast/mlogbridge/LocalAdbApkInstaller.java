@@ -27,7 +27,7 @@ final class LocalAdbApkInstaller {
     private static final String PM = "/system/bin/pm";
     private LocalAdbApkInstaller() { }
 
-    static boolean ready(){return LocalAdbBridge.ready();}
+    static boolean ready(){return LocalAdbBridge.transportReady();}
 
     interface Callback { void done(boolean ok, String message); }
 

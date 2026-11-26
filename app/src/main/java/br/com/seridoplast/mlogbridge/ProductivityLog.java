@@ -44,6 +44,7 @@ final class ProductivityLog extends SQLiteOpenHelper {
         Context app=c.getApplicationContext();Event e=capture(app,"order",order,order);
         if(e!=null)IO.execute(()->record(app,e));
     }
+    static void networkAvailable(Context c){retryAt=0;tick(c);}
     static void tick(Context c){
         if(SystemClock.elapsedRealtime()<retryAt || !sending.compareAndSet(false,true))return;
         Context app=c.getApplicationContext();IO.execute(()->{
