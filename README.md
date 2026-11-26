@@ -1,3 +1,7 @@
+# Atualização 3.6.32 — recuperação ADB rápida após boot
+
+Recuperação imediata no boot/abertura do app e em disponibilidade de rede, com novas tentativas rápidas apenas quando ambos os caminhos estão indisponíveis. Porta TLS atual quando legível, descoberta mDNS com prazo adaptativo e reinício autorizado único por falha. Consulte [ATUALIZACAO-v3.6.32.md](ATUALIZACAO-v3.6.32.md).
+
 # Atualização 3.6.31 — recuperação automática após perda real de ADB
 
 Mantém o serviço local prioritário e reativa o ADB apenas se necessário. Depois de falhas consecutivas na conexão, recupera a depuração Wi-Fi travada em rede previamente autorizada, com limite por episódio. O worker de boot possui novas tentativas. Consulte [ATUALIZACAO-v3.6.31.md](ATUALIZACAO-v3.6.31.md).

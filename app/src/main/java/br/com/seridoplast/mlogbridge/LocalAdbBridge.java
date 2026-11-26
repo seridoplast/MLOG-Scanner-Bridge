@@ -45,6 +45,12 @@ final class LocalAdbBridge {
     private static final AdbConnectionHealth HEALTH=new AdbConnectionHealth();
     private static volatile boolean validateRequested;
     private static volatile long lastCheck;
+    private static ScheduledFuture<?> recoveryWake;
+    private static synchronized void scheduleRecovery(Context c){
+        if(recoveryWake!=null)recoveryWake.cancel(false);
+        if(!enabled(c)||pairing!=null||ready())return;
+        recoveryWake=WATCH.schedule(()->tick(c),HEALTH.retryDelay()+100L,TimeUnit.MILLISECONDS);
+    }
     // If an OEM kills the agent immediately after parking the socket, retain
     // the existing transport in that process as a compatibility fallback.
     private static volatile boolean retainTransport;
@@ -79,14 +85,31 @@ final class LocalAdbBridge {
         if(lastCheck!=0 && now-lastCheck<(transportReady() && !validateRequested?30_000L:HEALTH.retryDelay()))return;
         if(!checking.compareAndSet(false,true))return;
         lastCheck=now;
-        IO.execute(()->{try{ensure(c);}catch(Exception | LinkageError ex){if(pairing==null)connectionFailure(ex);}finally{try{if(enabled(c) && pairing==null){if(!ready()){HEALTH.lost(SystemClock.elapsedRealtime());HEALTH.retryFailed();lastCheck=SystemClock.elapsedRealtime();}else if(!validateRequested) HEALTH.healthy();AdbConnectionNotice.update(c,HEALTH,ready());}}finally{checking.set(false);}}});
+        IO.execute(()->{
+            try{ensure(c);}catch(Exception | LinkageError ex){if(pairing==null)connectionFailure(ex);}
+            finally{
+                try{if(enabled(c) && pairing==null){
+                    if(!ready()){HEALTH.lost(SystemClock.elapsedRealtime());HEALTH.retryFailed();lastCheck=SystemClock.elapsedRealtime();}
+                    else if(!validateRequested) HEALTH.healthy();
+                    AdbConnectionNotice.update(c,HEALTH,ready());
+                }}finally{
+                    checking.set(false);
+                    // No dependency on the 5s accessibility/UI tick for a failed bootstrap.
+                    scheduleRecovery(c);
+                }
+            }
+        });
     }
     static void retry(Context c){lastCheck=0;tick(c);}
-    static void networkChanged(Context c){
-        // Network and debugging-setting changes are not transport demand.
-        if(OfflineShell.ready())return;
-        // Respect backoff even for callbacks caused by our own Settings writes.
-        tick(c);
+    static void wakeIfUnavailable(Context c){
+        // A real availability event or opening the app can bypass backoff, but
+        // never forces an existing healthy transport or local agent to reconnect.
+        if(!enabled(c)||pairing!=null||ready()||checking.get())return;
+        HEALTH.wake();retry(c);
+    }
+    static void networkChanged(Context c,boolean available){
+        if(ready())return;
+        if(available)wakeIfUnavailable(c);else tick(c);
     }
     static boolean checking(){return checking.get() || pairing!=null;}
     // Only fixed permission grants, after consent and verified UID 2000. No LAN command path.
@@ -213,8 +236,11 @@ final class LocalAdbBridge {
         try{ensureTransport(c);}catch(Exception ex){
             // Only a failed attempt to reach ADB can trigger the stale-port recovery.
             // Do not toggle for an explicit authentication refusal or a live transport.
-            if(!local && !transportReady() && !isAuthorizationFailure(ex))AdbWifiRecovery.staleTransportFailed(c);
-            else AdbWifiRecovery.transportUnavailable();
+            if(!local && !transportReady() && !isAuthorizationFailure(ex)){
+                // A successful request to restart debugging deserves a short retry,
+                // not the backoff accumulated before the Android port was reset.
+                if(AdbWifiRecovery.staleTransportFailed(c))HEALTH.wake();
+            }else AdbWifiRecovery.transportUnavailable();
             throw ex;
         }finally{parkIfHealthy(c);}
     }
@@ -252,30 +278,62 @@ final class LocalAdbBridge {
         if(!AdbWifiRecovery.wifiDebugOn(c)){
             AdbWifiRecovery.transportUnavailable();
             AdbWifiRecovery.recoverIfNeeded(c);
-            status="Depuração Wi-Fi desligada · "+AdbWifiRecovery.status(c);return;
+            if(!AdbWifiRecovery.wifiDebugOn(c)){
+                status="Depuração Wi-Fi desligada · "+AdbWifiRecovery.status(c);return;
+            }
         }
         if(!wifiAvailable(c)){AdbWifiRecovery.transportUnavailable();status="Aguardando conexão Wi-Fi";return;}
         m=get(c);
         status="Procurando ADB sem fio";
+        // Android can choose a new TLS port at every boot. Try the current
+        // system property if readable by this app; no additional grant or port scan.
+        int current=readTlsPort();
         int old=prefs(c).getInt(PORT,0);
-        if(old>0){
-            String saved=prefs(c).getString(HOST,"127.0.0.1");
-            for(String host:new String[]{"127.0.0.1",saved}){
-                try{LocalAdbPairTransport.localAddress(host);m.connect(host,old);if(m.isConnected())break;}
-                catch(Exception ex){if(isAuthorizationFailure(ex))throw ex;}
-                m.disconnect();if("127.0.0.1".equals(saved))break;
+        String saved=prefs(c).getString(HOST,"127.0.0.1");
+        if(current>0){
+            if(tryEndpoint(m,"127.0.0.1",current)){
+                prefs(c).edit().putInt(PORT,current).putString(HOST,"127.0.0.1").apply();
+            }else if(!"127.0.0.1".equals(saved) && tryEndpoint(m,saved,current)){
+                prefs(c).edit().putInt(PORT,current).putString(HOST,saved).apply();
             }
+        }
+        if(!m.isConnected() && old>0 && old!=current){
+            tryEndpoint(m,"127.0.0.1",old);
+        }
+        if(!m.isConnected() && old>0 && old!=current && !"127.0.0.1".equals(saved)){
+            tryEndpoint(m,saved,old);
         }
         if(!m.isConnected()){
             java.net.InetSocketAddress discovered=discover(c);
-            if(discovered==null)throw new IOException("Porta ADB não anunciada");
+            if(discovered==null){android.util.Log.w(TAG,"Sem porta ADB local após descoberta mDNS · "+AdbWifiRecovery.status(c));throw new IOException("Porta ADB não anunciada");}
             String host=discovered.getAddress().getHostAddress();
-            m.disconnect();m.connect(host,discovered.getPort());
-            if(m.isConnected())prefs(c).edit().putInt(PORT,discovered.getPort()).putString(HOST,host).apply();
+            if(tryEndpoint(m,host,discovered.getPort()))
+                prefs(c).edit().putInt(PORT,discovered.getPort()).putString(HOST,host).apply();
         }
         if(!m.isConnected())throw new IOException("Transporte ADB indisponível");
         if(!verifiedShell(m))throw new IOException("ADB não autorizado");
+        android.util.Log.i(TAG,"Transporte ADB local autenticado; inicializando agente quando necessário.");
         markConnected(c,m);
+    }
+    private static boolean tryEndpoint(Manager m,String host,int port)throws Exception{
+        if(port<1||port>65535)return false;
+        try{
+            LocalAdbPairTransport.localAddress(host);
+            m.connect(host,port);
+            if(m.isConnected())return true;
+        }catch(Exception ex){if(isAuthorizationFailure(ex))throw ex;}
+        m.disconnect();return false;
+    }
+    private static int readTlsPort(){
+        Process process=null;
+        try{
+            process=new ProcessBuilder("/system/bin/getprop","service.adb.tls.port").redirectErrorStream(true).start();
+            if(!process.waitFor(500L,TimeUnit.MILLISECONDS))return -1;
+            try(BufferedReader r=new BufferedReader(new InputStreamReader(process.getInputStream(),StandardCharsets.UTF_8))){
+                return AdbRecoveryPolicy.parseTlsPort(r.readLine());
+            }
+        }catch(Exception ex){if(ex instanceof InterruptedException)Thread.currentThread().interrupt();return -1;}
+        finally{if(process!=null)process.destroy();}
     }
     private static boolean wifiAvailable(Context c){
         try{
@@ -293,7 +351,7 @@ final class LocalAdbBridge {
         AdbMdns mdns=new AdbMdns(c,AdbMdns.SERVICE_TYPE_TLS_CONNECT,(address,p)->{
             try{if(address instanceof java.net.Inet4Address && p>0 && p<=65535 && (address.isLoopbackAddress() || NetworkInterface.getByInetAddress(address)!=null)){endpoint.compareAndSet(null,new java.net.InetSocketAddress(address,p));latch.countDown();}}catch(Exception ignored){}
         });
-        try{mdns.start();latch.await(8,TimeUnit.SECONDS);return endpoint.get();}finally{mdns.stop();}
+        try{mdns.start();latch.await(HEALTH.discoveryTimeout(),TimeUnit.MILLISECONDS);return endpoint.get();}finally{mdns.stop();}
     }
     private static void failed(String message){if(connected)HEALTH.lost(SystemClock.elapsedRealtime());connected=false;validateRequested=false;if(pairing==null)status=message;try{if(manager!=null)manager.disconnect();}catch(Exception ignored){}}
     private static Manager get(Context c)throws Exception{if(manager==null)manager=new Manager(c);return manager;}

@@ -1073,6 +1073,7 @@ public final class MainActivity extends Activity {
             else registerReceiver(scannerTest,f);
             receiving=true;
         }catch(RuntimeException ignored){}
+        LocalAdbBridge.wakeIfUnavailable(this);
         handler.post(ticker);
         LocalAdbBridge.tick(this);
         FleetTelemetry.tick(this);

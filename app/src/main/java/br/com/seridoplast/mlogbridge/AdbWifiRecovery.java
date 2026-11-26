@@ -132,12 +132,12 @@ final class AdbWifiRecovery {
     }
     /** IO executor only. Restart Android debugging once after actual failed connections,
      * never simply because Wi-Fi changed or because the local agent parked ADB. */
-    static void staleTransportFailed(Context c){
+    static boolean staleTransportFailed(Context c){
         boolean eligible=mayRestart(c) && wifiDebugOn(c);
-        if(!STALE.failed(SystemClock.elapsedRealtime(),eligible))return;
-        if(!mayRestart(c) || !wifiDebugOn(c))return;
+        if(!STALE.failed(SystemClock.elapsedRealtime(),eligible))return false;
+        if(!mayRestart(c) || !wifiDebugOn(c))return false;
         try{
-            if(!Settings.Global.putInt(c.getContentResolver(),SETTING,0))return;
+            if(!Settings.Global.putInt(c.getContentResolver(),SETTING,0))return false;
             outcome="Porta ADB indisponível · reiniciando depuração autorizada.";
             android.util.Log.i("BridgeLocalADB","Recuperação: porta ADB indisponível após tentativas; reinício único da depuração.");
             try{Thread.sleep(1000L);}catch(InterruptedException e){Thread.currentThread().interrupt();}
@@ -145,8 +145,10 @@ final class AdbWifiRecovery {
             if(mayRestart(c)){
                 boolean requested=Settings.Global.putInt(c.getContentResolver(),SETTING,1);
                 outcome=requested?"Depuração reativada · aguardando nova porta ADB.":"Firmware recusou a reativação.";
+                return requested;
             }
         }catch(RuntimeException ex){outcome="Android bloqueou o reinício da depuração.";}
+        return false;
     }
     static synchronized boolean recoverIfNeeded(Context c){
         if(Build.VERSION.SDK_INT<30)return false;

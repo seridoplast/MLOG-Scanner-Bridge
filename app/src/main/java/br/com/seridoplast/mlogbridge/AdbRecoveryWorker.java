@@ -13,6 +13,7 @@ public final class AdbRecoveryWorker extends Worker {
         if(LocalAdbBridge.enabled(c)){
             // Keep the worker alive while the asynchronous connection is being established.
             // In a live accessibility process its normal watchdog takes over afterwards.
+            LocalAdbBridge.wakeIfUnavailable(c);
             long deadline=android.os.SystemClock.elapsedRealtime()+75_000L;
             do{
                 if(isStopped() || Thread.currentThread().isInterrupted())break;
@@ -36,6 +37,6 @@ public final class AdbRecoveryWorker extends Worker {
         wm.enqueueUniquePeriodicWork("adb_recovery_v3621",ExistingPeriodicWorkPolicy.KEEP,
             new PeriodicWorkRequest.Builder(AdbRecoveryWorker.class,15,TimeUnit.MINUTES).build());
         if(afterBoot)wm.enqueueUniqueWork("adb_recovery_boot_v3621",ExistingWorkPolicy.REPLACE,
-            new OneTimeWorkRequest.Builder(AdbRecoveryWorker.class).setInitialDelay(5,TimeUnit.SECONDS).setBackoffCriteria(BackoffPolicy.EXPONENTIAL,30,TimeUnit.SECONDS).build());
+            new OneTimeWorkRequest.Builder(AdbRecoveryWorker.class).setBackoffCriteria(BackoffPolicy.EXPONENTIAL,10,TimeUnit.SECONDS).build());
     }
 }

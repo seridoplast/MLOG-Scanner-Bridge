@@ -6,6 +6,10 @@ import java.util.Locale;
 /** An explicitly enrolled AP only; Android still enforces its own Wi-Fi trust. */
 final class AdbRecoveryPolicy {
     private AdbRecoveryPolicy(){}
+    static int parseTlsPort(String value){
+        if(value==null||!value.trim().matches("[0-9]{1,5}"))return -1;
+        int port=Integer.parseInt(value.trim());return port>0&&port<=65535?port:-1;
+    }
     static String normalize(String bssid){
         if(bssid==null)return "";
         String v=bssid.toLowerCase(Locale.ROOT);
@@ -35,7 +39,7 @@ final class AdbRecoveryPolicy {
             if(!eligible){unavailable();return false;}
             if(firstFailure<0){firstFailure=now;failures=1;return false;}
             failures=Math.min(2,failures+1);
-            if(restarted || failures<2 || now-firstFailure<5000L ||
+            if(restarted || failures<2 || now-firstFailure<3000L ||
                 (lastRestart>=0 && now-lastRestart<120_000L))return false;
             restarted=true;lastRestart=now;return true;
         }

@@ -9,7 +9,10 @@ final class AdbConnectionHealth {
     synchronized void healthy(){everConnected=true;lostAt=-1;alerted=false;failures=0;retries=0;}
     synchronized void reset(){everConnected=false;lostAt=-1;alerted=false;failures=0;retries=0;}
     synchronized void retryFailed(){if(retries<4)retries++;}
-    synchronized long retryDelay(){return retries<=1?5000L:retries==2?10000L:retries==3?20000L:30000L;}
+    // Short bursts on genuine loss; capped backoff when Android/network is unavailable.
+    synchronized long retryDelay(){return retries<=1?750L:retries==2?1500L:retries==3?3000L:8000L;}
+    synchronized long discoveryTimeout(){return retries<=1?4000L:8000L;}
+    synchronized void wake(){retries=0;}
     synchronized boolean probeFailed(){return ++failures>=2;}
     synchronized void lost(long now){if(everConnected && lostAt<0){lostAt=now;alerted=false;}failures=0;}
     synchronized boolean shouldAlert(long now){return everConnected && lostAt>=0 && !alerted && now-lostAt>=ALERT_AFTER_MS;}

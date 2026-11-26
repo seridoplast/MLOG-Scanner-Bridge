@@ -15,6 +15,8 @@ public final class BridgeBootReceiver extends BroadcastReceiver {
             if(nm!=null)nm.cancelAll();
         }
         AdbRecoveryWorker.schedule(context,true);
+        // Start now as well as scheduling persistent WorkManager recovery.
+        LocalAdbBridge.wakeIfUnavailable(context);
         BridgeUpdater.schedule(context);BridgeUpdater.checkSoon(context);
     }
 }

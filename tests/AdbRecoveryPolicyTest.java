@@ -20,6 +20,12 @@ public final class AdbRecoveryPolicyTest {
         expect(AdbRecoveryPolicy.networkKey(-1,"\"Seridoplast\"",2).isEmpty());
         expect(AdbRecoveryPolicy.networkKey(7,"<unknown ssid>",2).isEmpty());
         expect(!AdbRecoveryPolicy.approved("02:00:00:00:00:00",net,allowed,Set.of(net)));
+        expect(AdbRecoveryPolicy.parseTlsPort(" 37123 ")==37123);
+        expect(AdbRecoveryPolicy.parseTlsPort("65535")==65535);
+        for(String invalid:new String[]{null,"","0","-1","65536","Permission denied","12;cmd"})expect(AdbRecoveryPolicy.parseTlsPort(invalid)==-1);
+        AdbRecoveryPolicy.StaleTransport fast=new AdbRecoveryPolicy.StaleTransport();
+        expect(!fast.failed(4000,true));expect(!fast.failed(5000,true));expect(fast.failed(7750,true));
+        expect(!fast.failed(180000,true)); // no endless toggles during one outage
         AdbRecoveryPolicy.StaleTransport stale=new AdbRecoveryPolicy.StaleTransport();
         expect(!stale.failed(0,false)); // healthy/local/unauthorized network: never restart
         expect(!stale.failed(1000,true));

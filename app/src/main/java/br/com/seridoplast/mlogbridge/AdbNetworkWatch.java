@@ -20,19 +20,21 @@ final class AdbNetworkWatch {
         Context c=context.getApplicationContext();
         ConnectivityManager cm=c.getSystemService(ConnectivityManager.class);
         if(cm==null)return;
-        final Runnable retry=()->LocalAdbBridge.networkChanged(c);
-        final Runnable signal=()->{MAIN.removeCallbacks(retry);MAIN.postDelayed(retry,1200L);};
+        final Runnable available=()->LocalAdbBridge.networkChanged(c,true);
+        final Runnable unavailable=()->LocalAdbBridge.networkChanged(c,false);
+        final Runnable signal=()->{MAIN.removeCallbacks(available);MAIN.removeCallbacks(unavailable);MAIN.postDelayed(available,500L);};
+        final Runnable loss=()->{MAIN.removeCallbacks(available);MAIN.removeCallbacks(unavailable);MAIN.postDelayed(unavailable,500L);};
         try{
             cm.registerNetworkCallback(new NetworkRequest.Builder().addTransportType(NetworkCapabilities.TRANSPORT_WIFI).build(),
                 new ConnectivityManager.NetworkCallback(){
                     @Override public void onAvailable(Network n){signal.run();ProductivityLog.networkAvailable(c);}
-                    @Override public void onLost(Network n){signal.run();}
+                    @Override public void onLost(Network n){loss.run();}
                 });
             started=true;
         }catch(RuntimeException ignored){}
         if(started)try{
             c.getContentResolver().registerContentObserver(Settings.Global.getUriFor("adb_wifi_enabled"),false,
-                new ContentObserver(MAIN){@Override public void onChange(boolean selfChange){signal.run();}});
+                new ContentObserver(MAIN){@Override public void onChange(boolean selfChange){if(AdbWifiRecovery.wifiDebugOn(c))signal.run();else loss.run();}});
         }catch(RuntimeException ignored){}
     }
 }
