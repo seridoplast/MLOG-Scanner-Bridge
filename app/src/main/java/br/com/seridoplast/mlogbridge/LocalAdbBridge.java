@@ -54,11 +54,11 @@ final class LocalAdbBridge {
     static boolean enabled(Context c){return Build.VERSION.SDK_INT>=30 && prefs(c).getBoolean(PREF,false);}
     private static SharedPreferences prefs(Context c){return c.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE);}
     // Operational readiness differs from transport readiness (APK installer still needs ADB).
-    static boolean ready(){return pairing==null && (OfflineShell.ready() || connected);}
-    static boolean transportReady(){return pairing==null && connected;}
+    static boolean ready(){return pairing==null && (OfflineShell.ready() || transportReady());}
+    static boolean transportReady(){Manager m=manager;return pairing==null && connected && m!=null && m.isConnected();}
     static String status(){return pairing==null && OfflineShell.ready()?
-        (connected?"Serviço local ativo · ADB disponível":"Serviço local ativo · ADB em espera"):
-        (connected && pairing==null?"ADB conectado · serviço offline ainda não confirmado":status);}
+        (transportReady()?"Serviço local ativo · ADB disponível":"Serviço local ativo · ADB em espera"):
+        (transportReady()?"ADB conectado · serviço offline ainda não confirmado":status);}
     static void tick(Context context){
         Context c=context.getApplicationContext();
         if(!enabled(c) || pairing!=null)return;
@@ -66,25 +66,27 @@ final class LocalAdbBridge {
         AdbNetworkWatch.start(c);
         boolean local=OfflineShell.ready();
         if(local){
+            AdbWifiRecovery.transportHealthy();
             AdbConnectionNotice.clear(c);
             if(!AdbDemandPolicy.needsTransport(true,AdbWifiRecovery.pendingProvision(c),false)){
                 // No network discovery or validation while the local agent is healthy.
                 // Only schedule the one-time parking of an existing ADB socket.
-                if(!connected || retainTransport){lastCheck=0;return;}
+                if(!transportReady() || retainTransport){lastCheck=0;return;}
                 lastCheck=0;
             }
         }
         long now=SystemClock.elapsedRealtime();
-        if(lastCheck!=0 && now-lastCheck<(connected?30_000L:HEALTH.retryDelay()))return;
+        if(lastCheck!=0 && now-lastCheck<(transportReady() && !validateRequested?30_000L:HEALTH.retryDelay()))return;
         if(!checking.compareAndSet(false,true))return;
         lastCheck=now;
-        IO.execute(()->{try{ensure(c);}catch(Exception | LinkageError ex){if(pairing==null)connectionFailure(ex);}finally{try{if(enabled(c) && pairing==null){if(!ready()){HEALTH.lost(SystemClock.elapsedRealtime());HEALTH.retryFailed();lastCheck=SystemClock.elapsedRealtime();}else HEALTH.healthy();AdbConnectionNotice.update(c,HEALTH,ready());}}finally{checking.set(false);}}});
+        IO.execute(()->{try{ensure(c);}catch(Exception | LinkageError ex){if(pairing==null)connectionFailure(ex);}finally{try{if(enabled(c) && pairing==null){if(!ready()){HEALTH.lost(SystemClock.elapsedRealtime());HEALTH.retryFailed();lastCheck=SystemClock.elapsedRealtime();}else if(!validateRequested) HEALTH.healthy();AdbConnectionNotice.update(c,HEALTH,ready());}}finally{checking.set(false);}}});
     }
     static void retry(Context c){lastCheck=0;tick(c);}
     static void networkChanged(Context c){
         // Network and debugging-setting changes are not transport demand.
         if(OfflineShell.ready())return;
-        retry(c);
+        // Respect backoff even for callbacks caused by our own Settings writes.
+        tick(c);
     }
     static boolean checking(){return checking.get() || pairing!=null;}
     // Only fixed permission grants, after consent and verified UID 2000. No LAN command path.
@@ -102,7 +104,7 @@ final class LocalAdbBridge {
             PairAttempt current=pairing;
             if(current!=null)finishPair(current,false,"Pareamento cancelado");
             prefs(context).edit().putBoolean(PREF,false).apply();connected=false;status="Desativado";
-            HEALTH.reset();validateRequested=false;retainTransport=false;AdbConnectionNotice.clear(context);
+            HEALTH.reset();AdbWifiRecovery.transportHealthy();validateRequested=false;retainTransport=false;AdbConnectionNotice.clear(context);
             OfflineShell.disable(context);
         }
         IO.execute(()->{try{if(manager!=null)manager.disconnect();}catch(Exception ignored){}});
@@ -174,7 +176,7 @@ final class LocalAdbBridge {
     }
     private static void connectionFailure(Throwable ex){
         android.util.Log.w(TAG,"Conexão falhou: "+ex.getClass().getSimpleName());
-        failed("Pareado; conexão indisponível ("+ex.getClass().getSimpleName()+"). Informe a porta de conexão.");
+        failed("Pareado; conexão indisponível ("+ex.getClass().getSimpleName()+"). Aguardando recuperação automática.");
     }
     private static boolean verifiedShell(Manager m)throws Exception{
         // Short non-interactive shell, no PTY prompt or echoed command.
@@ -184,7 +186,7 @@ final class LocalAdbBridge {
     }
     private static void markConnected(Context c,Manager m){
         connected=enabled(c)&&pairing==null;
-        if(connected){validateRequested=false;HEALTH.healthy();status="Conectado";provisionRecovery(c,m);startOffline(c,m);}
+        if(connected){validateRequested=false;HEALTH.healthy();AdbWifiRecovery.transportHealthy();status="Conectado";provisionRecovery(c,m);startOffline(c,m);}
     }
     private static void startOffline(Context c,Manager m){
         OfflineShell.ensure(c,fixed->command(m,fixed,3500).contains("\n__BRIDGE_RC_0\n"));
@@ -199,7 +201,7 @@ final class LocalAdbBridge {
     private static void ensure(Context c)throws Exception{
         if(!enabled(c) || pairing!=null){connected=false;return;}
         boolean local=OfflineShell.confirm(c);
-        if(local){HEALTH.healthy();}
+        if(local){HEALTH.healthy();AdbWifiRecovery.transportHealthy();}
         else if(AdbDemandPolicy.earlyLoss(parkedAt,SystemClock.elapsedRealtime())){
             retainTransport=true;parkedAt=-1;
             android.util.Log.w(TAG,"Firmware interrompeu agente após repouso; mantendo transporte como contingência.");
@@ -208,7 +210,22 @@ final class LocalAdbBridge {
             parkIfHealthy(c);return;
         }
         if(!local && connected)validateRequested=true;
-        try{ensureTransport(c);}finally{parkIfHealthy(c);}
+        try{ensureTransport(c);}catch(Exception ex){
+            // Only a failed attempt to reach ADB can trigger the stale-port recovery.
+            // Do not toggle for an explicit authentication refusal or a live transport.
+            if(!local && !transportReady() && !isAuthorizationFailure(ex))AdbWifiRecovery.staleTransportFailed(c);
+            else AdbWifiRecovery.transportUnavailable();
+            throw ex;
+        }finally{parkIfHealthy(c);}
+    }
+    private static boolean isAuthorizationFailure(Throwable error){
+        for(Throwable t=error;t!=null;t=t.getCause()){
+            String name=t.getClass().getSimpleName().toLowerCase(java.util.Locale.ROOT);
+            String msg=t.getMessage();msg=msg==null?"":msg.toLowerCase(java.util.Locale.ROOT);
+            if(name.contains("unauthor")||name.contains("authenticat")||msg.contains("não autorizado")||msg.contains("unauthorized"))return true;
+            if(t.getCause()==t)break;
+        }
+        return false;
     }
     // Only call on IO: service bootstrap, explicit provisioning, or verified APK install.
     private static void ensureTransport(Context c)throws Exception{
@@ -233,10 +250,11 @@ final class LocalAdbBridge {
         validateRequested=false;
         if(m!=null){try{m.disconnect();}catch(Exception ignored){}}
         if(!AdbWifiRecovery.wifiDebugOn(c)){
+            AdbWifiRecovery.transportUnavailable();
             AdbWifiRecovery.recoverIfNeeded(c);
             status="Depuração Wi-Fi desligada · "+AdbWifiRecovery.status(c);return;
         }
-        if(!wifiAvailable(c)){status="Aguardando conexão Wi-Fi";return;}
+        if(!wifiAvailable(c)){AdbWifiRecovery.transportUnavailable();status="Aguardando conexão Wi-Fi";return;}
         m=get(c);
         status="Procurando ADB sem fio";
         int old=prefs(c).getInt(PORT,0);
@@ -244,7 +262,7 @@ final class LocalAdbBridge {
             String saved=prefs(c).getString(HOST,"127.0.0.1");
             for(String host:new String[]{"127.0.0.1",saved}){
                 try{LocalAdbPairTransport.localAddress(host);m.connect(host,old);if(m.isConnected())break;}
-                catch(Exception ignored){}
+                catch(Exception ex){if(isAuthorizationFailure(ex))throw ex;}
                 m.disconnect();if("127.0.0.1".equals(saved))break;
             }
         }
@@ -255,7 +273,8 @@ final class LocalAdbBridge {
             m.disconnect();m.connect(host,discovered.getPort());
             if(m.isConnected())prefs(c).edit().putInt(PORT,discovered.getPort()).putString(HOST,host).apply();
         }
-        if(!m.isConnected() || !verifiedShell(m))throw new IOException("ADB não autorizado");
+        if(!m.isConnected())throw new IOException("Transporte ADB indisponível");
+        if(!verifiedShell(m))throw new IOException("ADB não autorizado");
         markConnected(c,m);
     }
     private static boolean wifiAvailable(Context c){

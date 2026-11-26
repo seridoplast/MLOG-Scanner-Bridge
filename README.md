@@ -1,3 +1,7 @@
+# Atualização 3.6.31 — recuperação automática após perda real de ADB
+
+Mantém o serviço local prioritário e reativa o ADB apenas se necessário. Depois de falhas consecutivas na conexão, recupera a depuração Wi-Fi travada em rede previamente autorizada, com limite por episódio. O worker de boot possui novas tentativas. Consulte [ATUALIZACAO-v3.6.31.md](ATUALIZACAO-v3.6.31.md).
+
 # Atualização 3.6.30 — serviço local prioritário e ADB sob demanda
 
 O agente local autenticado é a primeira opção para bipagens e recuperação de foco. Com o agente saudável, o Bridge não procura nem reativa ADB por mudanças de Wi-Fi. ADB é utilizado para inicialização, recuperação, autorizações pendentes e instalação verificada de APK. Consulte [ATUALIZACAO-v3.6.30.md](ATUALIZACAO-v3.6.30.md).

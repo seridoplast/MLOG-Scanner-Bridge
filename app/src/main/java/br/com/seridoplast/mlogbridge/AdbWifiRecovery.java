@@ -23,6 +23,7 @@ final class AdbWifiRecovery {
     private static final String PROVISION="adb_recovery_permission_consent_v3622";
     private static long lastAttempt,lastProvision;
     private static volatile String outcome="";
+    private static final AdbRecoveryPolicy.StaleTransport STALE=new AdbRecoveryPolicy.StaleTransport();
     private AdbWifiRecovery(){}
     private static SharedPreferences prefs(Context c){return ScanAssistState.prefs(c);}
     static boolean hasGrant(Context c){return c.checkSelfPermission(Manifest.permission.WRITE_SECURE_SETTINGS)==PackageManager.PERMISSION_GRANTED;}
@@ -122,6 +123,30 @@ final class AdbWifiRecovery {
         if(networks.size()>=32 && !networks.contains(w.network))return;
         networks.add(w.network);aps.remove(w.ap);
         prefs(c).edit().putStringSet(AP_LIST,aps).putStringSet(NETWORKS,networks).apply();
+    }
+    static void transportHealthy(){STALE.healthy();}
+    static void transportUnavailable(){STALE.unavailable();}
+    private static boolean mayRestart(Context c){
+        return Build.VERSION.SDK_INT>=30 && LocalAdbBridge.enabled(c) && !LocalAdbBridge.pairing()
+            && !LocalAdbBridge.transportReady() && !OfflineShell.ready() && hasGrant(c) && approved(c,current(c));
+    }
+    /** IO executor only. Restart Android debugging once after actual failed connections,
+     * never simply because Wi-Fi changed or because the local agent parked ADB. */
+    static void staleTransportFailed(Context c){
+        boolean eligible=mayRestart(c) && wifiDebugOn(c);
+        if(!STALE.failed(SystemClock.elapsedRealtime(),eligible))return;
+        if(!mayRestart(c) || !wifiDebugOn(c))return;
+        try{
+            if(!Settings.Global.putInt(c.getContentResolver(),SETTING,0))return;
+            outcome="Porta ADB indisponível · reiniciando depuração autorizada.";
+            android.util.Log.i("BridgeLocalADB","Recuperação: porta ADB indisponível após tentativas; reinício único da depuração.");
+            try{Thread.sleep(1000L);}catch(InterruptedException e){Thread.currentThread().interrupt();}
+            // Never re-enable on another/unapproved network or after opt-out.
+            if(mayRestart(c)){
+                boolean requested=Settings.Global.putInt(c.getContentResolver(),SETTING,1);
+                outcome=requested?"Depuração reativada · aguardando nova porta ADB.":"Firmware recusou a reativação.";
+            }
+        }catch(RuntimeException ex){outcome="Android bloqueou o reinício da depuração.";}
     }
     static synchronized boolean recoverIfNeeded(Context c){
         if(Build.VERSION.SDK_INT<30)return false;

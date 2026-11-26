@@ -23,6 +23,23 @@ final class AdbRecoveryPolicy {
         return !ap.isEmpty() && ((aps!=null && aps.contains(ap)) ||
             (network!=null && !network.isEmpty() && networks!=null && networks.contains(network)));
     }
+    // One deliberate Wi-Fi debugging restart per unresolved outage; ordinary
+    // connection attempts continue afterwards. No restart with a usable backend.
+    static final class StaleTransport {
+        private long firstFailure=-1, lastRestart=-1;
+        private int failures;
+        private boolean restarted;
+        synchronized void healthy(){firstFailure=-1;failures=0;restarted=false;}
+        synchronized void unavailable(){firstFailure=-1;failures=0;}
+        synchronized boolean failed(long now, boolean eligible){
+            if(!eligible){unavailable();return false;}
+            if(firstFailure<0){firstFailure=now;failures=1;return false;}
+            failures=Math.min(2,failures+1);
+            if(restarted || failures<2 || now-firstFailure<5000L ||
+                (lastRestart>=0 && now-lastRestart<120_000L))return false;
+            restarted=true;lastRestart=now;return true;
+        }
+    }
     static boolean mayEnable(boolean paired,boolean granted,boolean connected,String bssid,Set<String> allowed){
         String ap=normalize(bssid);
         return paired && granted && connected && !ap.isEmpty() && allowed!=null && allowed.contains(ap);

@@ -5,7 +5,7 @@ import androidx.annotation.NonNull;
 import androidx.work.*;
 import java.util.concurrent.TimeUnit;
 
-/** Boot and periodic safety net. Accessibility performs the faster 30s polling. */
+/** Boot and periodic safety net. Accessibility performs the faster 5s polling. */
 public final class AdbRecoveryWorker extends Worker {
     public AdbRecoveryWorker(@NonNull Context c,@NonNull WorkerParameters p){super(c,p);}
     @NonNull @Override public Result doWork(){
@@ -13,7 +13,7 @@ public final class AdbRecoveryWorker extends Worker {
         if(LocalAdbBridge.enabled(c)){
             // Keep the worker alive while the asynchronous connection is being established.
             // In a live accessibility process its normal watchdog takes over afterwards.
-            long deadline=android.os.SystemClock.elapsedRealtime()+45_000L;
+            long deadline=android.os.SystemClock.elapsedRealtime()+75_000L;
             do{
                 if(isStopped() || Thread.currentThread().isInterrupted())break;
                 LocalAdbBridge.tick(c);
@@ -21,6 +21,10 @@ public final class AdbRecoveryWorker extends Worker {
                 try{Thread.sleep(1000L);}catch(InterruptedException e){Thread.currentThread().interrupt();break;}
             }while(android.os.SystemClock.elapsedRealtime()<deadline);
         }
+        // The network may not be available when BOOT_COMPLETED is delivered.
+        // Retry boundedly instead of waiting until the next 15-minute periodic run.
+        if(!isStopped() && LocalAdbBridge.enabled(c) && !LocalAdbBridge.ready()
+            && getRunAttemptCount()<4)return Result.retry();
         return Result.success();
     }
     static void schedule(Context c,boolean afterBoot){
@@ -32,6 +36,6 @@ public final class AdbRecoveryWorker extends Worker {
         wm.enqueueUniquePeriodicWork("adb_recovery_v3621",ExistingPeriodicWorkPolicy.KEEP,
             new PeriodicWorkRequest.Builder(AdbRecoveryWorker.class,15,TimeUnit.MINUTES).build());
         if(afterBoot)wm.enqueueUniqueWork("adb_recovery_boot_v3621",ExistingWorkPolicy.REPLACE,
-            new OneTimeWorkRequest.Builder(AdbRecoveryWorker.class).setInitialDelay(5,TimeUnit.SECONDS).build());
+            new OneTimeWorkRequest.Builder(AdbRecoveryWorker.class).setInitialDelay(5,TimeUnit.SECONDS).setBackoffCriteria(BackoffPolicy.EXPONENTIAL,30,TimeUnit.SECONDS).build());
     }
 }

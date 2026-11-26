@@ -20,6 +20,21 @@ public final class AdbRecoveryPolicyTest {
         expect(AdbRecoveryPolicy.networkKey(-1,"\"Seridoplast\"",2).isEmpty());
         expect(AdbRecoveryPolicy.networkKey(7,"<unknown ssid>",2).isEmpty());
         expect(!AdbRecoveryPolicy.approved("02:00:00:00:00:00",net,allowed,Set.of(net)));
+        AdbRecoveryPolicy.StaleTransport stale=new AdbRecoveryPolicy.StaleTransport();
+        expect(!stale.failed(0,false)); // healthy/local/unauthorized network: never restart
+        expect(!stale.failed(1000,true));
+        expect(!stale.failed(2000,true)); // transient failure
+        expect(stale.failed(6000,true)); // repeated real failures
+        expect(!stale.failed(200000,true)); // once per unresolved outage
+        stale.healthy();
+        expect(!stale.failed(201000,true));
+        expect(stale.failed(206000,true)); // a later, independent outage
+        stale.healthy();
+        expect(!stale.failed(207000,true));
+        expect(!stale.failed(212000,true)); // cooldown across episodes
+        stale.unavailable();
+        expect(!stale.failed(400000,true)); // Wi-Fi interruption resets consecutive failures
+        expect(stale.failed(405000,true));
         System.out.println("AdbRecoveryPolicyTest OK");
     }
 }
