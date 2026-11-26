@@ -248,7 +248,8 @@ final class OrderNotesClient {
                     }
                 }
                 String preferred=data.optString("preferredName","");
-                if(!preferred.isEmpty())setDeviceName(app,preferred);
+                if(data.optBoolean("resetName",false)) app.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE).edit().remove(PREF_DEVICE_NAME).apply();
+                else if(!preferred.isEmpty())setDeviceName(app,preferred);
                 lastGoodAt=SystemClock.elapsedRealtime();
                 lastProblem="";
                 // Avisos desativados temporariamente. Não confirmar mensagens que não foram exibidas.

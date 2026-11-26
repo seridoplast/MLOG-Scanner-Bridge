@@ -568,6 +568,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                     // Observações são vinculadas exclusivamente ao número do pedido
                     // visível no cabeçalho, nunca ao código de um produto ou bip.
                     lastPhysicalAdbScanAt=SystemClock.elapsedRealtime();
+                    lastMlogInteractionAt=lastPhysicalAdbScanAt;
                     // Cancela recuperacao pendente se houve nova leitura.
                     ++recoveryEpoch;
                     if(recoveryPolicy.isRecovering()){

@@ -177,6 +177,18 @@ func (s *Server) productivityIngest(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "não foi possível gravar o histórico")
 		return
 	}
+	// Use original event time, not the upload time: offline replay must not fake activity.
+	d := s.devices[body.ID]
+	now := time.Now()
+	for _, e := range pending {
+		if e.Kind == "product" || e.Kind == "note" {
+			at := time.UnixMilli(e.At)
+			if !at.After(now) {
+				markActivity(&d, at)
+			}
+		}
+	}
+	s.devices[body.ID] = d
 	reply(w, 200, map[string]interface{}{"accepted": accepted})
 }
 
@@ -207,14 +219,18 @@ func productivityPeriod(period, date string, now time.Time) (time.Time, time.Tim
 }
 
 type ProductivityRow struct {
-	Key        string   `json:"key"`
-	Name       string   `json:"name"`
-	Identified bool     `json:"identified"`
-	Products   int      `json:"products"`
-	Notes      int      `json:"notes"`
-	NoteScans  int      `json:"noteScans"`
-	Orders     int      `json:"orders"`
-	LastAt     int64    `json:"lastAt"`
+	Key        string  `json:"key"`
+	Name       string  `json:"name"`
+	Identified bool    `json:"identified"`
+	Products   int     `json:"products"`
+	Notes      int     `json:"notes"`
+	NoteScans  int     `json:"noteScans"`
+	Orders     int     `json:"orders"`
+	LastAt     int64   `json:"lastAt"`
+	TP         float64 `json:"tp"`
+	PPH        float64 `json:"pph"`
+	Intervals  int     `json:"intervals"`
+	intervalMs int64
 	Devices    []string `json:"devices"`
 	notes      map[string]bool
 	orders     map[string]bool
@@ -242,7 +258,11 @@ func (s *Server) productivityReport(start, end time.Time, selected string) produ
 	out := productivityReport{Rows: []*ProductivityRow{}, Details: []*ProductivityDetail{}, Start: start.Format("2006-01-02"), End: end.AddDate(0, 0, -1).Format("2006-01-02")}
 	rows := map[string]*ProductivityRow{}
 	details := map[string]*ProductivityDetail{}
-	for _, e := range s.productivity {
+	// Offline batches can arrive out of order; calculate only successive scans on the same collector.
+	events := append([]ProductivityEvent(nil), s.productivity...)
+	sort.SliceStable(events, func(i, j int) bool { return events[i].At < events[j].At })
+	previous := map[string]ProductivityEvent{}
+	for _, e := range events {
 		if e.At < start.UnixMilli() || e.At >= end.UnixMilli() {
 			continue
 		}
@@ -270,13 +290,24 @@ func (s *Server) productivityReport(start, end time.Time, selected string) produ
 		}
 		switch e.Kind {
 		case "product":
+			prev, ok := previous[e.DeviceID]
+			delta := e.At - prev.At
+			if ok && prev.operatorKey() == key && prev.Order == e.Order && delta > 0 && delta <= 300000 && time.UnixMilli(prev.At).In(productivityZone).Format("2006-01-02") == time.UnixMilli(e.At).In(productivityZone).Format("2006-01-02") {
+				row.Intervals++
+				row.intervalMs += delta
+			}
+			previous[e.DeviceID] = e
 			row.Products++
 			out.Products++
 		case "note":
+			delete(previous, e.DeviceID)
 			row.NoteScans++
 			out.NoteScans++
 			row.notes[e.Code] = true
 		case "order":
+			if prev, ok := previous[e.DeviceID]; ok && prev.Order != e.Order {
+				delete(previous, e.DeviceID)
+			}
 			row.orders[e.Code] = true
 		}
 		if key == selected {
@@ -301,6 +332,10 @@ func (s *Server) productivityReport(start, end time.Time, selected string) produ
 		}
 	}
 	for _, r := range rows {
+		if r.Intervals > 0 {
+			r.TP = float64(r.intervalMs) / float64(r.Intervals) / 1000
+			r.PPH = 3600 / r.TP
+		}
 		r.Notes = len(r.notes)
 		r.Orders = len(r.orders)
 		out.Notes += r.Notes

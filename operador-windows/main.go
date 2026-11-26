@@ -27,7 +27,7 @@ import (
 //go:embed web/*
 var webFiles embed.FS
 
-const centralVersion = "3.6.26"
+const centralVersion = "3.6.27"
 
 type Note struct {
 	ID            string `json:"id"`
@@ -78,6 +78,8 @@ type Device struct {
 	LastSeen         string              `json:"lastSeen"`
 	LastOrder        string              `json:"lastOrder,omitempty"`
 	Online           bool                `json:"online"`
+	ActivityState    string              `json:"activityState,omitempty"`
+	ResetNamePending bool                `json:"resetNamePending,omitempty"`
 	NamePending      bool                `json:"namePending,omitempty"`
 	BridgeVersion    string              `json:"bridgeVersion,omitempty"`
 	AndroidVersion   string              `json:"androidVersion,omitempty"`
@@ -213,6 +215,9 @@ func (s *Server) local(r *http.Request) bool {
 	return e == nil && net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback()
 }
 func (s *Server) admin(w http.ResponseWriter, r *http.Request) bool {
+	if r.Context().Value(webAdminKey{}) == true {
+		return true
+	}
 	if !s.local(r) {
 		fail(w, 403, "painel disponivel somente neste computador")
 		return false
@@ -323,7 +328,12 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		broadcasts := append([]Broadcast{}, s.db.Broadcasts...)
 		sort.Slice(broadcasts, func(i, j int) bool { return broadcasts[i].CreatedAt > broadcasts[j].CreatedAt })
 		w.Header().Set("X-Seridoplast-Central-Version", centralVersion)
-		reply(w, 200, map[string]interface{}{"notes": copied, "serverVersion": centralVersion, "token": s.db.Token, "addresses": localIPs(), "port": s.port, "devices": devices, "broadcasts": broadcasts, "lastDiscovery": s.lastDiscovery, "discoveryCount": s.discoveryCount, "actions": s.actionsForDisplayLocked(), "packages": s.db.Packages, "deployments": s.db.Deployments})
+		reply(w, 200, map[string]interface{}{"notes": copied, "serverVersion": centralVersion, "token": func() string {
+			if r.Context().Value(webAdminKey{}) == true {
+				return ""
+			}
+			return s.db.Token
+		}(), "addresses": localIPs(), "port": s.port, "devices": devices, "broadcasts": broadcasts, "lastDiscovery": s.lastDiscovery, "discoveryCount": s.discoveryCount, "actions": s.actionsForDisplayLocked(), "packages": s.db.Packages, "deployments": s.db.Deployments})
 	case "/api/admin/device/command":
 		if !s.admin(w, r) {
 			return
@@ -394,6 +404,8 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		reply(w, 200, map[string]interface{}{"ok": true, "queued": count, "skipped": skipped, "selected": len(selected)})
+	case "/api/admin/device/reset-name":
+		s.resetNames(w, r)
 	case "/api/admin/device/rename":
 		if !s.admin(w, r) {
 			return
@@ -422,6 +434,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		d.Name = in.Name
+		d.ResetNamePending = false
 		d.NamePending = true
 		s.devices[in.ID] = d
 		s.db.Devices[in.ID] = d
@@ -723,10 +736,15 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			d = Device{ID: in.ID, Name: in.Name, Battery: -1}
 		}
 		changed := !known || (in.Order != "" && in.Order != d.LastOrder)
+		if d.ResetNamePending && in.Model != "" {
+			d.Model = in.Model
+			d.Name = originalName(d)
+		}
 		if d.NamePending {
 			if strings.TrimSpace(in.Name) == d.Name {
 				// Android persisted our requested name and is reporting it back.
 				d.NamePending = false
+				d.ResetNamePending = false
 			}
 		} else {
 			d.Name = strings.TrimSpace(in.Name)
@@ -751,20 +769,13 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		d.Accessibility = in.Accessibility
 		d.MlogForeground = in.MlogForeground
 		d.RecentActivity = in.RecentActivity
-		// Duration is based on elapsedRealtime() on Android, not an unreliable device wall clock.
-		// Older clients send no age: fall back to the last heartbeat reporting activity.
-		if in.LastActivityAgeMs > 0 && in.LastActivityAgeMs <= 7*24*60*60*1000 {
-			eventAt := time.Now().Add(-time.Duration(in.LastActivityAgeMs) * time.Millisecond)
-			previous, e := time.Parse(time.RFC3339, d.LastActivityAt)
-			if e != nil || eventAt.After(previous.Add(60*time.Second)) {
-				d.LastActivityAt = eventAt.Format(time.RFC3339)
-			}
+		// Recent physical scan and accessibility activity are merged monotonically.
+		if in.LastActivityAgeMs >= 0 && in.LastActivityAgeMs <= 7*24*60*60*1000 && (in.LastActivityAgeMs > 0 || in.RecentActivity) {
+			markActivity(&d, time.Now().Add(-time.Duration(in.LastActivityAgeMs)*time.Millisecond))
 		} else if in.RecentActivity {
-			previous, e := time.Parse(time.RFC3339, d.LastActivityAt)
-			if e != nil || time.Since(previous) > 60*time.Second {
-				d.LastActivityAt = now
-			}
+			markActivity(&d, time.Now())
 		}
+
 		d.Battery = in.Battery
 		if in.Order != "" && validOrder(in.Order) && !contains(d.OrderHistory, in.Order) {
 			d.OrderHistory = append(d.OrderHistory, in.Order)
@@ -791,7 +802,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		// Save profiles periodically rather than writing the DB every 15 seconds.
 		persisted := s.db.Devices[in.ID]
-		if changed || d.NamePending != persisted.NamePending || d.Name != persisted.Name ||
+		if changed || d.NamePending != persisted.NamePending || d.ResetNamePending != persisted.ResetNamePending || d.Name != persisted.Name ||
 			d.MlogOperator != persisted.MlogOperator || d.LastMlogOperator != persisted.LastMlogOperator ||
 			(!d.LastSeenIsRecent(persisted.LastSeen, 2*time.Minute)) ||
 			(d.LastActivityAt != persisted.LastActivityAt) ||
@@ -848,7 +859,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			_ = s.save()
 		}
 		reply(w, 200, map[string]interface{}{"ok": true, "broadcasts": alerts, "commands": commands, "deployment": s.deploymentForLocked(d),
-			"preferredName": func() string {
+			"resetName": d.ResetNamePending, "preferredName": func() string {
 				if d.NamePending {
 					return d.Name
 				}
@@ -1227,6 +1238,7 @@ func (s *Server) allDevicesLocked() []Device {
 		d := s.devices[id]
 		t, err := time.Parse(time.RFC3339, d.LastSeen)
 		d.Online = err == nil && t.After(cutoff)
+		d.ActivityState = activityState(d, time.Now())
 		out = append(out, d)
 	}
 	return out
@@ -1367,31 +1379,62 @@ func localIPs() []string {
 }
 func main() {
 	port := flag.Int("port", 8765, "porta do servidor local")
+	headless := flag.Bool("server", strings.Contains(strings.ToLower(filepath.Base(os.Args[0])), "servidor"), "executar sem janela")
+	dataDir := flag.String("data-dir", "", "pasta de dados existente")
+	webListen := flag.String("web-listen", "", "endereço HTTPS administrativo, ex. 0.0.0.0:8443")
+	webCert := flag.String("web-cert", "", "certificado TLS PEM")
+	webKey := flag.String("web-key", "", "chave TLS PEM")
+	makeCert := flag.String("make-web-cert", "", "gera certificado local para nome DNS ou IP; requer -web-cert e -web-key")
 	flag.Parse()
+	if *makeCert != "" {
+		if e := makeWebCertificate(*makeCert, *webCert, *webKey); e != nil {
+			log.Fatal(e)
+		}
+		fmt.Println("Certificado criado. Confirme sua impressão digital antes de confiar no cliente.")
+		return
+	}
+	fatalStart := func(message string) {
+		if *headless {
+			log.Print(message)
+			os.Exit(1)
+		}
+		startupError(message)
+	}
 	if *port < 1024 || *port > 65535 {
-		startupError("Porta inválida.")
+		fatalStart("Porta inválida.")
 		return
 	}
 	home, e := os.UserConfigDir()
 	if e != nil {
-		startupError("Não foi possível acessar a pasta de dados: " + e.Error())
+		fatalStart("Não foi possível acessar a pasta de dados: " + e.Error())
 		return
 	}
 	path := filepath.Join(home, "Seridoplast", "ObservacoesPedidos", "dados.json")
-	server, e := newServer(path, *port)
-	if e != nil {
-		startupError("Não foi possível abrir o banco de observações: " + e.Error())
-		return
+	if *dataDir != "" {
+		path = filepath.Join(*dataDir, "dados.json")
 	}
+	// Reserve the collector port before opening the DB, so two instances cannot write it.
 	listen, e := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", *port))
 	if e != nil {
-		if alreadyRunningSeridoplast(*port) {
+		if !*headless && alreadyRunningSeridoplast(*port) {
 			// A instância anterior já mantém o servidor ativo: reabrir o painel.
-			launchDesktop(server, *port)
+			launchDesktop(nil, *port)
 			return
 		}
-		startupError(fmt.Sprintf("A porta %d já está ocupada por outro programa. Feche a versão antiga do painel antes de abrir esta central.\n\n%v", *port, e))
+		fatalStart(fmt.Sprintf("A porta %d já está ocupada por outro programa. Feche a versão antiga do painel antes de abrir esta central.\n\n%v", *port, e))
 		return
+	}
+	server, e := newServer(path, *port)
+	if e != nil {
+		fatalStart("Não foi possível abrir o banco de observações: " + e.Error())
+		return
+	}
+	if *webListen != "" {
+		if err := server.startWebAdmin(*webListen, *webCert, *webKey); err != nil {
+			log.Print(err)
+			fatalStart(err.Error())
+			return
+		}
 	}
 	fmt.Print("\nSERIDOPLAST | OBSERVACOES DE PEDIDOS\n\n")
 	fmt.Println("Painel no PC: http://127.0.0.1:" + strconv.Itoa(*port))
@@ -1409,5 +1452,8 @@ func main() {
 			log.Printf("Servidor encerrado: %v", err)
 		}
 	}()
+	if *headless {
+		select {}
+	}
 	launchDesktop(server, *port)
 }
