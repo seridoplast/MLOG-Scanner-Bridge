@@ -1,3 +1,7 @@
+# Atualização 3.6.30 — serviço local prioritário e ADB sob demanda
+
+O agente local autenticado é a primeira opção para bipagens e recuperação de foco. Com o agente saudável, o Bridge não procura nem reativa ADB por mudanças de Wi-Fi. ADB é utilizado para inicialização, recuperação, autorizações pendentes e instalação verificada de APK. Consulte [ATUALIZACAO-v3.6.30.md](ATUALIZACAO-v3.6.30.md).
+
 # Atualização 3.6.29 — limite diário de avisos de conexão
 
 Pré-release Android: o aviso automático de perda de conexão ADB do Bridge fica limitado a uma vez a cada 24 horas por instalação, inclusive após reiniciar. A recuperação e o status nos ajustes continuam em tempo real. Não altera avisos de pareamento, produtividade, serviço offline ou notificações do Android/MLOG Target. Consulte [ATUALIZACAO-v3.6.29.md](ATUALIZACAO-v3.6.29.md).

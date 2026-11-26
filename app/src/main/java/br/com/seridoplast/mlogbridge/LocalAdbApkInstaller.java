@@ -27,7 +27,7 @@ final class LocalAdbApkInstaller {
     private static final String PM = "/system/bin/pm";
     private LocalAdbApkInstaller() { }
 
-    static boolean ready(){return LocalAdbBridge.transportReady();}
+    static boolean available(Context c){return LocalAdbBridge.enabled(c);}
 
     interface Callback { void done(boolean ok, String message); }
 
@@ -68,7 +68,7 @@ final class LocalAdbApkInstaller {
                                           boolean allowPrerelease) throws Exception {
         if (!INSTALLING.compareAndSet(false, true)) throw new IllegalStateException("Outra instalacao em andamento.");
         try {
-            if (!ready()) throw new IllegalStateException("ADB desligado ou nao autorizado.");
+            if (!available(context)) throw new IllegalStateException("ADB desligado ou nao autorizado.");
             // This also validates the package, versionName/versionCode and pinned certificate.
             GitHubReleaseUpdater.Update checked = GitHubReleaseUpdater.cachedVerified(context);
             if (checked == null || !checked.tag.equals(update.tag))
@@ -81,7 +81,7 @@ final class LocalAdbApkInstaller {
                 throw new IllegalStateException("Tamanho de APK inesperado.");
 
             BridgeUpdater.status(context,"Instalando "+update.tag+" via ADB local...");
-            if(!LocalAdbBridge.installBridge(apk))throw new IOException("ADB sem confirmação da instalação; confira a versão instalada.");
+            if(!LocalAdbBridge.installBridge(context,apk,false))throw new IOException("ADB sem confirmação da instalação; confira a versão instalada.");
             BridgeUpdater.status(context,"Instalação ADB confirmada: "+update.tag);
             return "Atualização instalada: "+update.tag;
         } finally {INSTALLING.set(false);}
@@ -94,8 +94,8 @@ final class LocalAdbApkInstaller {
             long code=GitHubReleaseVersion.versionCode(tag);
             if(code<=GitHubReleaseUpdater.code(context.getPackageManager().getPackageInfo(context.getPackageName(),0)))throw new SecurityException("Versão não é superior à instalada");
             GitHubReleaseUpdater.verifyApk(context.getPackageManager(),context.getPackageName(),apk,code,tag.substring(1));
-            if(!ready() || !BridgeIdleInstallWorker.isCollectorIdle(context))throw new IllegalStateException("Aguardando ADB e coletor livre");
-            if(!LocalAdbBridge.installBridge(apk))throw new IOException("Instalação sem confirmação");
+            if(!available(context) || !BridgeIdleInstallWorker.isCollectorIdle(context))throw new IllegalStateException("Aguardando ADB e coletor livre");
+            if(!LocalAdbBridge.installBridge(context,apk,true))throw new IOException("Instalação sem confirmação");
         }finally{INSTALLING.set(false);}
     }
 

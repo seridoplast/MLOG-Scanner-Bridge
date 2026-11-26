@@ -29,6 +29,12 @@ final class OfflineShell {
         if(!probing.compareAndSet(false,true))return;
         WATCH.execute(()->{try{synchronized(RPC){if(LocalAdbBridge.enabled(app))probe(app);else ready=false;}}finally{lastProbe=SystemClock.elapsedRealtime();probing.set(false);}});
     }
+    // IO thread only. Reuse the saved loopback agent after app restart BEFORE
+    // attempting discovery or turning wireless debugging back on.
+    static boolean confirm(Context c){
+        app=c.getApplicationContext();
+        synchronized(RPC){return probe(app);}
+    }
     private static boolean probe(Context c){
         try{ready=LocalAdbBridge.enabled(c)&&call(c,OfflineShellProtocol.PING,1200);}catch(Exception e){ready=false;}
         return ready;

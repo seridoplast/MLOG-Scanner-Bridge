@@ -45,6 +45,10 @@ final class LocalAdbBridge {
     private static final AdbConnectionHealth HEALTH=new AdbConnectionHealth();
     private static volatile boolean validateRequested;
     private static volatile long lastCheck;
+    // If an OEM kills the agent immediately after parking the socket, retain
+    // the existing transport in that process as a compatibility fallback.
+    private static volatile boolean retainTransport;
+    private static long parkedAt=-1;
     private static volatile String status="Não pareado";
     private LocalAdbBridge(){}
     static boolean enabled(Context c){return Build.VERSION.SDK_INT>=30 && prefs(c).getBoolean(PREF,false);}
@@ -53,25 +57,33 @@ final class LocalAdbBridge {
     static boolean ready(){return pairing==null && (OfflineShell.ready() || connected);}
     static boolean transportReady(){return pairing==null && connected;}
     static String status(){return pairing==null && OfflineShell.ready()?
-        (connected?"Serviço local ativo · ADB conectado":"Serviço local ativo · ADB em recuperação"):
+        (connected?"Serviço local ativo · ADB disponível":"Serviço local ativo · ADB em espera"):
         (connected && pairing==null?"ADB conectado · serviço offline ainda não confirmado":status);}
     static void tick(Context context){
         Context c=context.getApplicationContext();
         if(!enabled(c) || pairing!=null)return;
         OfflineShell.tick(c);
-        if(OfflineShell.ready())AdbConnectionNotice.clear(c);
         AdbNetworkWatch.start(c);
+        boolean local=OfflineShell.ready();
+        if(local){
+            AdbConnectionNotice.clear(c);
+            if(!AdbDemandPolicy.needsTransport(true,AdbWifiRecovery.pendingProvision(c),false)){
+                // No network discovery or validation while the local agent is healthy.
+                // Only schedule the one-time parking of an existing ADB socket.
+                if(!connected || retainTransport){lastCheck=0;return;}
+                lastCheck=0;
+            }
+        }
         long now=SystemClock.elapsedRealtime();
         if(lastCheck!=0 && now-lastCheck<(connected?30_000L:HEALTH.retryDelay()))return;
         if(!checking.compareAndSet(false,true))return;
         lastCheck=now;
-        IO.execute(()->{try{ensure(c);}catch(Exception | LinkageError ex){if(pairing==null)connectionFailure(ex);}finally{try{if(enabled(c) && pairing==null){if(!connected){HEALTH.retryFailed();lastCheck=SystemClock.elapsedRealtime();}AdbConnectionNotice.update(c,HEALTH,ready());}}finally{checking.set(false);}}});
+        IO.execute(()->{try{ensure(c);}catch(Exception | LinkageError ex){if(pairing==null)connectionFailure(ex);}finally{try{if(enabled(c) && pairing==null){if(!ready()){HEALTH.lost(SystemClock.elapsedRealtime());HEALTH.retryFailed();lastCheck=SystemClock.elapsedRealtime();}else HEALTH.healthy();AdbConnectionNotice.update(c,HEALTH,ready());}}finally{checking.set(false);}}});
     }
     static void retry(Context c){lastCheck=0;tick(c);}
     static void networkChanged(Context c){
-        // While the detached agent serves scans, safely validate the separate ADB
-        // transport after roaming instead of trusting a stale socket forever.
-        if(OfflineShell.ready())requestValidation();
+        // Network and debugging-setting changes are not transport demand.
+        if(OfflineShell.ready())return;
         retry(c);
     }
     static boolean checking(){return checking.get() || pairing!=null;}
@@ -90,7 +102,7 @@ final class LocalAdbBridge {
             PairAttempt current=pairing;
             if(current!=null)finishPair(current,false,"Pareamento cancelado");
             prefs(context).edit().putBoolean(PREF,false).apply();connected=false;status="Desativado";
-            HEALTH.reset();validateRequested=false;AdbConnectionNotice.clear(context);
+            HEALTH.reset();validateRequested=false;retainTransport=false;AdbConnectionNotice.clear(context);
             OfflineShell.disable(context);
         }
         IO.execute(()->{try{if(manager!=null)manager.disconnect();}catch(Exception ignored){}});
@@ -177,7 +189,29 @@ final class LocalAdbBridge {
     private static void startOffline(Context c,Manager m){
         OfflineShell.ensure(c,fixed->command(m,fixed,3500).contains("\n__BRIDGE_RC_0\n"));
     }
+    private static void parkIfHealthy(Context c){
+        // On the ADB IO executor, never while an install/command is executing.
+        if(!enabled(c)||pairing!=null||!OfflineShell.ready()||!connected||retainTransport)return;
+        connected=false;validateRequested=false;parkedAt=SystemClock.elapsedRealtime();
+        try{if(manager!=null)manager.disconnect();}catch(Exception ignored){}
+        HEALTH.healthy();status="Serviço local ativo · ADB em espera";
+    }
     private static void ensure(Context c)throws Exception{
+        if(!enabled(c) || pairing!=null){connected=false;return;}
+        boolean local=OfflineShell.confirm(c);
+        if(local){HEALTH.healthy();}
+        else if(AdbDemandPolicy.earlyLoss(parkedAt,SystemClock.elapsedRealtime())){
+            retainTransport=true;parkedAt=-1;
+            android.util.Log.w(TAG,"Firmware interrompeu agente após repouso; mantendo transporte como contingência.");
+        }
+        if(!AdbDemandPolicy.needsTransport(local,AdbWifiRecovery.pendingProvision(c),false)){
+            parkIfHealthy(c);return;
+        }
+        if(!local && connected)validateRequested=true;
+        try{ensureTransport(c);}finally{parkIfHealthy(c);}
+    }
+    // Only call on IO: service bootstrap, explicit provisioning, or verified APK install.
+    private static void ensureTransport(Context c)throws Exception{
         if(!enabled(c) || pairing!=null){connected=false;return;}
         try{AdbWifiRecovery.migrateLegacy(c);}catch(RuntimeException ex){android.util.Log.w(TAG,"Cadastro Wi-Fi indisponível");}
         Manager m=manager;
@@ -304,16 +338,30 @@ final class LocalAdbBridge {
         throw new IOException("ADB sem confirmação");
     }
     /** Only the updater calls this, after package/version/pinned signer verification. */
-    static boolean installBridge(File apk)throws Exception{
-        if(!transportReady() || apk==null || !apk.isFile())return false;
+    static boolean installBridge(Context context,File apk,boolean fleet)throws Exception{
+        Context c=context.getApplicationContext();
+        if(!enabled(c) || apk==null || !apk.isFile())return false;
         long size=apk.length();if(size<51200 || size>120L*1024*1024)return false;
         return submit(()->{
-            if(!transportReady())return false;
-            try(AdbStream stream=manager.openStream("exec:/system/bin/pm install -r -S "+size);InputStream in=new FileInputStream(apk)){
-                OutputStream out=stream.openOutputStream();byte[] buf=new byte[4096];int n;
-                while((n=in.read(buf))!=-1){if(Thread.currentThread().isInterrupted())throw new InterruptedException();out.write(buf,0,n);}
-                out.flush();return readUntil(stream,"(?:^|\\n)Success\\n",120_000L).contains("\nSuccess\n");
-            }catch(Exception ex){operationFailure("Instalação ADB sem confirmação");throw ex;}
+            try{
+                if(!enabled(c)||pairing!=null||(fleet&&!BridgeIdleInstallWorker.isCollectorIdle(c)))return false;
+                boolean debugWasOn=AdbWifiRecovery.wifiDebugOn(c);
+                if(connected)validateRequested=true;
+                ensureTransport(c);
+                // Reactivation of authorized Wi-Fi debugging is asynchronous on Android.
+                if(!transportReady()&&!debugWasOn&&wifiAvailable(c)){
+                    long deadline=SystemClock.elapsedRealtime()+10_000L;
+                    while(enabled(c)&&pairing==null&&!AdbWifiRecovery.wifiDebugOn(c)&&SystemClock.elapsedRealtime()<deadline)Thread.sleep(500);
+                    if(AdbWifiRecovery.wifiDebugOn(c))ensureTransport(c);
+                }
+                if(!transportReady()||(fleet&&!BridgeIdleInstallWorker.isCollectorIdle(c)))return false;
+                try(AdbStream stream=manager.openStream("exec:/system/bin/pm install -r -S "+size);InputStream in=new FileInputStream(apk)){
+                    OutputStream out=stream.openOutputStream();byte[] buf=new byte[4096];int n;
+                    while((n=in.read(buf))!=-1){if(Thread.currentThread().isInterrupted())throw new InterruptedException();out.write(buf,0,n);}
+                    out.flush();return readUntil(stream,"(?:^|\\n)Success\\n",120_000L).contains("\nSuccess\n");
+                }catch(Exception ex){operationFailure("Instalação ADB sem confirmação");throw ex;}
+            }catch(Exception ex){if(!transportReady() && pairing==null)connectionFailure(ex);throw ex;}
+            finally{parkIfHealthy(c);}
         },180_000L);
     }
     /** A software RSA identity is required by TLS; encrypted at rest using AndroidKeyStore AES. */

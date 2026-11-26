@@ -99,6 +99,12 @@ jobs:
           java -cp /tmp/adb-health-test br.com.seridoplast.mlogbridge.AdbConnectionHealthTest
           java -cp /tmp/adb-health-test br.com.seridoplast.mlogbridge.ConnectionNoticePolicyTest
 
+      - name: Testar ADB sob demanda e contingência do serviço local
+        run: |
+          mkdir -p /tmp/bridge-adb-demand
+          javac -d /tmp/bridge-adb-demand app/src/main/java/br/com/seridoplast/mlogbridge/AdbDemandPolicy.java tests/AdbDemandPolicyTest.java
+          java -cp /tmp/bridge-adb-demand br.com.seridoplast.mlogbridge.AdbDemandPolicyTest
+
       - name: Testar serviço local autenticado e ausência de replay
         run: |
           mkdir -p /tmp/bridge-offline

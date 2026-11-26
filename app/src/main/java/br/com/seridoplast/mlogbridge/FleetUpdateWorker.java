@@ -38,8 +38,8 @@ public final class FleetUpdateWorker extends Worker {
             if(version<=GitHubReleaseUpdater.code(c.getPackageManager().getPackageInfo(c.getPackageName(),0))){apk.delete();return Result.success();}
             if(!OrderNotesClient.configured(c))return Result.retry();
             // Revalidate assignment before every attempt, including after restart/cancel.
-            status(c,id,"waiting","Aguardando coletor livre e ADB disponível");
-            if(!LocalAdbApkInstaller.ready()||!BridgeIdleInstallWorker.isCollectorIdle(c))return Result.retry();
+            status(c,id,"waiting","Aguardando coletor livre e ADB autorizado");
+            if(!LocalAdbApkInstaller.available(c)||!BridgeIdleInstallWorker.isCollectorIdle(c))return Result.retry();
             if(!dir.isDirectory()&&!dir.mkdirs())throw new IOException("Pasta de atualização indisponível");
             if(!apk.isFile()||!hash.equals(GitHubReleaseUpdater.sha256(apk))){
                 status(c,id,"downloading","Baixando APK da Central pela rede local");
@@ -55,7 +55,7 @@ public final class FleetUpdateWorker extends Worker {
                 }finally{http.disconnect();tmp.delete();}
             }
             try{GitHubReleaseUpdater.verifyApk(c.getPackageManager(),c.getPackageName(),apk,version,tag.substring(1));}catch(Exception ex){throw new SecurityException("APK rejeitado: "+ex.getMessage());}
-            if(isStopped()||!LocalAdbApkInstaller.ready()||!BridgeIdleInstallWorker.isCollectorIdle(c)){status(c,id,"waiting","APK verificado; aguardando coletor livre");return Result.retry();}
+            if(isStopped()||!LocalAdbApkInstaller.available(c)||!BridgeIdleInstallWorker.isCollectorIdle(c)){status(c,id,"waiting","APK verificado; aguardando coletor livre");return Result.retry();}
             status(c,id,"installing","Instalando "+tag+"; aguardando confirmação da versão");
             LocalAdbApkInstaller.installFleet(c,apk,tag);apk.delete();return Result.success();
         }catch(SecurityException ex){apk.delete();try{status(c,id,"rejected",ex.getMessage());}catch(Exception ignored){}return Result.failure();}

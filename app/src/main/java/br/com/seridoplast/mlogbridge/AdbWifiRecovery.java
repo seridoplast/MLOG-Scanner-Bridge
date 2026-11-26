@@ -79,6 +79,11 @@ final class AdbWifiRecovery {
     static synchronized boolean provisionConsent(Context c){
         return LocalAdbBridge.enabled(c) && prefs(c).getBoolean(PROVISION,false) && approved(c,current(c));
     }
+    static synchronized boolean pendingProvision(Context c){
+        if(!provisionConsent(c))return false;
+        if(hasGrant(c) && hasBackground(c)){prefs(c).edit().remove(PROVISION).apply();return false;}
+        return true;
+    }
     static synchronized boolean shouldProvision(Context c){
         if(!provisionConsent(c))return false;
         if(hasGrant(c) && hasBackground(c)){prefs(c).edit().remove(PROVISION).apply();return false;}
@@ -101,6 +106,7 @@ final class AdbWifiRecovery {
         Wifi w=current(c);
         if(w.ap.isEmpty())return "Aguardando Wi-Fi e identificação da rede.";
         if(!approved(c,w))return "Aguardando rede autorizada · não é necessário recadastrar a mesma rede salva.";
+        if(OfflineShell.ready())return "Serviço local ativo · recuperação ADB sob demanda.";
         if(wifiDebugOn(c))return "Recuperação ativa · depuração sem fio ligada.";
         return outcome.isEmpty()?"Depuração desligada · aguardando recuperação.":outcome;
     }

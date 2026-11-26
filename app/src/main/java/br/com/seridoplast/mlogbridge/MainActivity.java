@@ -655,7 +655,7 @@ public final class MainActivity extends Activity {
         adbStatus=label(LocalAdbBridge.status(),13,muted,false);space(adb,10);adb.addView(adbStatus);
         
         button(adb,"Parear ADB",true,()->LocalAdbPairReceiver.showPairing(this));
-        button(adb,"Procurar / reconectar",false,()->{LocalAdbBridge.retry(this);toast("Buscando ADB local...");});
+        button(adb,"Procurar / reconectar",false,()->{LocalAdbBridge.retry(this);toast("Verificando serviço local e ADB sob demanda...");});
         LinearLayout advancedAdb=column();advancedAdb.setVisibility(View.GONE);
         button(adb,"Opções avançadas",false,()->advancedAdb.setVisibility(advancedAdb.getVisibility()==View.GONE?View.VISIBLE:View.GONE));
         adb.addView(advancedAdb);
@@ -823,7 +823,7 @@ public final class MainActivity extends Activity {
 
     private void installCachedAdbAuthorized(){
 
-        if(!LocalAdbApkInstaller.ready()){
+        if(!LocalAdbApkInstaller.available(this)){
             setUpdateStatus("ADB indisponível. Você pode instalar pelo Android.");
             new AlertDialog.Builder(this)
                 .setTitle("ADB indisponivel")
