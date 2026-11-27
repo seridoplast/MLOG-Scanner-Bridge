@@ -44,7 +44,7 @@ final class ProductivityLog extends SQLiteOpenHelper {
         }catch(Exception ex){Log.e("BridgeProductivity","Falha ao gravar evento de produtividade",ex);}
     }
     static void recordOrder(Context c,String order){
-        Context app=c.getApplicationContext();Event e=capture(app,"order",order,order);
+        Context app=c.getApplicationContext();Event e=capture(app,"order",order,order,"separacao");
         if(e!=null)IO.execute(()->record(app,e));
     }
     static void networkAvailable(Context c){retryAt=0;tick(c);}

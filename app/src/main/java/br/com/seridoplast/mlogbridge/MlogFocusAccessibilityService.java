@@ -506,6 +506,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 lastPeriodicLoginProbe=now;
                 // Cover an already open MLOG screen after a Bridge upgrade or reboot.
                 loginIdentityProbe.run();
+                if(mlogForeground())visibleOrderProbe.run();
             }
             FleetTelemetry.tick(MlogFocusAccessibilityService.this);
             ProductivityLog.tick(MlogFocusAccessibilityService.this);
@@ -596,7 +597,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                             String clean=AdbBarcodePayload.prepare(raw);
                             if(!productivityScreen.login && MlogLoginIdentityPolicy.authenticatedScreen(productivityScreen.screen))
                                 updateFooterMlogOperator(active);
-                            // Only the physical scan; synthetic batch repeats do not enter the ranking.
+                            // Only physical scans are logged; Central 4.0.1 counts unique barcodes per note.
                             event=ProductivityLog.capture(MlogFocusAccessibilityService.this,kind,clean,
                                 "product".equals(kind)?productivityOrderOnScreen(active):"",productivityScreen.screen);
                         }catch(RuntimeException ex){Log.w("BridgeProductivity","Não foi possível classificar a leitura",ex);}
@@ -1092,6 +1093,19 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         String value=footerMlogOperator(root);
         if(value!=null && !value.equals(OrderNotesClient.mlogOperator(this)))OrderNotesClient.mlogLoggedIn(this,value);
     }
+    void requestOperatorRefresh(String reason){
+        main.removeCallbacks(loginIdentityProbe);
+        main.post(()->{
+            try{
+                AccessibilityNodeInfo root=mlogRoot();
+                if(root!=null && root.getPackageName()!=null &&
+                    ScanCoordinator.TARGET.contentEquals(root.getPackageName())){
+                    updateFooterMlogOperator(root);
+                }
+            }catch(Exception ignored){}
+            loginIdentityProbe.run();
+        });
+    }
     private final Runnable loginIdentityProbe=new Runnable(){
         @Override public void run(){
             AccessibilityNodeInfo root=mlogRoot();
@@ -1217,7 +1231,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             }
             if(candidate==null){visibleOrderCandidate="";return;}
             if(candidate.equals(visibleOrderConfirmed)){
-                captureProductivityOrder(candidate);return;
+                if("separacao".equals(inspect(root).screen))captureProductivityOrder(candidate);return;
             }
             if(!candidate.equals(visibleOrderCandidate)){
                 visibleOrderCandidate=candidate;
@@ -1234,11 +1248,11 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             visibleOrderConfirmed=candidate;
 
             OrderNotesClient.observedOrder(MlogFocusAccessibilityService.this,candidate);
-            captureProductivityOrder(candidate);
+            if("separacao".equals(inspect(root).screen))captureProductivityOrder(candidate);
         }
     };
     private String productivityOrderOnScreen(AccessibilityNodeInfo root){
-        if(visibleOrderConfirmed.isEmpty())return "";
+        if(root==null)return "";
         List<AccessibilityNodeInfo> nodes=new ArrayList<>();visit(root,nodes,0);
         int width=getResources().getDisplayMetrics().widthPixels,height=getResources().getDisplayMetrics().heightPixels;
         boolean title=false;String candidate=null;
@@ -1255,7 +1269,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                 VisibleOrderHeaderPolicy.isHeaderPosition(box.left,box.top,box.right,box.bottom,width,height)))continue;
             if(candidate!=null&&!candidate.equals(code))return "";candidate=code;
         }
-        return title&&visibleOrderConfirmed.equals(candidate)?candidate:"";
+        return title&&candidate!=null?candidate:"";
     }
     private String lastProductivityOrderKey="";
     private void captureProductivityOrder(String candidate){

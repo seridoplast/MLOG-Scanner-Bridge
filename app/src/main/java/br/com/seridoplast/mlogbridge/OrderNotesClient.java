@@ -91,25 +91,66 @@ final class OrderNotesClient {
     }
     private static final String PREF_MLOG_OPERATOR="mlog_operator_current_v3618";
     private static final String PREF_LAST_MLOG_OPERATOR="mlog_operator_last_v3618";
+    private static final String PREF_MLOG_OPERATOR_DAY="mlog_operator_day_v402";
+    private static final String PREF_MLOG_OPERATOR_CHECK_AT="mlog_operator_check_at_v402";
     static String mlogOperator(Context c){
-        return c.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE)
-            .getString(PREF_MLOG_OPERATOR,"");
+        SharedPreferences sp=c.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE);
+        if(!todayKey().equals(sp.getString(PREF_MLOG_OPERATOR_DAY,"")))return "";
+        return sp.getString(PREF_MLOG_OPERATOR,"");
     }
     static String lastMlogOperator(Context c){
         return c.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE)
             .getString(PREF_LAST_MLOG_OPERATOR,"");
+    }
+    private static String todayKey(){
+        return new java.text.SimpleDateFormat("yyyy-MM-dd",java.util.Locale.US)
+            .format(new java.util.Date());
     }
     static void mlogLoggedIn(Context c,String username){
         String safe=MlogLoginIdentityPolicy.username(username);
         if(safe==null)return;
         c.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE)
             .edit().putString(PREF_MLOG_OPERATOR,safe)
-            .putString(PREF_LAST_MLOG_OPERATOR,safe).apply();
+            .putString(PREF_LAST_MLOG_OPERATOR,safe)
+            .putString(PREF_MLOG_OPERATOR_DAY,todayKey())
+            .putLong(PREF_MLOG_OPERATOR_CHECK_AT,System.currentTimeMillis()).apply();
         heartbeat(c); // refletir novo operador no painel sem esperar ciclo seguinte
     }
     static void mlogLoggedOut(Context c){
         c.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE)
-            .edit().remove(PREF_MLOG_OPERATOR).apply();
+            .edit().remove(PREF_MLOG_OPERATOR)
+            .putString(PREF_MLOG_OPERATOR_DAY,todayKey())
+            .putLong(PREF_MLOG_OPERATOR_CHECK_AT,System.currentTimeMillis()).apply();
+        heartbeat(c);
+    }
+    private static void operatorMaintenance(Context c){
+        SharedPreferences sp=c.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE);
+        String today=todayKey();
+        String savedDay=sp.getString(PREF_MLOG_OPERATOR_DAY,"");
+        if(!today.equals(savedDay)){
+            String current=sp.getString(PREF_MLOG_OPERATOR,"");
+            SharedPreferences.Editor edit=sp.edit().putString(PREF_MLOG_OPERATOR_DAY,today)
+                .putLong(PREF_MLOG_OPERATOR_CHECK_AT,System.currentTimeMillis())
+                .remove(PREF_MLOG_OPERATOR);
+            if(!current.isEmpty())edit.putString(PREF_LAST_MLOG_OPERATOR,current);
+            edit.apply();
+            MlogFocusAccessibilityService service=MlogFocusAccessibilityService.current();
+            if(service!=null)service.requestOperatorRefresh("daily_rollover");
+            return;
+        }
+        long now=System.currentTimeMillis();
+        long lastCheck=sp.getLong(PREF_MLOG_OPERATOR_CHECK_AT,0L);
+        if(now-lastCheck>=3600000L){
+            sp.edit().putLong(PREF_MLOG_OPERATOR_CHECK_AT,now).apply();
+            MlogFocusAccessibilityService service=MlogFocusAccessibilityService.current();
+            if(service!=null)service.requestOperatorRefresh("hourly_check");
+        }
+    }
+    static void refreshOperatorNow(Context c){
+        c.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE)
+            .edit().putLong(PREF_MLOG_OPERATOR_CHECK_AT,System.currentTimeMillis()).apply();
+        MlogFocusAccessibilityService service=MlogFocusAccessibilityService.current();
+        if(service!=null)service.requestOperatorRefresh("panel_command");
         heartbeat(c);
     }
     static boolean setDeviceName(Context c,String name){
@@ -193,6 +234,7 @@ final class OrderNotesClient {
     static void heartbeat(Context c){
         final Context app=c.getApplicationContext();
         IO.execute(()->{
+            operatorMaintenance(app);
             if(!configured(app)){
                 if(canDiscoverAgain())discover(app,true,null);
                 if(!configured(app))return;
@@ -294,6 +336,9 @@ final class OrderNotesClient {
                 if("check_stable_update".equals(kind)){
                     result=BridgeUpdater.checkRequestedByPanel(c)?
                         "Consulta da Release estavel agendada":"Atualizações somente pela Central ou busca manual";
+                }else if("refresh_operator".equals(kind)){
+                    refreshOperatorNow(c);
+                    result="Leitura de operador solicitada";
                 }else continue;
                 // Bounded deduplication ledger, retained for server retry on lost ACK.
                 String[] old=history.split("\\|",-1);
@@ -402,7 +447,7 @@ final class OrderNotesClient {
         }catch(Exception e){lastProblem="Falha de rede: "+e.getClass().getSimpleName();return false;}
     }
 
-    /** Avoid sending a bearer token to any public IP, DNS alias or arbitrary URL. */
+    /** Accept trusted LAN IPs and local hostnames configured by the operator. */
     static boolean validHost(String input){
         if(input==null)return false;
         try{
@@ -418,7 +463,7 @@ final class OrderNotesClient {
         }catch(Exception ignored){return false;}
     }
     static void saveConnection(Context c,String host,String key,String deviceName){
-        if(!validHost(host)||key==null||!key.trim().matches("[a-fA-F0-9]{64}"))throw new IllegalArgumentException("Informe URL http://IP:8765 da rede local e a chave de 64 caracteres.");
+        if(!validHost(host)||key==null||!key.trim().matches("[a-fA-F0-9]{64}"))throw new IllegalArgumentException("Informe URL http://IP-ou-NOME:8765 da rede local e a chave de 64 caracteres.");
         String device=deviceName==null?"":deviceName.trim();
         if(device.length()>80 || device.contains("\n") || device.contains("\r"))throw new IllegalArgumentException("Nome do coletor deve ter até 80 caracteres.");
         c.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE).edit().putString(PREF_HOST,host.trim()).putString(PREF_KEY,key.trim()).putString(PREF_DEVICE_NAME,device).apply();

@@ -1,3 +1,7 @@
+## Atualização 4.0.1 — Itens únicos e ranking TV
+
+Consulte `ATUALIZACAO-v4.0.1.md`. O ranking passa a contar códigos únicos por nota, exibir todos os participantes e compartilhar os filtros com a TV. Atualize primeiro a Central Windows.
+
 ## Atualização 4.0.0 — Ranking dos separadores
 
 Atualize a Central Windows para 4.0.0 antes dos coletores. O ranking usa os nomes cadastrados nos coletores selecionados, a lista de bloqueio por login MLOG, uma aba de exibição exclusiva e o histórico de notas encerradas pela próxima bipagem distinta. Consulte [ATUALIZACAO-v4.0.0.md](ATUALIZACAO-v4.0.0.md) para implantação, regras e testes.
