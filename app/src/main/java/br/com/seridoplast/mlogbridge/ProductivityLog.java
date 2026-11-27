@@ -43,8 +43,8 @@ final class ProductivityLog extends SQLiteOpenHelper {
             db(c).getWritableDatabase().insertOrThrow("events",null,v);
         }catch(Exception ex){Log.e("BridgeProductivity","Falha ao gravar evento de produtividade",ex);}
     }
-    static void recordOrder(Context c,String order){
-        Context app=c.getApplicationContext();Event e=capture(app,"order",order,order,"separacao");
+    static void recordOrder(Context c,String order,String screen){
+        Context app=c.getApplicationContext();Event e=capture(app,"order",order,order,screen);
         if(e!=null)IO.execute(()->record(app,e));
     }
     static void networkAvailable(Context c){retryAt=0;tick(c);}
@@ -68,7 +68,7 @@ final class ProductivityLog extends SQLiteOpenHelper {
                     d.beginTransaction();try{for(int i=0;i<ack.length();i++){String id=ack.optString(i,"");if(sent.contains(id))d.delete("events","id=?",new String[]{id});}d.setTransactionSuccessful();}finally{d.endTransaction();}
                 }
                 retryAt=SystemClock.elapsedRealtime()+5000;
-            }catch(Exception ex){retryAt=SystemClock.elapsedRealtime()+30000;}
+            }catch(Exception ex){retryAt=SystemClock.elapsedRealtime()+5000;}
             finally{sending.set(false);}
         });
     }

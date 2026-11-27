@@ -12,7 +12,7 @@ public final class ScannerProtocol {
     public static final String ACTION_HIK = "com.hikvision.ACTION_INPUT";
     public static final String ACTION_GENERIC = "com.service.scanner.data";
     public static final String ACTION_DIRECT = DirectScanPolicy.ACTION;
-    public static final String[] ACTIONS = {ACTION_CMX,ACTION_HIK,ACTION_GENERIC,ACTION_DIRECT};
+    public static final String[] ACTIONS = {ACTION_CMX,ACTION_HIK,ACTION_GENERIC,ACTION_DIRECT,ZebraPassiveMode.ACTION};
 
     private ScannerProtocol() {}
 
@@ -26,7 +26,7 @@ public final class ScannerProtocol {
     public static String barcodeRaw(Intent i) {
         if (i == null) return null;
         final String[] keys = {
-            "CmxCode","ScanCode","code","scanCode","scannerdata","barcode",
+            "com.symbol.datawedge.data_string","CmxCode","ScanCode","code","scanCode","scannerdata","barcode",
             "scan_result","scanResult","data","EXTRA_DATA","barcode_data",
             "com.service.scanner.data","ScanResult","BARCODE","decode_data"
         };

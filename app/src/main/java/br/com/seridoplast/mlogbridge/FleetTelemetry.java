@@ -9,7 +9,7 @@ final class FleetTelemetry {
     private FleetTelemetry(){}
     static synchronized void tick(Context c){
         long now=SystemClock.elapsedRealtime();
-        if(last!=0 && now-last<15_000L)return;
+        if(last!=0 && now-last<5_000L)return;
         last=now;OrderNotesClient.heartbeat(c.getApplicationContext());
     }
 }

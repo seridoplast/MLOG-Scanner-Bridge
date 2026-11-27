@@ -564,6 +564,16 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             @Override public void onReceive(Context context,Intent intent){
                 // Adb is an isolated broadcast-only input channel. Never touch the
                 // MLOG UI, send old Enter, or process alternate/duplicate sources.
+                if(ZebraPassiveMode.enabled(MlogFocusAccessibilityService.this)){
+                    if(intent==null || !ZebraPassiveMode.ACTION.equals(intent.getAction()))return;
+                    AccessibilityNodeInfo root=getRootInActiveWindow();if(root==null||root.getPackageName()==null||!ScanCoordinator.TARGET.contentEquals(root.getPackageName()))return;
+                    ScreenInfo screen=inspect(root);String kind=ProductivityPolicy.kind(screen.screen,screen.login||screen.dialog);
+                    String code=BarcodeCleaner.clean(ScannerProtocol.barcodeRaw(intent));
+                    if(!screen.login && MlogLoginIdentityPolicy.authenticatedScreen(screen.screen))updateFooterMlogOperator(root);
+                    ProductivityLog.Event e=ProductivityLog.capture(MlogFocusAccessibilityService.this,kind,code,"product".equals(kind)?productivityOrderOnScreen(root):"",screen.screen);
+                    // Observed physical scan; native DataWedge delivers it to MLOG, no injection.
+                    if(e!=null){lastMlogInteractionAt=SystemClock.elapsedRealtime();ProductivityLog.record(MlogFocusAccessibilityService.this,e);ProductivityLog.tick(MlogFocusAccessibilityService.this);}return;
+                }
                 if (prefs().getBoolean(AdbScanMode.PREF,false)) {
                     if (intent==null || !DirectScanPolicy.ACTION.equals(intent.getAction()))return;
                     AccessibilityNodeInfo active=getRootInActiveWindow();
@@ -1067,8 +1077,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
 
     // O nome do operador so e confirmado depois que uma tela operacional
     // substitui a tela de login. Nunca coletar nem armazenar senhas.
-    private String pendingMlogUsername="";
-    private long pendingMlogUsernameAt;
+    
     private String lastObservedLoginIdentity="";
     private long loginProbeAt;
     private long lastPeriodicLoginProbe;
@@ -1111,59 +1120,13 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             AccessibilityNodeInfo root=mlogRoot();
             if(root==null || root.getPackageName()==null ||
                 !ScanCoordinator.TARGET.contentEquals(root.getPackageName()))return;
-            List<AccessibilityNodeInfo> nodes=new ArrayList<>();
-            visit(root,nodes,0);
-            boolean passwordPresent=false,loginLabel=false;
-            String namedCandidate=null;
-            String unnamedCandidate=null;
-            int nonPasswordInputs=0;
-            for(AccessibilityNodeInfo node:nodes){
-                if(node==null || !node.isVisibleToUser())continue;
-                String hint="";
-                if(node.getHintText()!=null)hint+=" "+node.getHintText();
-                if(node.getViewIdResourceName()!=null)hint+=" "+node.getViewIdResourceName();
-                if(node.getContentDescription()!=null)hint+=" "+node.getContentDescription();
-                if(MlogLoginIdentityPolicy.passwordHint(hint) || node.isPassword())passwordPresent=true;
-                if(MlogLoginIdentityPolicy.userHint(hint))loginLabel=true;
-                if(!node.isEditable() || node.isPassword() ||
-                   MlogLoginIdentityPolicy.passwordHint(hint))continue;
-                nonPasswordInputs++;
-                String username=MlogLoginIdentityPolicy.username(node.getText()==null?null:node.getText().toString());
-                if(username==null)continue;
-                if(MlogLoginIdentityPolicy.userHint(hint))namedCandidate=username;
-                else unnamedCandidate=username;
-            }
-            // Senha e campo de usuario na mesma tela: evitamos capturar
-            // produto, quantidade, pedido, ou login ainda nao autenticado.
-            boolean loginScreen=passwordPresent && (loginLabel || nonPasswordInputs==1);
-            if(loginScreen){
-                String candidate=namedCandidate!=null?namedCandidate:
-                    nonPasswordInputs==1?unnamedCandidate:null;
-                if(candidate!=null){
-                    pendingMlogUsername=candidate;
-                    pendingMlogUsernameAt=SystemClock.elapsedRealtime();
-                }
-                // Logout: retirar indicador de sessao ativa, guardar ultimo login.
-                if(!lastObservedLoginIdentity.equals("LOGIN")){
-                    lastObservedLoginIdentity="LOGIN";
-                    OrderNotesClient.mlogLoggedOut(MlogFocusAccessibilityService.this);
-                }
-                return;
-            }
             ScreenInfo screen=inspect(root);
-            if(!screen.login && MlogLoginIdentityPolicy.authenticatedScreen(screen.screen)){
-                String footer=footerMlogOperator(root);
-                if(footer!=null){
-                    if(!footer.equals(OrderNotesClient.mlogOperator(MlogFocusAccessibilityService.this)))
-                        OrderNotesClient.mlogLoggedIn(MlogFocusAccessibilityService.this,footer);
-                    pendingMlogUsername="";pendingMlogUsernameAt=0L;
-                }
-                if(!pendingMlogUsername.isEmpty() && pendingMlogUsernameAt>0 &&
-                   SystemClock.elapsedRealtime()-pendingMlogUsernameAt<120000L){
-                    OrderNotesClient.mlogLoggedIn(MlogFocusAccessibilityService.this,pendingMlogUsername);
-                    pendingMlogUsername="";
-                    pendingMlogUsernameAt=0L;
-                }
+            if(screen.login){
+                if(!lastObservedLoginIdentity.equals("LOGIN") || !OrderNotesClient.mlogOperator(MlogFocusAccessibilityService.this).isEmpty())OrderNotesClient.mlogLoggedOut(MlogFocusAccessibilityService.this);
+                lastObservedLoginIdentity="LOGIN";return;
+            }
+            if(MlogLoginIdentityPolicy.authenticatedScreen(screen.screen)){
+                updateFooterMlogOperator(root);
                 lastObservedLoginIdentity="AUTH";
             }
         }
@@ -1231,7 +1194,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             }
             if(candidate==null){visibleOrderCandidate="";return;}
             if(candidate.equals(visibleOrderConfirmed)){
-                if("separacao".equals(inspect(root).screen))captureProductivityOrder(candidate);return;
+                if("separacao".equals(inspect(root).screen)||inspect(root).screen.startsWith("conferencia_"))captureProductivityOrder(candidate,inspect(root).screen);return;
             }
             if(!candidate.equals(visibleOrderCandidate)){
                 visibleOrderCandidate=candidate;
@@ -1248,7 +1211,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             visibleOrderConfirmed=candidate;
 
             OrderNotesClient.observedOrder(MlogFocusAccessibilityService.this,candidate);
-            if("separacao".equals(inspect(root).screen))captureProductivityOrder(candidate);
+            if("separacao".equals(inspect(root).screen)||inspect(root).screen.startsWith("conferencia_"))captureProductivityOrder(candidate,inspect(root).screen);
         }
     };
     private String productivityOrderOnScreen(AccessibilityNodeInfo root){
@@ -1272,11 +1235,11 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         return title&&candidate!=null?candidate:"";
     }
     private String lastProductivityOrderKey="";
-    private void captureProductivityOrder(String candidate){
-        String key=OrderNotesClient.mlogOperator(this)+"|"+candidate;
+    private void captureProductivityOrder(String candidate,String screen){
+        String key=OrderNotesClient.mlogOperator(this)+"|"+(screen.startsWith("conferencia_")?"conferencia":"separacao")+"|"+candidate;
         if(key.equals(lastProductivityOrderKey))return;
         lastProductivityOrderKey=key;
-        ProductivityLog.recordOrder(this,candidate);
+        ProductivityLog.recordOrder(this,candidate,screen);
     }
     private void observeVisibleOrder(AccessibilityEvent event){
         if(event==null || event.getPackageName()==null ||
@@ -1305,6 +1268,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         }
         observeMlogLoginIdentity(event);
         observeVisibleOrder(event);
+        if(ZebraPassiveMode.enabled(this))return;
         if(prefs().getBoolean(AdbScanMode.PREF,false)){
             observeAndroidKeyboard(event);
             return;
@@ -1521,6 +1485,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     }
 
     @Override protected boolean onKeyEvent(KeyEvent event){
+        if(ZebraPassiveMode.enabled(this))return false;
         if(prefs().getBoolean(AdbScanMode.PREF,false))return false;
         if(prefs().getBoolean(ZebraImeMode.PREF,false))return false;
         observeLongHold(event);

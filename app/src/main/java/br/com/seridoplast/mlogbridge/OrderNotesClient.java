@@ -52,9 +52,10 @@ final class OrderNotesClient {
     private static final AtomicBoolean BEACON_LISTENING=new AtomicBoolean(false);
     private static volatile Thread beaconThread;
     private static volatile MulticastSocket beaconSocket;
+    private static final AtomicBoolean HEARTBEAT_RUNNING=new AtomicBoolean();
     private static volatile long lastGoodAt=0L;
     private static volatile long lastDiscoveryAt=0L;
-    // Five-minute backoff when the PC is unavailable. First attempt stays immediate.
+    // Discovery is independent of saved-address retries.
     private static boolean canDiscoverAgain(){
         return NotesDiscoveryRetryPolicy.ready(SystemClock.elapsedRealtime(),lastDiscoveryAt);
     }
@@ -95,22 +96,21 @@ final class OrderNotesClient {
     private static final String PREF_MLOG_OPERATOR_CHECK_AT="mlog_operator_check_at_v402";
     static String mlogOperator(Context c){
         SharedPreferences sp=c.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE);
-        if(!todayKey().equals(sp.getString(PREF_MLOG_OPERATOR_DAY,"")))return "";
-        return sp.getString(PREF_MLOG_OPERATOR,"");
+        return sp.getBoolean("footer_identity_v403",false)&&todayKey().equals(sp.getString(PREF_MLOG_OPERATOR_DAY,""))?sp.getString(PREF_MLOG_OPERATOR,""):"";
     }
     static String lastMlogOperator(Context c){
         return c.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE)
             .getString(PREF_LAST_MLOG_OPERATOR,"");
     }
     private static String todayKey(){
-        return new java.text.SimpleDateFormat("yyyy-MM-dd",java.util.Locale.US)
-            .format(new java.util.Date());
+        java.text.SimpleDateFormat format=new java.text.SimpleDateFormat("yyyy-MM-dd",java.util.Locale.US);
+        format.setTimeZone(java.util.TimeZone.getTimeZone("GMT-03:00"));return format.format(new java.util.Date());
     }
     static void mlogLoggedIn(Context c,String username){
         String safe=MlogLoginIdentityPolicy.username(username);
         if(safe==null)return;
         c.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE)
-            .edit().putString(PREF_MLOG_OPERATOR,safe)
+            .edit().putBoolean("footer_identity_v403",true).putString(PREF_MLOG_OPERATOR,safe)
             .putString(PREF_LAST_MLOG_OPERATOR,safe)
             .putString(PREF_MLOG_OPERATOR_DAY,todayKey())
             .putLong(PREF_MLOG_OPERATOR_CHECK_AT,System.currentTimeMillis()).apply();
@@ -233,15 +233,15 @@ final class OrderNotesClient {
     /** Periodic connection/poll. No operator configuration required on a trusted LAN. */
     static void heartbeat(Context c){
         final Context app=c.getApplicationContext();
-        IO.execute(()->{
+        if(!HEARTBEAT_RUNNING.compareAndSet(false,true))return;
+        IO.execute(()->{try{
             operatorMaintenance(app);
             if(!configured(app)){
                 if(canDiscoverAgain())discover(app,true,null);
                 if(!configured(app))return;
             }
-            // A previously unreachable server must not trigger a heavy scan
-            // on every 15-second heartbeat. Retry automatically every 5 minutes.
-            if(lastGoodAt==0L && lastDiscoveryAt>0L && !canDiscoverAgain())return;
+            // Discovery uses a separate 15-second backoff.
+            // Always retry the saved address, independent of broadcast discovery.
             try{
                 JSONObject body=new JSONObject();
                 body.put("id",deviceId(app));body.put("name",deviceName(app));body.put("order",LAST_ORDER);
@@ -253,7 +253,7 @@ final class OrderNotesClient {
                 body.put("androidVersion",Build.VERSION.RELEASE);
                 body.put("model",Build.MODEL==null?"Coletor":Build.MODEL);
                 
-                body.put("adbLocal",LocalAdbBridge.ready());
+                body.put("adbLocal",!ZebraPassiveMode.enabled(app)&&LocalAdbBridge.ready());
                 body.put("messagesPaused",true);
                 body.put("updateStatus",app.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE).getString(BridgeUpdater.LAST_STATUS,""));
                 body.put("accessibility",MlogFocusAccessibilityService.current()!=null);
@@ -292,7 +292,8 @@ final class OrderNotesClient {
                 String preferred=data.optString("preferredName","");
                 if(data.optBoolean("resetName",false)) app.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE).edit().remove(PREF_DEVICE_NAME).apply();
                 else if(!preferred.isEmpty())setDeviceName(app,preferred);
-                lastGoodAt=SystemClock.elapsedRealtime();
+                boolean recovered=lastGoodAt==0L;lastGoodAt=SystemClock.elapsedRealtime();
+                if(recovered)ProductivityLog.networkAvailable(app);
                 lastProblem="";
                 // Avisos desativados temporariamente. Não confirmar mensagens que não foram exibidas.
                 // ArrayList<Broadcast> messages=new ArrayList<>();
@@ -311,10 +312,10 @@ final class OrderNotesClient {
             }catch(Exception ex){
                 // A previous PC IP or key may have changed. Retry LAN discovery.
                 lastGoodAt=0L;
-                lastProblem="Servidor não responde; nova busca automática em até 5 minutos.";
+                lastProblem="Servidor não responde; nova tentativa automática.";
                 if(canDiscoverAgain())discover(app,true,null);
             }
-        });
+        }finally{HEARTBEAT_RUNNING.set(false);}});
     }
     /** Deliberately narrow allow-list. No remote shell, arbitrary URL or APK install.
      * The panel can request an approved Release check only.

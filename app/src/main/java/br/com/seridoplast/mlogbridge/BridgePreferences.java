@@ -20,7 +20,7 @@ final class BridgePreferences {
             .apply();
     }
     static void adbOnly(SharedPreferences prefs){
-        if(prefs.getBoolean("adb_only_v3621",false))return;
+        if(prefs.getBoolean(ZebraPassiveMode.PREF,false) || prefs.getBoolean("adb_only_v3621",false))return;
         prefs.edit().putBoolean("adb_only_v3621",true)
             .putBoolean(AdbScanMode.PREF,true).putBoolean("enabled",true)
             .putBoolean(ZebraImeMode.PREF,false).putBoolean(ZebraProfile0Mode.PREF,false)

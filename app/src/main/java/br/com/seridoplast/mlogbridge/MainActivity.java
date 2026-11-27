@@ -140,9 +140,10 @@ public final class MainActivity extends Activity {
             if(serviceState!=null){
                 boolean adb=prefs.getBoolean(AdbScanMode.PREF,false);
                 boolean active=MlogFocusAccessibilityService.current()!=null;
+                boolean zebra=ZebraPassiveMode.enabled(MainActivity.this);
                 boolean ready=adbAuthorized();
-                boolean statusOk=adb && ready && active;
-                serviceState.setText(!adb?"Ative a leitura privilegiada em Ajustes":
+                boolean statusOk=(zebra || (adb && ready)) && active;
+                serviceState.setText(zebra?(active?"Zebra · monitoramento nativo":"Ative a acessibilidade"):!adb?"Ative a leitura privilegiada em Ajustes":
                     statusOk?"Bipe ADB pronto":
                     !ready?"Conecte o ADB local":"Ative a acessibilidade");
                 serviceState.setTextColor(statusOk?success:amber);
@@ -621,6 +622,7 @@ public final class MainActivity extends Activity {
     }
     private void updateAdbUiStatus(){
         if(adbSettingsStatus==null)return;
+        if(ZebraPassiveMode.enabled(this)){adbSettingsStatus.setText("Zebra · monitoramento nativo, sem ADB");adbSettingsStatus.setTextColor(success);return;}
         boolean ready=adbAuthorized();
         boolean accessible=accessibilityReady();
         boolean statusOk=ready && accessible;
@@ -644,6 +646,13 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams st=new LinearLayout.LayoutParams(-1,-2);st.topMargin=dp(10);
         mode.addView(adbSettingsStatus,st);updateAdbUiStatus();
         
+        button(mode,ZebraPassiveMode.enabled(this)?"Zebra: ativado (toque para voltar ao CMX)":"Zebra: ativar modo nativo",false,()->{
+            boolean on=!ZebraPassiveMode.enabled(this);
+            if(on){prefs.edit().putBoolean("zebra_saved_adb",prefs.getBoolean(LocalAdbBridge.PREF,false)).putBoolean(ZebraPassiveMode.PREF,true).putBoolean(AdbScanMode.PREF,false).putBoolean(ZebraImeMode.PREF,false).putBoolean(NativeScannerController.PREF,false).apply();LocalAdbBridge.disable(this);}
+            else {prefs.edit().putBoolean(ZebraPassiveMode.PREF,false).putBoolean(AdbScanMode.PREF,true).putBoolean(NativeScannerController.PREF,true).putBoolean(LocalAdbBridge.PREF,prefs.getBoolean("zebra_saved_adb",false)).apply();NativeScannerController.configure(this);LocalAdbBridge.retry(this);}
+            MlogFocusAccessibilityService svc=MlogFocusAccessibilityService.current();if(svc!=null)svc.prepareAdb();displayPage();
+        });
+        if(ZebraPassiveMode.enabled(this))subtitle(mode,"DataWedge: mantenha saída por teclado para o MLOG e habilite Intent Broadcast br.com.seridoplast.mlogbridge.ZEBRA_SCAN. O Bridge não injeta teclas.");
         button(mode,"Acessibilidade",false,this::openAccessibilitySettings);
         space(mode,7);
         check(mode,"Recuperação por Volume","camera_auto_recovery_v348",true);
@@ -677,6 +686,7 @@ public final class MainActivity extends Activity {
         button(advancedRecovery,"Permissões do Android",false,()->startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName()))));
         button(advancedRecovery,"Testar recuperação",false,()->{LocalAdbBridge.retry(this);toast("Verificando recuperação ADB...");});
 
+        if(ZebraPassiveMode.enabled(this)){adb.setVisibility(View.GONE);recovery.setVisibility(View.GONE);}
         LinearLayout observations=card();
         LinearLayout obsHead=row();
         
@@ -1061,7 +1071,7 @@ public final class MainActivity extends Activity {
         AdbRecoveryWorker.schedule(this,false);
         // Reaplicar ao abrir o Bridge, pois o servico CMX pode reiniciar
         // com a saida padrao apos atualizacao/reboot do coletor.
-        if(prefs.getBoolean(AdbScanMode.PREF,false))
+        if(!ZebraPassiveMode.enabled(this) && prefs.getBoolean(AdbScanMode.PREF,false))
             NativeScannerController.configure(this);
         else if(ZebraProfile0Mode.isSelected(prefs.getBoolean(ZebraImeMode.PREF,false),
                 prefs.getBoolean(ZebraProfile0Mode.PREF,false)))

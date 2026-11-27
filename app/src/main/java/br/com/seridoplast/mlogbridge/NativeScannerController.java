@@ -42,6 +42,7 @@ final class NativeScannerController {
      *         a confirmacao real requer receber um barcode em ACTION_SCAN.
      */
     static boolean configure(Context context) {
+        if(ZebraPassiveMode.enabled(context))return false;
         if (!isInstalled(context)) return false;
         try {
             // CMX/MediaTek has an independent "focusSpot" channel that can

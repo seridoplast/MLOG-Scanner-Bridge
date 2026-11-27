@@ -57,7 +57,7 @@ final class LocalAdbBridge {
     private static long parkedAt=-1;
     private static volatile String status="Não pareado";
     private LocalAdbBridge(){}
-    static boolean enabled(Context c){return Build.VERSION.SDK_INT>=30 && prefs(c).getBoolean(PREF,false);}
+    static boolean enabled(Context c){return !ZebraPassiveMode.enabled(c) && Build.VERSION.SDK_INT>=30 && prefs(c).getBoolean(PREF,false);}
     private static SharedPreferences prefs(Context c){return c.getSharedPreferences(ScanCoordinator.PREFS,Context.MODE_PRIVATE);}
     // Operational readiness differs from transport readiness (APK installer still needs ADB).
     static boolean ready(){return pairing==null && (OfflineShell.ready() || transportReady());}

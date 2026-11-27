@@ -23,7 +23,7 @@ final class LocalAdbScanClient {
     LocalAdbScanClient(Context context) {this.context=context.getApplicationContext();}
     void start(){LocalAdbBridge.tick(context);}
     void connect(){LocalAdbBridge.retry(context);}
-    boolean ready(){return LocalAdbBridge.ready();}
+    boolean ready(){return !ZebraPassiveMode.enabled(context)&&LocalAdbBridge.ready();}
     void stop(){worker.shutdownNow();}
 
     /** Nao recuperar a tela enquanto houver comandos de leitura na fila. */
