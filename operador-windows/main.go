@@ -27,7 +27,7 @@ import (
 //go:embed web/*
 var webFiles embed.FS
 
-const centralVersion = "3.6.27"
+const centralVersion = "4.0.0"
 
 type Note struct {
 	ID            string `json:"id"`
@@ -98,14 +98,17 @@ type Device struct {
 	LastObservations []DeviceObservation `json:"lastObservations,omitempty"`
 }
 type DB struct {
-	Packages    []APKPackage      `json:"packages,omitempty"`
-	Deployments []Deployment      `json:"deployments,omitempty"`
-	Notes       []Note            `json:"notes"`
-	Token       string            `json:"token"`
-	Broadcasts  []Broadcast       `json:"broadcasts"`
-	Devices     map[string]Device `json:"devices,omitempty"`
-	DeviceOrder []string          `json:"deviceOrder,omitempty"`
-	Actions     []FleetAction     `json:"actions,omitempty"`
+	RankingParticipants    map[string]bool   `json:"rankingParticipants,omitempty"`
+	RankingBlacklist       map[string]bool   `json:"rankingBlacklist,omitempty"`
+	DeletedCollectorBefore map[string]int64  `json:"deletedCollectorBefore,omitempty"`
+	Packages               []APKPackage      `json:"packages,omitempty"`
+	Deployments            []Deployment      `json:"deployments,omitempty"`
+	Notes                  []Note            `json:"notes"`
+	Token                  string            `json:"token"`
+	Broadcasts             []Broadcast       `json:"broadcasts"`
+	Devices                map[string]Device `json:"devices,omitempty"`
+	DeviceOrder            []string          `json:"deviceOrder,omitempty"`
+	Actions                []FleetAction     `json:"actions,omitempty"`
 }
 type Server struct {
 	sync.Mutex
@@ -274,6 +277,10 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		s.productivityIngest(w, r)
 	case "/api/admin/productivity":
 		s.productivityAdmin(w, r)
+	case "/api/admin/ranking-settings":
+		s.rankingSettings(w, r)
+	case "/api/admin/device/delete":
+		s.deleteCollector(w, r)
 	case "/api/admin/apk/upload", "/api/admin/apk/deploy", "/api/admin/apk/cancel", "/api/device/apk", "/api/device/apk/status":
 		s.deployHandle(w, r)
 	case "/assets/app-icon.png":

@@ -9,6 +9,12 @@ public final class MlogLoginIdentityPolicyTest {
     check(MlogLoginIdentityPolicy.username("joao silva")==null);
     check(MlogLoginIdentityPolicy.authenticatedScreen("separacao"));
     check(!MlogLoginIdentityPolicy.authenticatedScreen("desconhecida"));
+    check("ARTHURJ".equals(MlogLoginIdentityPolicy.footerUsername("ARTHURJ",26,667,96,682,373,730)));
+    check("ARTHURJ".equals(MlogLoginIdentityPolicy.footerUsername("Usuário: ARTHURJ",26,667,96,682,373,685)));
+    check(MlogLoginIdentityPolicy.footerUsername("OFFLINE",286,667,355,682,373,730)==null);
+    check(MlogLoginIdentityPolicy.footerUsername("ARTHURJ",26,100,96,120,373,730)==null);
+    check(MlogLoginIdentityPolicy.footerUsername("123456",26,667,96,682,373,730)==null);
+    check(MlogLoginIdentityPolicy.footerUsername("SERIDOPLAST-CRUZETA",116,667,260,682,373,730)==null);
     System.out.println("LoginIdentityPolicy OK");
   }
   private static void check(boolean ok){if(!ok)throw new AssertionError();}

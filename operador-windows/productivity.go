@@ -16,13 +16,15 @@ import (
 )
 
 type ProductivityEvent struct {
-	ID       string `json:"id"`
-	At       int64  `json:"at"`
-	Kind     string `json:"kind"`
-	Operator string `json:"operator"`
-	Code     string `json:"code"`
-	Order    string `json:"order"`
-	DeviceID string `json:"deviceId,omitempty"`
+	ID        string `json:"id"`
+	At        int64  `json:"at"`
+	Kind      string `json:"kind"`
+	Operator  string `json:"operator"`
+	Code      string `json:"code"`
+	Order     string `json:"order"`
+	DeviceID  string `json:"deviceId,omitempty"`
+	Screen    string `json:"screen,omitempty"`
+	RankLogin string `json:"-"`
 }
 type productivityBatch struct {
 	Events []ProductivityEvent `json:"events"`
@@ -43,6 +45,11 @@ func (s *Server) productivityPath() string {
 // An incomplete final line (power failure during append) is discarded. A malformed complete line is an error.
 func (s *Server) loadProductivity() error {
 	s.productivityIDs = map[string]bool{}
+	if _, err := os.Stat(s.productivityPath()); errors.Is(err, os.ErrNotExist) {
+		if _, e := os.Stat(s.productivityPath() + ".bak"); e == nil {
+			_ = os.Rename(s.productivityPath()+".bak", s.productivityPath())
+		}
+	}
 	f, err := os.OpenFile(s.productivityPath(), os.O_RDWR, 0600)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -69,7 +76,7 @@ func (s *Server) loadProductivity() error {
 			return fmt.Errorf("histórico de produtividade inválido na posição %d: %w", offset, err)
 		}
 		for _, e := range b.Events {
-			if !s.productivityIDs[e.key()] {
+			if e.At > s.db.DeletedCollectorBefore[e.DeviceID] && !s.productivityIDs[e.key()] {
 				s.productivityIDs[e.key()] = true
 				s.productivity = append(s.productivity, e)
 			}
@@ -115,6 +122,9 @@ func (s *Server) appendProductivity(events []ProductivityEvent) error {
 }
 func validProductivity(e ProductivityEvent) bool {
 	if !validDeviceID(e.ID) || e.At <= 0 || e.At > 253402300799999 || len(e.Code) < 1 || len(e.Code) > 128 || utf8.RuneCountInString(e.Operator) > 60 || strings.ContainsAny(e.Operator, " \r\n\x00") || len(e.Order) > 72 {
+		return false
+	}
+	if len(e.Screen) > 40 || strings.ContainsAny(e.Screen, " \r\n\x00") {
 		return false
 	}
 	if e.Kind != "product" && e.Kind != "note" && e.Kind != "order" {
@@ -169,7 +179,7 @@ func (s *Server) productivityIngest(w http.ResponseWriter, r *http.Request) {
 		}
 		seen[e.ID] = true
 		accepted = append(accepted, e.ID)
-		if !s.productivityIDs[e.key()] {
+		if e.At > s.db.DeletedCollectorBefore[body.ID] && !s.productivityIDs[e.key()] {
 			pending = append(pending, e)
 		}
 	}
@@ -219,6 +229,7 @@ func productivityPeriod(period, date string, now time.Time) (time.Time, time.Tim
 }
 
 type ProductivityRow struct {
+	Completed  int     `json:"completed"`
 	Key        string  `json:"key"`
 	Name       string  `json:"name"`
 	Identified bool    `json:"identified"`
@@ -243,15 +254,18 @@ type ProductivityDetail struct {
 	LastAt int64  `json:"lastAt"`
 }
 type productivityReport struct {
-	Rows      []*ProductivityRow    `json:"rows"`
-	Details   []*ProductivityDetail `json:"details"`
-	Start     string                `json:"start"`
-	End       string                `json:"end"`
-	Products  int                   `json:"products"`
-	Notes     int                   `json:"notes"`
-	NoteScans int                   `json:"noteScans"`
-	Orders    int                   `json:"orders"`
-	Unknown   int                   `json:"unknown"`
+	Completed     int                   `json:"completed"`
+	Sessions      []NoteSession         `json:"sessions"`
+	SessionsTotal int                   `json:"sessionsTotal"`
+	Rows          []*ProductivityRow    `json:"rows"`
+	Details       []*ProductivityDetail `json:"details"`
+	Start         string                `json:"start"`
+	End           string                `json:"end"`
+	Products      int                   `json:"products"`
+	Notes         int                   `json:"notes"`
+	NoteScans     int                   `json:"noteScans"`
+	Orders        int                   `json:"orders"`
+	Unknown       int                   `json:"unknown"`
 }
 
 func (s *Server) productivityReport(start, end time.Time, selected string) productivityReport {
@@ -264,6 +278,10 @@ func (s *Server) productivityReport(start, end time.Time, selected string) produ
 	previous := map[string]ProductivityEvent{}
 	for _, e := range events {
 		if e.At < start.UnixMilli() || e.At >= end.UnixMilli() {
+			continue
+		}
+		if e.Kind == "break" {
+			delete(previous, e.DeviceID)
 			continue
 		}
 		key := e.operatorKey()
@@ -292,7 +310,7 @@ func (s *Server) productivityReport(start, end time.Time, selected string) produ
 		case "product":
 			prev, ok := previous[e.DeviceID]
 			delta := e.At - prev.At
-			if ok && prev.operatorKey() == key && prev.Order == e.Order && delta > 0 && delta <= 300000 && time.UnixMilli(prev.At).In(productivityZone).Format("2006-01-02") == time.UnixMilli(e.At).In(productivityZone).Format("2006-01-02") {
+			if ok && prev.operatorKey() == key && strings.EqualFold(prev.RankLogin, e.RankLogin) && prev.Order == e.Order && delta > 0 && delta <= 300000 && time.UnixMilli(prev.At).In(productivityZone).Format("2006-01-02") == time.UnixMilli(e.At).In(productivityZone).Format("2006-01-02") {
 				row.Intervals++
 				row.intervalMs += delta
 			}
@@ -372,7 +390,12 @@ func (s *Server) productivityAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Lock()
-	result := s.productivityReport(start, end, r.URL.Query().Get("operator"))
+	var result productivityReport
+	if r.URL.Query().Get("ranking") == "1" {
+		result = s.rankingReport(start, end, r.URL.Query().Get("operator"), r.URL.Query().Get("noteSearch"))
+	} else {
+		result = s.productivityReport(start, end, r.URL.Query().Get("operator"))
+	}
 	s.Unlock()
 	reply(w, 200, result)
 }

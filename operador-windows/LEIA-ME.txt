@@ -1,3 +1,5 @@
+ATUALIZAÇÃO 4.0.0: execute o novo EXE após fechar o antigo, usando a mesma pasta de dados e porta. Faça backup antes de atualizar. Produtividade > Participantes / conferentes: selecione os coletores e bloqueie os logins dos conferentes. A nova aba mostra somente o ranking. Histórico de notas registra encerramento inferido, sem alterar o ERP. Excluir coletor só é permitido quando offline e exige confirmação. Atualize a Central antes do APK 4.0.0. Consulte ATUALIZACAO-v4.0.0.md.
+
 SERIDÓPLAST | PAINEL DE OBSERVAÇÕES E AVISOS — v3.6.13
 
 USO RÁPIDO

@@ -1,3 +1,7 @@
+## Atualização 4.0.0 — Ranking dos separadores
+
+Atualize a Central Windows para 4.0.0 antes dos coletores. O ranking usa os nomes cadastrados nos coletores selecionados, a lista de bloqueio por login MLOG, uma aba de exibição exclusiva e o histórico de notas encerradas pela próxima bipagem distinta. Consulte [ATUALIZACAO-v4.0.0.md](ATUALIZACAO-v4.0.0.md) para implantação, regras e testes.
+
 # Atualização 3.6.32 — recuperação ADB rápida após boot
 
 Recuperação imediata no boot/abertura do app e em disponibilidade de rede, com novas tentativas rápidas apenas quando ambos os caminhos estão indisponíveis. Porta TLS atual quando legível, descoberta mDNS com prazo adaptativo e reinício autorizado único por falha. Consulte [ATUALIZACAO-v3.6.32.md](ATUALIZACAO-v3.6.32.md).

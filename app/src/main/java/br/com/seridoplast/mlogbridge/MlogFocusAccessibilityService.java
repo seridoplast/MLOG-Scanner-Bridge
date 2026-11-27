@@ -501,6 +501,12 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private final Runnable adbWatchdog=new Runnable(){
         @Override public void run(){
             LocalAdbBridge.tick(MlogFocusAccessibilityService.this);
+            long now=SystemClock.elapsedRealtime();
+            if(now-lastPeriodicLoginProbe>=15000L){
+                lastPeriodicLoginProbe=now;
+                // Cover an already open MLOG screen after a Bridge upgrade or reboot.
+                loginIdentityProbe.run();
+            }
             FleetTelemetry.tick(MlogFocusAccessibilityService.this);
             ProductivityLog.tick(MlogFocusAccessibilityService.this);
             main.postDelayed(this,5000);
@@ -515,6 +521,7 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
         adbScan=new LocalAdbScanClient(this);
         adbScan.start();
         main.post(adbWatchdog);
+        main.post(loginIdentityProbe);
         main.post(keyboardWindowWatcher);
         BridgePreferences.enableOnUpgrade(prefs());
         BridgePreferences.adbOnly(prefs());
@@ -587,9 +594,11 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
                             ScreenInfo productivityScreen=inspect(active);
                             String kind=ProductivityPolicy.kind(productivityScreen.screen,productivityScreen.login||productivityScreen.dialog);
                             String clean=AdbBarcodePayload.prepare(raw);
+                            if(!productivityScreen.login && MlogLoginIdentityPolicy.authenticatedScreen(productivityScreen.screen))
+                                updateFooterMlogOperator(active);
                             // Only the physical scan; synthetic batch repeats do not enter the ranking.
                             event=ProductivityLog.capture(MlogFocusAccessibilityService.this,kind,clean,
-                                "product".equals(kind)?productivityOrderOnScreen(active):"");
+                                "product".equals(kind)?productivityOrderOnScreen(active):"",productivityScreen.screen);
                         }catch(RuntimeException ex){Log.w("BridgeProductivity","Não foi possível classificar a leitura",ex);}
                         adbScan.scan(raw,event);
                     }
@@ -1061,6 +1070,28 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
     private long pendingMlogUsernameAt;
     private String lastObservedLoginIdentity="";
     private long loginProbeAt;
+    private long lastPeriodicLoginProbe;
+    private String footerMlogOperator(AccessibilityNodeInfo root){
+        if(root==null)return null;
+        List<AccessibilityNodeInfo> nodes=new ArrayList<>();visit(root,nodes,0);
+        android.util.DisplayMetrics dm=getResources().getDisplayMetrics();
+        Rect rootBox=new Rect();root.getBoundsInScreen(rootBox);
+        int width=dm.widthPixels,height=Math.max(dm.heightPixels,rootBox.bottom);
+        String found=null;
+        for(AccessibilityNodeInfo node:nodes){
+            if(node==null || !node.isVisibleToUser() || node.isPassword() || node.isEditable())continue;
+            Rect box=new Rect();node.getBoundsInScreen(box);
+            CharSequence text=node.getText(),desc=node.getContentDescription();
+            String value=MlogLoginIdentityPolicy.footerUsername(text==null?null:text.toString(),box.left,box.top,box.right,box.bottom,width,height);
+            if(value==null)value=MlogLoginIdentityPolicy.footerUsername(desc==null?null:desc.toString(),box.left,box.top,box.right,box.bottom,width,height);
+            if(value!=null){if(found!=null && !found.equalsIgnoreCase(value))return null;found=value;}
+        }
+        return found;
+    }
+    private void updateFooterMlogOperator(AccessibilityNodeInfo root){
+        String value=footerMlogOperator(root);
+        if(value!=null && !value.equals(OrderNotesClient.mlogOperator(this)))OrderNotesClient.mlogLoggedIn(this,value);
+    }
     private final Runnable loginIdentityProbe=new Runnable(){
         @Override public void run(){
             AccessibilityNodeInfo root=mlogRoot();
@@ -1107,6 +1138,12 @@ public final class MlogFocusAccessibilityService extends AccessibilityService {
             }
             ScreenInfo screen=inspect(root);
             if(!screen.login && MlogLoginIdentityPolicy.authenticatedScreen(screen.screen)){
+                String footer=footerMlogOperator(root);
+                if(footer!=null){
+                    if(!footer.equals(OrderNotesClient.mlogOperator(MlogFocusAccessibilityService.this)))
+                        OrderNotesClient.mlogLoggedIn(MlogFocusAccessibilityService.this,footer);
+                    pendingMlogUsername="";pendingMlogUsernameAt=0L;
+                }
                 if(!pendingMlogUsername.isEmpty() && pendingMlogUsernameAt>0 &&
                    SystemClock.elapsedRealtime()-pendingMlogUsernameAt<120000L){
                     OrderNotesClient.mlogLoggedIn(MlogFocusAccessibilityService.this,pendingMlogUsername);

@@ -29,6 +29,20 @@ final class MlogLoginIdentityPolicy {
             !USER.matcher(s).matches() || passwordHint(s))return null;
         return s;
     }
+    // Footer of an authenticated MLOG screen: left-most label near the bottom.
+    static String footerUsername(String text,int left,int top,int right,int bottom,int width,int height) {
+        if(width<=0 || height<=0 || left<0 || top<0 || right<=left || bottom<=top ||
+           left>width*.22 || right>width*.42 || (top+bottom)/2.0<height*.86 ||
+           bottom>height || bottom-top>height*.10)return null;
+        if(text==null)return null;
+        String value=text.trim().replaceFirst("(?i)^(usu[aá]rio|operador)\\s*:\\s*", "");
+        String user=username(value);
+        if(user==null || !user.matches(".*\\p{L}.*"))return null;
+        String label=normalizeLabel(user);
+        if(label.equals("offline") || label.equals("online") || label.equals("mlog") ||
+           label.equals("voltar") || label.equals("usuario") || label.equals("operador"))return null;
+        return user;
+    }
     static boolean authenticatedScreen(String screen) {
         return "atividades".equals(screen) || "pedidos".equals(screen) ||
             "separacao".equals(screen) || "notas".equals(screen) ||
